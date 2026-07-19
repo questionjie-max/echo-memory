@@ -1,0 +1,23 @@
+.DS_Store
+*.log
+.fontconfig/
+.prd-render*/
+__pycache__/
+*.py[cod]
+
+# Local settings and user data
+.env
+.env.*
+!.env.example
+*.db
+*.db-shm
+*.db-wal
+*.m4a
+*.mp3
+*.wav
+*.bin
+
+# Distribution and generated executables
+*.dmg
+*.app/
+/app/src-tauri/resources/echo-memory-mcp

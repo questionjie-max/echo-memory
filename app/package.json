@@ -1,0 +1,30 @@
+{
+  "name": "echo-memory",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "回声记忆 - 本地优先谈话记忆库（Tauri 2 + React + TS + Vite）",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "build:mcp": "cargo build --manifest-path src-tauri/Cargo.toml --release --bin echo-memory-mcp --features mcp-bin && install -m 755 src-tauri/target/release/echo-memory-mcp src-tauri/resources/echo-memory-mcp",
+    "build:bundle": "npm run build && npm run build:mcp",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.1.1",
+    "@tauri-apps/plugin-dialog": "^2.2.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.1.0",
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.2",
+    "typescript": "^5.6.2",
+    "vite": "^5.4.8"
+  }
+}

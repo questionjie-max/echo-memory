@@ -1,0 +1,317 @@
+import { open } from "@tauri-apps/plugin-dialog";
+import { listen } from "@tauri-apps/api/event";
+import { useEffect, useState } from "react";
+import type {
+  AnalysisTemplate,
+  AudioPreprocessorStatus,
+  LocalAiStatus,
+  ModelDownloadProgress,
+  TemplateSection,
+} from "../shared/types";
+import {
+  createAnalysisTemplate,
+  deleteAnalysisTemplate,
+  downloadWhisperModel,
+  getAudioPreprocessorStatus,
+  getLocalAiStatus,
+  listAnalysisTemplates,
+  pullOllamaModel,
+  updateAnalysisTemplate,
+  updateKnowledgeSettings,
+} from "../lib/tauri";
+
+interface Props {
+  open: boolean;
+  onClose: () => void;
+}
+
+type SettingsTab = "ai" | "templates";
+
+const LANGUAGES = [
+  ["zh", "中文"],
+  ["auto", "自动检测"],
+  ["en", "英语"],
+  ["ja", "日语"],
+  ["ko", "韩语"],
+  ["fr", "法语"],
+  ["de", "德语"],
+  ["es", "西班牙语"],
+];
+
+export default function SettingsPanel({ open: visible, onClose }: Props) {
+  const [tab, setTab] = useState<SettingsTab>("ai");
+  const [status, setStatus] = useState<LocalAiStatus | null>(null);
+  const [preprocessor, setPreprocessor] = useState<AudioPreprocessorStatus | null>(null);
+  const [templates, setTemplates] = useState<AnalysisTemplate[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [download, setDownload] = useState<ModelDownloadProgress | null>(null);
+  const [whisperDownload, setWhisperDownload] = useState<ModelDownloadProgress | null>(null);
+  const [editing, setEditing] = useState<AnalysisTemplate | null>(null);
+  const currentWhisperPath = status?.settings.whisperModelPath || status?.whisperModelPath || "";
+
+  async function refresh() {
+    setError("");
+    try {
+      const [ai, audio, items] = await Promise.all([getLocalAiStatus(), getAudioPreprocessorStatus(), listAnalysisTemplates()]);
+      setStatus(ai);
+      setPreprocessor(audio);
+      setTemplates(items);
+    } catch (reason) {
+      setError(String(reason));
+    }
+  }
+
+  useEffect(() => {
+    if (visible) void refresh();
+  }, [visible]);
+
+  useEffect(() => {
+    const unlisten = listen<ModelDownloadProgress>("model-download-progress", (event) => {
+      setDownload(event.payload);
+      if (event.payload.status === "completed") {
+        setNotice(`模型“${event.payload.model}”已安装，确认后可设为当前模型。`);
+        void refresh();
+      }
+      if (event.payload.status === "failed") setError(event.payload.error ?? "模型下载失败");
+    });
+    return () => { void unlisten.then((stop) => stop()); };
+  }, []);
+
+  useEffect(() => {
+    const unlisten = listen<ModelDownloadProgress>("whisper-model-download-progress", (event) => {
+      setWhisperDownload(event.payload);
+      if (event.payload.status === "completed") {
+        setNotice("Whisper large-v3-turbo-q5_0 已安装，确认后可设为当前模型。");
+        void refresh();
+      }
+      if (event.payload.status === "failed") setError(event.payload.error ?? "Whisper 模型下载失败");
+    });
+    return () => { void unlisten.then((stop) => stop()); };
+  }, []);
+
+  if (!visible) return null;
+
+  async function chooseWhisperModel() {
+    const selected = await open({ multiple: false, directory: false, filters: [{ name: "Whisper 模型", extensions: ["bin"] }] });
+    if (typeof selected === "string" && status) {
+      setStatus({ ...status, settings: { ...status.settings, whisperModelPath: selected } });
+    }
+  }
+
+  async function saveAi() {
+    if (!status) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const settings = await updateKnowledgeSettings(status.settings);
+      setStatus({ ...status, settings });
+      setNotice("本机 AI 设置已保存");
+      await refresh();
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function installOllamaModel(model: string, size: string, purpose: string) {
+    if (!window.confirm(`下载“${model}”约需 ${size}，仅用于本机${purpose}。下载完成后不会自动切换，继续吗？`)) return;
+    setError("");
+    setNotice("");
+    setDownload({ model, status: "正在连接", completed: null, total: null, error: null });
+    try {
+      await pullOllamaModel(model);
+    } catch (reason) {
+      setDownload(null);
+      setError(String(reason));
+    }
+  }
+
+  async function installWhisperModel() {
+    if (!window.confirm("下载 Whisper large-v3-turbo-q5_0 本地模型（574,041,195 字节，约 547.4MB；SHA-256 394221709cd5…）。完成后不会自动切换，继续吗？")) return;
+    setError("");
+    setNotice("");
+    setWhisperDownload({ model: "large-v3-turbo-q5_0", status: "正在连接", completed: null, total: null, error: null });
+    try {
+      await downloadWhisperModel("large-v3-turbo-q5_0");
+    } catch (reason) {
+      setWhisperDownload(null);
+      setError(String(reason));
+    }
+  }
+
+  async function duplicateTemplate(template: AnalysisTemplate) {
+    setBusy(true);
+    try {
+      const created = await createAnalysisTemplate({
+        name: `${template.name} 副本`,
+        description: template.description,
+        focusInstructions: template.focusInstructions,
+        customSections: template.customSections,
+      });
+      await refresh();
+      setEditing(created);
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeTemplate(template: AnalysisTemplate) {
+    if (!window.confirm(`删除模板“${template.name}”？历史分析不会被删除。`)) return;
+    setBusy(true);
+    try {
+      await deleteAnalysisTemplate(template.id);
+      if (editing?.id === template.id) setEditing(null);
+      await refresh();
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="settings-scrim" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <section className="settings-panel material" role="dialog" aria-modal="true" aria-label="设置">
+        <header className="settings-header">
+          <div><p className="pane-eyebrow">回声记忆</p><h2>设置</h2></div>
+          <button type="button" className="close-button" onClick={onClose} aria-label="关闭设置" title="关闭">×</button>
+        </header>
+        <div className="settings-tabs" role="tablist">
+          <button type="button" className={tab === "ai" ? "selected" : ""} onClick={() => setTab("ai")}>本机 AI</button>
+          <button type="button" className={tab === "templates" ? "selected" : ""} onClick={() => setTab("templates")}>分析模板</button>
+        </div>
+        <div className="settings-content">
+          {tab === "ai" ? (
+            status ? (
+              <div className="settings-form">
+                <section className="settings-section">
+                  <div className="settings-section-title"><h3>Whisper</h3><StatusLabel ok={status.whisperAvailable} /></div>
+                  <label><span>转写语言</span><select value={status.settings.transcriptionLanguage} onChange={(event) => setStatus({ ...status, settings: { ...status.settings, transcriptionLanguage: event.target.value } })}>{LANGUAGES.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+                  <label><span>模型文件</span><div className="path-control"><input readOnly value={status.settings.whisperModelPath || status.whisperModelPath || ""} placeholder="尚未选择" /><button type="button" onClick={() => void chooseWhisperModel()}>选择</button></div></label>
+                  {status.whisperModelSource && <p className="settings-meta">{status.whisperModelSource}</p>}
+                  {status.whisperModels.length > 0 && <div className="installed-models">{status.whisperModels.map((model) => (
+                    <div className="model-row" key={model.path}>
+                      <span>{model.id} · {formatBytes(model.size)}</span>
+                      <button type="button" className="secondary-button" disabled={currentWhisperPath === model.path} onClick={() => setStatus({ ...status, settings: { ...status.settings, whisperModelPath: model.path } })}>{currentWhisperPath === model.path ? "当前模型" : "设为当前"}</button>
+                    </div>
+                  ))}</div>}
+                  <div className="model-row"><span>large-v3-turbo-q5_0 · 547.4MB · SHA-256 394221709cd5…</span><button type="button" className="secondary-button" disabled={whisperDownload?.status === "downloading" || status.whisperModels.some((model) => model.id === "ggml-large-v3-turbo-q5_0")} onClick={() => void installWhisperModel()}>{status.whisperModels.some((model) => model.id === "ggml-large-v3-turbo-q5_0") ? "已安装" : "下载"}</button></div>
+                  {whisperDownload && <DownloadProgress progress={whisperDownload} />}
+                </section>
+                <section className="settings-section">
+                  <div className="settings-section-title"><h3>音频预处理</h3><StatusLabel ok={Boolean(preprocessor?.enhancedAvailable)} /></div>
+                  <p className="settings-meta">{preprocessor?.enhancedAvailable ? `增强预处理 · ${preprocessor.engine}${preprocessor.version ? ` · ${preprocessor.version}` : ""}` : "FFmpeg 不可用，将明确使用兼容预处理。"}</p>
+                  {preprocessor?.executablePath && <p className="settings-meta">{preprocessor.executablePath}</p>}
+                </section>
+                <section className="settings-section">
+                  <div className="settings-section-title"><h3>Ollama</h3><StatusLabel ok={status.ollamaAvailable} /></div>
+                  <label><span>分析模型</span><input value={status.settings.analysisModel} onChange={(event) => setStatus({ ...status, settings: { ...status.settings, analysisModel: event.target.value } })} /></label>
+                  <div className="model-row"><span>qwen3.5:4b · 可选分析模型</span>{status.ollamaModels.some((model) => model.name === "qwen3.5:4b") ? <button type="button" className="secondary-button" disabled={status.settings.analysisModel === "qwen3.5:4b"} onClick={() => setStatus({ ...status, settings: { ...status.settings, analysisModel: "qwen3.5:4b" } })}>{status.settings.analysisModel === "qwen3.5:4b" ? "当前模型" : "设为当前"}</button> : <button type="button" className="secondary-button" disabled={!status.ollamaAvailable || download !== null && download.status !== "completed" && download.status !== "failed"} onClick={() => void installOllamaModel("qwen3.5:4b", "约 3GB", "文稿分析")}>下载</button>}</div>
+                  <label><span>嵌入模型</span><input value={status.settings.embeddingModel} onChange={(event) => setStatus({ ...status, settings: { ...status.settings, embeddingModel: event.target.value } })} /></label>
+                  <div className="model-row"><span>{status.ollamaModels.some((model) => model.name === status.settings.embeddingModel) ? "嵌入模型已安装" : "嵌入模型未安装"}</span><button type="button" className="secondary-button" disabled={!status.ollamaAvailable || status.ollamaModels.some((model) => model.name === status.settings.embeddingModel) || download !== null && download.status !== "completed" && download.status !== "failed"} onClick={() => void installOllamaModel(status.settings.embeddingModel, "639MB", "知识索引")}>{status.ollamaModels.some((model) => model.name === status.settings.embeddingModel) ? "已安装" : "下载模型"}</button></div>
+                  {download && <DownloadProgress progress={download} />}
+                  {status.ollamaModels.length > 0 && <p className="settings-meta">已安装：{status.ollamaModels.map((model) => model.name).join("、")}</p>}
+                </section>
+                <button type="button" className="primary-button settings-save" disabled={busy} onClick={() => void saveAi()}>{busy ? "保存中…" : "保存设置"}</button>
+              </div>
+            ) : <p className="settings-empty">正在读取本机状态…</p>
+          ) : (
+            editing ? <TemplateEditor template={editing} busy={busy} onCancel={() => setEditing(null)} onSaved={async () => { setEditing(null); await refresh(); }} onError={setError} /> : (
+              <div className="template-list">
+                <div className="template-list-heading"><span>{templates.length} 个模板</span><button type="button" className="primary-button" onClick={() => setEditing(emptyTemplate())}>新建模板</button></div>
+                {templates.map((template) => (
+                  <div className="template-row" key={template.id}>
+                    <div><strong>{template.name}</strong><span>{template.description || "自定义分析模板"}</span></div>
+                    <div className="template-actions">
+                      <button type="button" disabled={busy} onClick={() => void duplicateTemplate(template)}>复制</button>
+                      {!template.isBuiltin && <button type="button" disabled={busy} onClick={() => setEditing(template)}>编辑</button>}
+                      {!template.isBuiltin && <button type="button" className="danger-text" disabled={busy} onClick={() => void removeTemplate(template)}>删除</button>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )
+          )}
+          {notice && <p className="inline-notice">{notice}</p>}
+          {error && <p className="inline-error">{error}</p>}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function StatusLabel({ ok }: { ok: boolean }) {
+  return <span className={`settings-status ${ok ? "ready" : "missing"}`}>{ok ? "已就绪" : "未就绪"}</span>;
+}
+
+function DownloadProgress({ progress }: { progress: ModelDownloadProgress }) {
+  const percent = progress.total && progress.completed !== null ? Math.min(100, Math.round(progress.completed / progress.total * 100)) : null;
+  return <div className="download-progress" role="status"><div><span>{progress.status}</span><span>{percent !== null ? `${percent}%` : ""}</span></div><div className="progress-track"><span style={{ width: percent !== null ? `${percent}%` : "12%" }} /></div></div>;
+}
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))}KB`;
+  return `${(bytes / 1024 / 1024).toFixed(bytes >= 1024 * 1024 * 1024 ? 0 : 1)}MB`;
+}
+
+function TemplateEditor({ template, busy, onCancel, onSaved, onError }: {
+  template: AnalysisTemplate;
+  busy: boolean;
+  onCancel: () => void;
+  onSaved: () => Promise<void>;
+  onError: (error: string) => void;
+}) {
+  const [draft, setDraft] = useState(template);
+  const [saving, setSaving] = useState(false);
+  async function save() {
+    setSaving(true);
+    onError("");
+    try {
+      const input = { name: draft.name, description: draft.description, focusInstructions: draft.focusInstructions, customSections: draft.customSections };
+      if (template.id.startsWith("new-")) await createAnalysisTemplate(input);
+      else await updateAnalysisTemplate(template.id, input);
+      await onSaved();
+    } catch (reason) {
+      onError(String(reason));
+    } finally {
+      setSaving(false);
+    }
+  }
+  function updateSection(index: number, patch: Partial<TemplateSection>) {
+    setDraft({ ...draft, customSections: draft.customSections.map((section, current) => current === index ? { ...section, ...patch } : section) });
+  }
+  return <form className="template-editor" onSubmit={(event) => { event.preventDefault(); void save(); }}>
+    <div className="editor-heading"><h3>{template.id.startsWith("new-") ? "新建模板" : "编辑模板"}</h3><button type="button" onClick={onCancel}>返回</button></div>
+    <label><span>名称</span><input required maxLength={40} value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label>
+    <label><span>说明</span><input maxLength={120} value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })} /></label>
+    <label><span>分析重点</span><textarea required maxLength={800} value={draft.focusInstructions} onChange={(event) => setDraft({ ...draft, focusInstructions: event.target.value })} /></label>
+    <div className="custom-section-heading"><strong>自定义栏目</strong><button type="button" disabled={draft.customSections.length >= 10} onClick={() => setDraft({ ...draft, customSections: [...draft.customSections, newSection(draft.customSections.length)] })}>添加栏目</button></div>
+    {draft.customSections.map((section, index) => <div className="custom-section-row" key={`${section.key}-${index}`}>
+      <input aria-label="栏目标题" placeholder="栏目标题" value={section.title} onChange={(event) => updateSection(index, { title: event.target.value, key: slugKey(event.target.value, index) })} />
+      <select aria-label="栏目格式" value={section.format} onChange={(event) => updateSection(index, { format: event.target.value as "paragraph" | "list" })}><option value="list">列表</option><option value="paragraph">段落</option></select>
+      <input aria-label="栏目要求" placeholder="提取要求" value={section.instruction} onChange={(event) => updateSection(index, { instruction: event.target.value })} />
+      <button type="button" aria-label="删除栏目" title="删除栏目" onClick={() => setDraft({ ...draft, customSections: draft.customSections.filter((_, current) => current !== index) })}>×</button>
+    </div>)}
+    <div className="editor-actions"><button type="button" className="secondary-button" onClick={onCancel}>取消</button><button type="submit" className="primary-button" disabled={busy || saving || !draft.name.trim() || !draft.focusInstructions.trim()}>{saving ? "保存中…" : "保存模板"}</button></div>
+  </form>;
+}
+
+function emptyTemplate(): AnalysisTemplate {
+  const now = new Date().toISOString();
+  return { id: `new-${Date.now()}`, name: "", description: "", focusInstructions: "", customSections: [], isBuiltin: false, createdAt: now, updatedAt: now };
+}
+
+function newSection(index: number): TemplateSection {
+  return { key: `section_${index + 1}`, title: "", format: "list", instruction: "" };
+}
+
+function slugKey(title: string, index: number) {
+  const key = title.trim().toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/g, "_").replace(/^_+|_+$/g, "");
+  return key || `section_${index + 1}`;
+}

@@ -1,0 +1,58 @@
+[package]
+name = "echo-memory"
+version = "0.1.0"
+description = "回声记忆 - 本地优先谈话记忆库"
+authors = ["Echo Memory contributors"]
+edition = "2021"
+autobins = false
+default-run = "echo-memory"
+
+[[bin]]
+name = "echo-memory"
+path = "src/main.rs"
+
+[[bin]]
+name = "echo-memory-mcp"
+path = "src/bin/echo-memory-mcp.rs"
+required-features = ["mcp-bin"]
+
+# 用于 Tauri 将库编译为桌面应用入口
+[lib]
+name = "echo_memory_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# Tauri 2 桌面框架
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-dialog = "2"
+# 序列化：命令参数/返回值与前端共享类型对应
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# 错误类型
+thiserror = "1"
+# 选型的 SQLite crate：bundled 静态编译（含 FTS5，无需额外 feature；数据层在 M1 落地）
+rusqlite = { version = "0.32", features = ["bundled"] }
+# 选型的 UUID：所有 ID 使用 UUID v4
+uuid = { version = "1", features = ["v4", "serde"] }
+# 选型的时间库：时间统一存 UTC ISO-8601
+chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.10"
+symphonia = { version = "0.5", features = ["aac", "mp3", "isomp4", "wav"] }
+ureq = { version = "2.10", features = ["json"] }
+hound = "3.5"
+ferrous-opencc = { version = "0.4", default-features = false, features = ["t2s-conversion"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+whisper-rs = { version = "0.13.2", features = ["metal"] }
+
+[dev-dependencies]
+# 集成测试复用 uuid 解析校验
+uuid = { version = "1", features = ["v4"] }
+
+[features]
+# 默认不启用实验特性；Tauri 2 使用稳定 API
+default = []
+mcp-bin = []
