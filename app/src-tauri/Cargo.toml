@@ -3,6 +3,7 @@ name = "echo-memory"
 version = "0.1.0"
 description = "回声记忆 - 本地优先谈话记忆库"
 authors = ["Echo Memory contributors"]
+license = "Apache-2.0"
 edition = "2021"
 autobins = false
 default-run = "echo-memory"
