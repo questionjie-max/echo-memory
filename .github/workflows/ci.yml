@@ -39,5 +39,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          # Secret scanning must be able to inspect the complete public history.
           fetch-depth: 0
       - uses: gitleaks/gitleaks-action@v2
