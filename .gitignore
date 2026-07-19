@@ -9,13 +9,38 @@ __pycache__/
 .env
 .env.*
 !.env.example
+.envrc
+.direnv/
 *.db
 *.db-shm
 *.db-wal
+*.sqlite
+*.sqlite3
 *.m4a
 *.mp3
 *.wav
 *.bin
+*.pem
+*.key
+*.p12
+*.pfx
+*.mobileprovision
+*.keystore
+*.jks
+
+# Local app data and release staging
+library/
+demo-data/
+release/
+*.dSYM/
+*.xcarchive/
+*.ipa
+*.pkg
+*.zip
+*.tar.gz
+*.tgz
+*.orig
+logo-concepts/
 
 # Distribution and generated executables
 *.dmg

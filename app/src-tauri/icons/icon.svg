@@ -1,9 +1,57 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="108" fill="#12202A"/>
-  <path d="M145 181c-24 28-37 64-37 103 0 83 67 150 150 150 47 0 89-22 116-56" fill="none" stroke="#F6F0E8" stroke-width="28" stroke-linecap="round"/>
-  <path d="M172 211c-15 20-23 45-23 72 0 65 53 118 118 118 32 0 61-13 82-33" fill="none" stroke="#F6F0E8" stroke-width="28" stroke-linecap="round"/>
-  <path d="M202 239c-8 13-13 28-13 45 0 46 37 83 83 83 20 0 39-7 54-20" fill="none" stroke="#55B6AE" stroke-width="28" stroke-linecap="round"/>
-  <circle cx="282" cy="283" r="51" fill="#EF7565"/>
-  <circle cx="282" cy="283" r="19" fill="#12202A"/>
-  <path d="M330 155h36" stroke="#EF7565" stroke-width="28" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+  <defs>
+    <linearGradient id="tile" x1="180" y1="112" x2="804" y2="920" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#F4F7FC"/>
+    </linearGradient>
+    <linearGradient id="bubble" x1="258" y1="350" x2="687" y2="764" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#21B8F5"/>
+      <stop offset="0.54" stop-color="#287DF5"/>
+      <stop offset="1" stop-color="#3157F5"/>
+    </linearGradient>
+    <linearGradient id="fold" x1="663" y1="229" x2="808" y2="398" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F9FBFF"/>
+      <stop offset="1" stop-color="#E4ECF8"/>
+    </linearGradient>
+    <filter id="tileShadow" x="20" y="28" width="984" height="992" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="28" stdDeviation="28" flood-color="#71809B" flood-opacity="0.20"/>
+      <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#8B98AC" flood-opacity="0.13"/>
+    </filter>
+    <filter id="paperShadow" x="287" y="180" width="584" height="646" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="18" stdDeviation="24" flood-color="#7790B7" flood-opacity="0.20"/>
+      <feDropShadow dx="0" dy="3" stdDeviation="5" flood-color="#6A7E9E" flood-opacity="0.12"/>
+    </filter>
+    <filter id="bubbleShadow" x="115" y="301" width="656" height="541" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="22" stdDeviation="24" flood-color="#1D55C8" flood-opacity="0.29"/>
+      <feDropShadow dx="0" dy="4" stdDeviation="5" flood-color="#1647B0" flood-opacity="0.18"/>
+    </filter>
+    <filter id="waveShadow" x="267" y="421" width="356" height="238" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="4" stdDeviation="5" flood-color="#143CA4" flood-opacity="0.23"/>
+    </filter>
+  </defs>
+  <g filter="url(#tileShadow)">
+    <rect x="68" y="54" width="888" height="888" rx="206" fill="url(#tile)"/>
+    <rect x="69.5" y="55.5" width="885" height="885" rx="204.5" stroke="#FFFFFF" stroke-width="3"/>
+  </g>
+  <g filter="url(#paperShadow)">
+    <path d="M367 217H658L817 376V714C817 754.869 783.869 788 743 788H367C326.131 788 293 754.869 293 714V291C293 250.131 326.131 217 367 217Z" fill="#FFFFFF"/>
+    <path d="M658 217L817 376H720C685.758 376 658 348.242 658 314V217Z" fill="url(#fold)"/>
+    <path d="M658 217V314C658 348.242 685.758 376 720 376H817" stroke="#DCE5F3" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="402" y="296" width="151" height="32" rx="16" fill="#2C73F4"/>
+    <rect x="617" y="452" width="121" height="27" rx="13.5" fill="#C8D5E9"/>
+    <rect x="617" y="510" width="121" height="27" rx="13.5" fill="#C8D5E9"/>
+    <rect x="617" y="568" width="121" height="27" rx="13.5" fill="#C8D5E9"/>
+    <rect x="617" y="626" width="91" height="27" rx="13.5" fill="#C8D5E9"/>
+  </g>
+  <g filter="url(#bubbleShadow)">
+    <path d="M305 346H591C666.111 346 727 406.889 727 482V602C727 677.111 666.111 738 591 738H351L254.595 805.484C239.69 815.918 219.222 805.254 219.222 787.064V723.24C174.607 700.923 144 654.81 144 602V482C144 406.889 204.889 346 280 346H305Z" fill="url(#bubble)"/>
+    <path d="M298 351H591C661.142 351 718 407.858 718 478" stroke="#77D7FA" stroke-opacity="0.52" stroke-width="8" stroke-linecap="round"/>
+  </g>
+  <g filter="url(#waveShadow)" fill="#FFFFFF">
+    <rect x="282" y="497" width="31" height="91" rx="15.5"/>
+    <rect x="344" y="457" width="31" height="171" rx="15.5"/>
+    <rect x="406" y="424" width="31" height="237" rx="15.5"/>
+    <rect x="468" y="457" width="31" height="171" rx="15.5"/>
+    <rect x="530" y="497" width="31" height="91" rx="15.5"/>
+  </g>
 </svg>

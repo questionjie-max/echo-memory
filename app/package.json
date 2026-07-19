@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "description": "回声记忆 - 本地优先谈话记忆库（Tauri 2 + React + TS + Vite）",
+  "license": "Apache-2.0",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
