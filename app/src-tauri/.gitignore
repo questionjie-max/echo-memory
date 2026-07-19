@@ -1,0 +1,3 @@
+# Rust / Tauri 编译产物
+/target
+/gen
