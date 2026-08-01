@@ -269,16 +269,30 @@ impl OllamaAdapter {
                 return Ok(draft);
             }
         }
-        let issue = parse_prepared_analysis(&first)
-            .ok()
-            .and_then(|draft| analysis_quality_issue(&draft))
+        let parsed_first = parse_prepared_analysis(&first).ok();
+        let issue = parsed_first
+            .as_ref()
+            .and_then(analysis_quality_issue)
             .unwrap_or_else(|| "返回内容不是约定的 JSON 结构".to_owned());
-        let correction = format!(
-            "上一次分析不合格：{issue}。请纠正后仅返回合法 JSON。摘要必须具体完整，关键观点必须为 3 到 8 项；没有证据的决策、待办和问题保持空数组，不得编造。所有非空条目必须使用逐字稿片段编号和匹配的连续引文。\n\
-             custom_sections 必须严格遵循模板。{template_instructions}\n\
-             上一次输出：\n{first}\n\
-             逐字稿：\n{transcript}"
-        );
+        // 首次输出无法解析时，几乎总是被 token 上限截断在字符串中间。
+        // 把这段坏数据回灌给模型既浪费上下文，又会诱导它再产出同样超长的
+        // 结果，因此这种情况改为明确要求更紧凑的输出。
+        let correction = if parsed_first.is_some() {
+            format!(
+                "上一次分析不合格：{issue}。请纠正后仅返回合法 JSON。摘要必须具体完整，关键观点必须为 3 到 8 项；没有证据的决策、待办和问题保持空数组，不得编造。所有非空条目必须使用逐字稿片段编号和匹配的连续引文。\n\
+                 custom_sections 必须严格遵循模板。{template_instructions}\n\
+                 上一次输出：\n{first}\n\
+                 逐字稿：\n{transcript}"
+            )
+        } else {
+            format!(
+                "上一次输出不是完整的 JSON（很可能过长被截断）。请重新分析并仅返回合法且完整的 JSON。\n\
+                 务必控制长度：key_points 最多 5 项，decisions、action_items、open_questions 各最多 3 项，每条 quote_text 只保留最能说明问题的一句原文（不超过 40 字）。\n\
+                 没有证据的栏目返回空数组，不得编造。所有非空条目必须使用逐字稿片段编号和匹配的连续引文。\n\
+                 custom_sections 必须严格遵循模板。{template_instructions}\n\
+                 逐字稿：\n{transcript}"
+            )
+        };
         let retry = self.generate(&correction)?;
         let mut draft = resolve_analysis_attempts(&first, &retry)?;
         normalize_custom_sections(&mut draft, template);
@@ -366,7 +380,10 @@ impl OllamaAdapter {
             "prompt": prompt,
             "stream": false,
             "format": format,
-            "options": { "num_ctx": 16384, "num_predict": 2048, "temperature": 0.1 }
+            // 2048 会截断真实录音：9 分钟会议约 170 个片段，每个列表条目都带
+            // 逐字 quote_text，JSON 正文轻易超过 4000 字。截断是硬失败（非法
+            // JSON），不是质量下降，所以这里必须留足余量。
+            "options": { "num_ctx": 16384, "num_predict": 6144, "temperature": 0.1 }
         });
         let url = format!("{}/api/generate", self.base_url.trim_end_matches('/'));
         let response: serde_json::Value = ureq::post(&url)
