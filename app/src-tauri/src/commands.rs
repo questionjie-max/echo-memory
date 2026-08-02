@@ -3,23 +3,30 @@ use crate::audio::{
     is_overlap_duplicate, plan_chunks, preprocess, preprocessor_status, read_normalized_wav,
     AudioPreprocessorStatus,
 };
+use crate::db::repository::LibraryRepository;
 use crate::error::AppResult;
 use crate::library::ManagedLibrary;
+use crate::memory::{self, OpenAiCompatibleClient};
 use crate::state::AppState;
 use crate::transcript::effective_text;
 use crate::types::{
-    AnalysisTemplate, AppInfo, IngestResult, KnowledgeAnswer, KnowledgeIndexStatus,
-    KnowledgeOverview, KnowledgeSettings, LocalAiStatus, LocalModelInfo, LocalWhisperModel,
-    McpStatus, ModelDownloadProgress, ProcessingJob, Project, RecordBrief, SearchResult,
-    TemplateSection, TranscriptBlock, TranscriptSegment, TranscriptSegmentInput,
+    AnalysisTemplate, AppInfo, ExternalAiSettings, GrowthGraph, IngestResult, KnowledgeAnswer,
+    KnowledgeIndexStatus, KnowledgeOverview, KnowledgeSettings, LocalAiStatus, LocalModelInfo,
+    LocalWhisperModel, McpStatus, MemoryFeedback, MemoryGenerationJob, MemoryGenerationRequest,
+    MemoryScope, MemorySnapshot, MemoryViewKind, ModelDownloadProgress, ProcessingJob, Project,
+    RecordBrief, SearchResult, TemplateSection, TimelineItem, TranscriptBlock, TranscriptSegment,
+    TranscriptSegmentInput,
 };
 use crate::whisper::WhisperAdapter;
+use chrono::{Duration as ChronoDuration, Local, SecondsFormat, TimeZone, Utc};
 use sha2::{Digest, Sha256};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
 
 const LARGE_V3_TURBO_Q5_SIZE: u64 = 574_041_195;
+const AUTO_MEMORY_UPDATE_DELAY: Duration = Duration::from_secs(120);
 const LARGE_V3_TURBO_Q5_SHA256: &str =
     "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2";
 
@@ -34,7 +41,7 @@ pub fn app_info() -> AppInfo {
         name: "回声记忆".to_owned(),
         version: env!("CARGO_PKG_VERSION").to_owned(),
         local_only: true,
-        generated_at: chrono::Utc::now().to_rfc3339(),
+        generated_at: Utc::now().to_rfc3339(),
     }
 }
 
@@ -439,6 +446,8 @@ pub fn get_knowledge_overview(
     project_id: Option<String>,
     unfiled_only: bool,
 ) -> Result<KnowledgeOverview, String> {
+    crate::knowledge::validate_scope(project_id.as_deref(), unfiled_only)
+        .map_err(|error| error.to_frontend())?;
     state
         .library
         .repository()
@@ -452,6 +461,8 @@ pub fn get_knowledge_index_status(
     project_id: Option<String>,
     unfiled_only: bool,
 ) -> Result<KnowledgeIndexStatus, String> {
+    crate::knowledge::validate_scope(project_id.as_deref(), unfiled_only)
+        .map_err(|error| error.to_frontend())?;
     let settings = state
         .library
         .repository()
@@ -473,11 +484,64 @@ pub fn rebuild_knowledge_index(
     project_id: Option<String>,
     unfiled_only: bool,
 ) -> Result<(), String> {
+    crate::knowledge::validate_scope(project_id.as_deref(), unfiled_only)
+        .map_err(|error| error.to_frontend())?;
+    let settings = state
+        .library
+        .repository()
+        .knowledge_settings()
+        .map_err(|error| error.to_frontend())?;
+    let scope_key = crate::knowledge::scope_key(project_id.as_deref(), unfiled_only);
+    let mut status = state
+        .library
+        .repository()
+        .get_knowledge_index_status(&scope_key, &settings.embedding_model)
+        .map_err(|error| error.to_frontend())?;
+    if status.status == "indexing" {
+        return Err("该范围的知识索引正在建立，请稍候".to_owned());
+    }
+    state
+        .start_knowledge_index(&scope_key)
+        .map_err(|error| error.to_frontend())?;
+    status.status = "indexing".to_owned();
+    status.last_error = None;
+    status.updated_at = Utc::now().to_rfc3339();
+    if let Err(error) = state
+        .library
+        .repository()
+        .save_knowledge_index_status(&status)
+    {
+        state.finish_knowledge_index(&scope_key);
+        return Err(error.to_frontend());
+    }
+
     let library_root = state.library.root().to_path_buf();
+    let embedding_model = settings.embedding_model;
+    let failure_scope_key = scope_key.clone();
+    let app_state = state.inner().clone();
     std::thread::spawn(move || {
-        if let Ok(library) = ManagedLibrary::open(library_root) {
-            let _ = crate::knowledge::rebuild_scope(&library, project_id.as_deref(), unfiled_only);
+        match ManagedLibrary::open(library_root.clone()) {
+            Ok(library) => {
+                if let Err(error) =
+                    crate::knowledge::rebuild_scope(&library, project_id.as_deref(), unfiled_only)
+                {
+                    let _ = library.repository().mark_knowledge_index_failed(
+                        &failure_scope_key,
+                        &embedding_model,
+                        &error.to_string(),
+                    );
+                }
+            }
+            Err(error) => {
+                mark_knowledge_index_failed(
+                    &library_root,
+                    &failure_scope_key,
+                    &embedding_model,
+                    &error.to_string(),
+                );
+            }
         }
+        app_state.finish_knowledge_index(&failure_scope_key);
     });
     Ok(())
 }
@@ -489,6 +553,8 @@ pub fn ask_knowledge_base(
     unfiled_only: bool,
     question: String,
 ) -> Result<KnowledgeAnswer, String> {
+    crate::knowledge::validate_scope(project_id.as_deref(), unfiled_only)
+        .map_err(|error| error.to_frontend())?;
     crate::knowledge::ask(
         &state.library,
         project_id.as_deref(),
@@ -523,6 +589,8 @@ pub fn export_knowledge_base(
     destination_path: String,
     format: String,
 ) -> Result<String, String> {
+    crate::knowledge::validate_scope(project_id.as_deref(), unfiled_only)
+        .map_err(|error| error.to_frontend())?;
     crate::export::export_knowledge_base(
         &state.library,
         project_id.as_deref(),
@@ -546,6 +614,7 @@ pub fn update_record_knowledge_base(
         .update_record_project(&record_id, knowledge_base_id.as_deref())
         .map_err(|e| e.to_frontend())?;
     spawn_index_metadata_refresh(state.library.root().to_path_buf());
+    schedule_memory_update(state.inner().clone());
     Ok(updated)
 }
 
@@ -555,11 +624,13 @@ pub fn update_record_title(
     record_id: String,
     title: String,
 ) -> Result<RecordBrief, String> {
-    state
+    let updated = state
         .library
         .repository()
         .update_record_title(&record_id, &title)
-        .map_err(|e| e.to_frontend())
+        .map_err(|e| e.to_frontend())?;
+    schedule_memory_update(state.inner().clone());
+    Ok(updated)
 }
 
 #[tauri::command]
@@ -660,6 +731,45 @@ pub fn import_audio(
 }
 
 #[tauri::command]
+pub fn import_document(
+    state: State<AppState>,
+    source_path: String,
+    project_id: Option<String>,
+    duplicate_confirmed: bool,
+) -> Result<IngestResult, String> {
+    let result = crate::document::import_document(
+        &state.library,
+        &PathBuf::from(source_path),
+        project_id.as_deref(),
+        duplicate_confirmed,
+    )
+    .map_err(|error| error.to_frontend())?;
+    if !result.duplicate {
+        let library_root = state.library.root().to_path_buf();
+        let record_id = result.record_id.clone();
+        let app_state = state.inner().clone();
+        spawn_incremental_index(library_root.clone(), record_id.clone());
+        std::thread::spawn(move || match ManagedLibrary::open(library_root.clone()) {
+            Ok(library) => {
+                if analyze_with_library(&library, &record_id).is_ok() {
+                    schedule_memory_update(app_state);
+                }
+            }
+            Err(error) => {
+                mark_processing_failed(
+                    &library_root,
+                    &record_id,
+                    None,
+                    "analyze",
+                    &error.to_string(),
+                );
+            }
+        });
+    }
+    Ok(result)
+}
+
+#[tauri::command]
 pub fn list_transcript_segments(
     state: State<AppState>,
     record_id: String,
@@ -698,6 +808,7 @@ pub fn update_transcript_segment(
         state.library.root().to_path_buf(),
         segment.record_id.clone(),
     );
+    schedule_memory_update(state.inner().clone());
     Ok(segment)
 }
 
@@ -710,14 +821,28 @@ pub fn transcribe_record(state: State<AppState>, record_id: String) -> Result<()
         .knowledge_settings()
         .map_err(|error| error.to_frontend())?;
     let library_root = state.library.root().to_path_buf();
-    std::thread::spawn(move || {
-        if let Ok(library) = ManagedLibrary::open(library_root) {
-            let _ = run_transcription(
+    let app_state = state.inner().clone();
+    std::thread::spawn(move || match ManagedLibrary::open(library_root.clone()) {
+        Ok(library) => {
+            if run_transcription(
                 &library,
                 &record_id,
                 &job,
                 &settings.transcription_language,
                 Some(&settings.whisper_model_path),
+            )
+            .is_ok()
+            {
+                schedule_memory_update(app_state);
+            }
+        }
+        Err(error) => {
+            mark_processing_failed(
+                &library_root,
+                &record_id,
+                Some(&job.id),
+                "transcribe",
+                &error.to_string(),
             );
         }
     });
@@ -783,9 +908,23 @@ pub fn retranscribe_record(
         })
         .map_err(|error| error.to_frontend())?;
     let library_root = state.library.root().to_path_buf();
-    std::thread::spawn(move || {
-        if let Ok(library) = ManagedLibrary::open(library_root) {
-            let _ = run_transcription(&library, &record_id, &job, &language, model_path.as_deref());
+    let app_state = state.inner().clone();
+    std::thread::spawn(move || match ManagedLibrary::open(library_root.clone()) {
+        Ok(library) => {
+            if run_transcription(&library, &record_id, &job, &language, model_path.as_deref())
+                .is_ok()
+            {
+                schedule_memory_update(app_state);
+            }
+        }
+        Err(error) => {
+            mark_processing_failed(
+                &library_root,
+                &record_id,
+                Some(&job.id),
+                "transcribe",
+                &error.to_string(),
+            );
         }
     });
     Ok(())
@@ -915,16 +1054,74 @@ fn run_transcription(
     if let Err(error) = result {
         let message = error.to_string();
         let _ = repository.update_job_status(&job.id, "failed", Some(&message));
-        let _ = repository.update_record_status(record_id, "failed");
+        let fallback_status = if repository.latest_transcript_version(record_id).is_ok() {
+            "completed"
+        } else {
+            "failed"
+        };
+        let _ = repository.update_record_status(record_id, fallback_status);
         return Err(error);
     }
     Ok(())
 }
 
+fn mark_processing_failed(
+    library_root: &PathBuf,
+    record_id: &str,
+    job_id: Option<&str>,
+    job_type: &str,
+    error: &str,
+) {
+    let Ok(repository) = LibraryRepository::new(library_root.join("memory.db")) else {
+        return;
+    };
+    let job = job_id
+        .and_then(|id| repository.get_job(id).ok())
+        .or_else(|| {
+            repository
+                .list_jobs_for_record(record_id)
+                .ok()?
+                .into_iter()
+                .rev()
+                .find(|job| job.job_type == job_type && job.status != "completed")
+        })
+        .or_else(|| repository.create_job(record_id, job_type).ok());
+    if let Some(job) = job {
+        let _ = repository.update_job_status(&job.id, "failed", Some(error));
+    }
+    let _ = repository.update_record_status(record_id, "failed");
+}
+
+fn mark_knowledge_index_failed(
+    library_root: &PathBuf,
+    scope_key: &str,
+    embedding_model: &str,
+    error: &str,
+) {
+    let Ok(repository) = LibraryRepository::new(library_root.join("memory.db")) else {
+        return;
+    };
+    let _ = repository.mark_knowledge_index_failed(scope_key, embedding_model, error);
+}
+
+fn mark_knowledge_indexes_failed(library_root: &PathBuf, error: &str) {
+    let Ok(repository) = LibraryRepository::new(library_root.join("memory.db")) else {
+        return;
+    };
+    let _ = repository.mark_knowledge_indexes_failed(error);
+}
+
 fn spawn_incremental_index(library_root: PathBuf, record_id: String) {
-    std::thread::spawn(move || {
-        if let Ok(library) = ManagedLibrary::open(library_root) {
-            let _ = crate::knowledge::incremental_rebuild_record(&library, &record_id);
+    std::thread::spawn(move || match ManagedLibrary::open(library_root.clone()) {
+        Ok(library) => {
+            if let Err(error) = crate::knowledge::incremental_rebuild_record(&library, &record_id) {
+                let _ = library
+                    .repository()
+                    .mark_knowledge_indexes_failed(&error.to_string());
+            }
+        }
+        Err(error) => {
+            mark_knowledge_indexes_failed(&library_root, &error.to_string());
         }
     });
 }
@@ -955,9 +1152,21 @@ pub fn analyze_record(
     }
     let job = reserve_analysis(&state.library, &record_id).map_err(|e| e.to_frontend())?;
     let library_root = state.library.root().to_path_buf();
-    std::thread::spawn(move || {
-        if let Ok(library) = ManagedLibrary::open(library_root) {
-            let _ = run_analysis(&library, &record_id, &job);
+    let app_state = state.inner().clone();
+    std::thread::spawn(move || match ManagedLibrary::open(library_root.clone()) {
+        Ok(library) => {
+            if run_analysis(&library, &record_id, &job).is_ok() {
+                schedule_memory_update(app_state);
+            }
+        }
+        Err(error) => {
+            mark_processing_failed(
+                &library_root,
+                &record_id,
+                Some(&job.id),
+                "analyze",
+                &error.to_string(),
+            );
         }
     });
     Ok(())
@@ -1076,7 +1285,7 @@ fn run_analysis(library: &ManagedLibrary, record_id: &str, job: &ProcessingJob) 
     if let Err(error) = result {
         let message = error.to_string();
         let _ = repository.update_job_status(&job.id, "failed", Some(&message));
-        let _ = repository.update_record_status(record_id, "completed");
+        let _ = repository.update_record_status(record_id, "failed");
         return Err(error);
     }
     Ok(())
@@ -1092,4 +1301,273 @@ pub fn latest_analysis(
         .repository()
         .latest_analysis(&record_id)
         .map_err(|e| e.to_frontend())
+}
+
+fn schedule_memory_update(state: AppState) {
+    let revision = state.schedule_memory_update();
+    std::thread::spawn(move || {
+        std::thread::sleep(AUTO_MEMORY_UPDATE_DELAY);
+        if !state.is_latest_memory_update(revision) {
+            return;
+        }
+        let Ok(settings) = memory::external_settings(&state.library) else {
+            return;
+        };
+        if !settings.enabled || !settings.has_api_key || settings.privacy_consent_at.is_none() {
+            return;
+        }
+
+        let (range_start, range_end) = automatic_memory_range();
+        for view_kind in [MemoryViewKind::Map, MemoryViewKind::Evolution] {
+            if !state.is_latest_memory_update(revision) {
+                return;
+            }
+            let generation_id = format!("auto-{}-{}", view_kind.as_str(), uuid::Uuid::new_v4());
+            let request = MemoryGenerationRequest {
+                generation_id: generation_id.clone(),
+                view_kind,
+                scope: MemoryScope {
+                    kind: "all".to_owned(),
+                    project_id: None,
+                },
+                range_start: Some(range_start.clone()),
+                range_end: Some(range_end.clone()),
+            };
+            if state.start_generation_job(&generation_id).is_err() {
+                continue;
+            }
+            match memory::generate_snapshot(&state, &request) {
+                Ok(snapshot) => state.finish_generation_job(&generation_id, &snapshot),
+                Err(error) => state.fail_generation_job(&generation_id, error.to_frontend()),
+            }
+            state.clear_generation_cancel(&generation_id);
+        }
+    });
+}
+
+fn automatic_memory_range() -> (String, String) {
+    let today = Local::now().date_naive();
+    let start_naive = (today - ChronoDuration::days(89))
+        .and_hms_milli_opt(0, 0, 0, 0)
+        .expect("valid local start of day");
+    let next_day_naive = (today + ChronoDuration::days(1))
+        .and_hms_milli_opt(0, 0, 0, 0)
+        .expect("valid local start of next day");
+    let start_local = Local
+        .from_local_datetime(&start_naive)
+        .earliest()
+        .unwrap_or_else(|| Local.from_utc_datetime(&start_naive));
+    let next_day_local = Local
+        .from_local_datetime(&next_day_naive)
+        .earliest()
+        .unwrap_or_else(|| Local.from_utc_datetime(&next_day_naive));
+    let start = start_local
+        .with_timezone(&Utc)
+        .to_rfc3339_opts(SecondsFormat::Millis, true);
+    let end = (next_day_local.with_timezone(&Utc) - ChronoDuration::milliseconds(1))
+        .to_rfc3339_opts(SecondsFormat::Millis, true);
+    (start, end)
+}
+
+/* -------------------------- external memory views -------------------------- */
+
+#[tauri::command]
+pub fn get_external_ai_settings(state: State<AppState>) -> Result<ExternalAiSettings, String> {
+    memory::external_settings(&state.library).map_err(|error| error.to_frontend())
+}
+
+#[tauri::command]
+pub fn update_external_ai_settings(
+    state: State<AppState>,
+    settings: ExternalAiSettings,
+) -> Result<ExternalAiSettings, String> {
+    let has_api_key = memory::get_api_key()
+        .map_err(|error| error.to_frontend())?
+        .is_some();
+    state
+        .library
+        .repository()
+        .update_external_ai_settings(&settings, has_api_key)
+        .map_err(|error| error.to_frontend())
+}
+
+#[tauri::command]
+pub fn set_external_ai_api_key(
+    state: State<AppState>,
+    api_key: String,
+) -> Result<ExternalAiSettings, String> {
+    memory::set_api_key(&api_key).map_err(|error| error.to_frontend())?;
+    memory::external_settings(&state.library).map_err(|error| error.to_frontend())
+}
+
+#[tauri::command]
+pub fn clear_external_ai_api_key(state: State<AppState>) -> Result<ExternalAiSettings, String> {
+    memory::clear_api_key().map_err(|error| error.to_frontend())?;
+    memory::external_settings(&state.library).map_err(|error| error.to_frontend())
+}
+
+#[tauri::command]
+pub async fn test_external_ai_connection(state: State<'_, AppState>) -> Result<(), String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let settings =
+            memory::external_settings(&state.library).map_err(|error| error.to_frontend())?;
+        let api_key = memory::get_api_key()
+            .map_err(|error| error.to_frontend())?
+            .ok_or_else(|| "请先配置外部 AI API Key".to_owned())?;
+        OpenAiCompatibleClient::new(&settings.base_url, &settings.model, &api_key)
+            .and_then(|client| client.test())
+            .map_err(|error| error.to_frontend())
+    })
+    .await
+    .map_err(|_| "外部 AI 连接测试后台任务异常，请重试".to_owned())?
+}
+
+#[tauri::command]
+pub fn get_local_timeline(
+    state: State<AppState>,
+    scope: MemoryScope,
+    range_start: Option<String>,
+    range_end: Option<String>,
+) -> Result<Vec<TimelineItem>, String> {
+    memory::local_timeline(
+        &state.library,
+        &scope,
+        range_start.as_deref(),
+        range_end.as_deref(),
+    )
+    .map_err(|error| error.to_frontend())
+}
+
+#[tauri::command]
+pub fn get_local_growth_graph(
+    state: State<AppState>,
+    scope: MemoryScope,
+    range_start: Option<String>,
+    range_end: Option<String>,
+) -> Result<GrowthGraph, String> {
+    memory::local_growth_graph(
+        &state.library,
+        &scope,
+        range_start.as_deref(),
+        range_end.as_deref(),
+    )
+    .map_err(|error| error.to_frontend())
+}
+
+#[tauri::command]
+pub async fn generate_memory_snapshot(
+    state: State<'_, AppState>,
+    request: MemoryGenerationRequest,
+) -> Result<MemorySnapshot, String> {
+    let state = state.inner().clone();
+    state.clear_generation_cancel(&request.generation_id);
+    tauri::async_runtime::spawn_blocking(move || {
+        memory::generate_snapshot(&state, &request).map_err(|error| error.to_frontend())
+    })
+    .await
+    .map_err(|_| "外部 AI 生成后台任务异常，请重试".to_owned())?
+}
+
+#[tauri::command]
+pub fn start_memory_generation(
+    state: State<AppState>,
+    request: MemoryGenerationRequest,
+) -> Result<MemoryGenerationJob, String> {
+    start_memory_generation_with_state(state.inner().clone(), request)
+        .map_err(|error| error.to_frontend())
+}
+
+fn start_memory_generation_with_state(
+    state: AppState,
+    request: MemoryGenerationRequest,
+) -> crate::error::AppResult<MemoryGenerationJob> {
+    let job = state.start_generation_job(&request.generation_id)?;
+    std::thread::spawn(move || {
+        match memory::generate_snapshot(&state, &request) {
+            Ok(snapshot) => state.finish_generation_job(&request.generation_id, &snapshot),
+            Err(error) => state.fail_generation_job(&request.generation_id, error.to_frontend()),
+        }
+        state.clear_generation_cancel(&request.generation_id);
+    });
+    Ok(job)
+}
+
+#[tauri::command]
+pub fn get_memory_generation_job(
+    state: State<AppState>,
+    generation_id: String,
+) -> Result<MemoryGenerationJob, String> {
+    state
+        .generation_job(&generation_id)
+        .ok_or_else(|| "未找到该生成任务".to_owned())
+}
+
+#[tauri::command]
+pub fn list_memory_snapshots(
+    state: State<AppState>,
+    view_kind: MemoryViewKind,
+    scope: MemoryScope,
+    range_start: Option<String>,
+    range_end: Option<String>,
+) -> Result<Vec<MemorySnapshot>, String> {
+    state
+        .library
+        .repository()
+        .list_memory_snapshots(
+            &view_kind,
+            &scope,
+            range_start.as_deref(),
+            range_end.as_deref(),
+        )
+        .map_err(|error| error.to_frontend())
+}
+
+#[tauri::command]
+pub fn get_memory_snapshot(
+    state: State<AppState>,
+    snapshot_id: String,
+) -> Result<MemorySnapshot, String> {
+    state
+        .library
+        .repository()
+        .get_memory_snapshot(&snapshot_id)
+        .map_err(|error| error.to_frontend())
+}
+
+#[tauri::command]
+pub fn cancel_memory_generation(
+    state: State<AppState>,
+    generation_id: String,
+) -> Result<MemoryGenerationJob, String> {
+    state
+        .cancel_generation(&generation_id)
+        .ok_or_else(|| "未找到该生成任务".to_owned())
+}
+
+#[tauri::command]
+pub fn update_memory_feedback(
+    state: State<AppState>,
+    snapshot_id: String,
+    item_id: String,
+    decision: String,
+    note: String,
+) -> Result<MemoryFeedback, String> {
+    state
+        .library
+        .repository()
+        .update_memory_feedback(&snapshot_id, &item_id, &decision, &note)
+        .map_err(|error| error.to_frontend())
+}
+
+#[tauri::command]
+pub fn list_memory_feedback(
+    state: State<AppState>,
+    snapshot_id: String,
+) -> Result<Vec<MemoryFeedback>, String> {
+    state
+        .library
+        .repository()
+        .list_memory_feedback(&snapshot_id)
+        .map_err(|error| error.to_frontend())
 }

@@ -16,11 +16,13 @@ const SOURCE_LABEL: Record<SearchResult["sourceType"], string> = {
 
 export default function SearchPanel({ projectId, unfiledOnly, onOpen }: Props) {
   const root = useRef<HTMLElement>(null);
+  const requestId = useRef(0);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [error, setError] = useState("");
   const [searched, setSearched] = useState(false);
   const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     function onPointerDown(event: PointerEvent) {
@@ -38,37 +40,53 @@ export default function SearchPanel({ projectId, unfiledOnly, onOpen }: Props) {
   }, []);
 
   useEffect(() => {
+    requestId.current += 1;
     setResults([]);
     setSearched(false);
     setOpen(false);
+    setLoading(false);
   }, [projectId, unfiledOnly]);
 
   async function search() {
     const trimmed = query.trim();
     if (!trimmed) {
+      requestId.current += 1;
       setResults([]);
       setSearched(false);
       setOpen(false);
+      setLoading(false);
       return;
     }
+    const currentRequestId = ++requestId.current;
+    setLoading(true);
     try {
       setError("");
-      setResults(await searchRecords(trimmed, projectId, unfiledOnly));
+      setResults([]);
+      setSearched(false);
+      setOpen(true);
+      const nextResults = await searchRecords(trimmed, projectId, unfiledOnly);
+      if (currentRequestId !== requestId.current) return;
+      setResults(nextResults);
     } catch (reason) {
+      if (currentRequestId !== requestId.current) return;
       setError(String(reason));
       setResults([]);
     } finally {
+      if (currentRequestId !== requestId.current) return;
       setSearched(true);
       setOpen(true);
+      setLoading(false);
     }
   }
 
   function clear() {
+    requestId.current += 1;
     setQuery("");
     setResults([]);
     setError("");
     setSearched(false);
     setOpen(false);
+    setLoading(false);
   }
 
   return (
@@ -78,8 +96,14 @@ export default function SearchPanel({ projectId, unfiledOnly, onOpen }: Props) {
           <input
             value={query}
             onChange={(event) => {
-              setQuery(event.target.value);
-              if (!event.target.value) clear();
+              const nextQuery = event.target.value;
+              setQuery(nextQuery);
+              requestId.current += 1;
+              setResults([]);
+              setError("");
+              setSearched(false);
+              setOpen(false);
+              setLoading(false);
             }}
             onFocus={() => searched && setOpen(true)}
             onKeyDown={(event) => event.key === "Enter" && void search()}
@@ -98,12 +122,13 @@ export default function SearchPanel({ projectId, unfiledOnly, onOpen }: Props) {
       </div>
 
       {open && (
-        <div className="search-popover material" role="dialog" aria-label="搜索结果">
+        <div className="search-popover material" role="dialog" aria-label="搜索结果" aria-busy={loading}>
           <div className="popover-header">
             <strong>搜索结果</strong>
-            <span>{results.length} 条</span>
+            {!loading && <span>{results.length} 条</span>}
           </div>
           <div className="search-results">
+            {loading && <p className="popover-empty" role="status">正在搜索…</p>}
             {results.map((result) => (
               <button
                 key={`${result.recordId}-${result.sourceId}`}
@@ -126,7 +151,7 @@ export default function SearchPanel({ projectId, unfiledOnly, onOpen }: Props) {
               </button>
             ))}
             {searched && !error && results.length === 0 && <p className="popover-empty">没有找到匹配内容。</p>}
-            {error && <p className="inline-error">{error}</p>}
+            {error && <p className="inline-error" role="alert">{error}</p>}
           </div>
         </div>
       )}

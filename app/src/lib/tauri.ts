@@ -3,6 +3,8 @@ import type {
   AnalysisTemplate,
   AudioPreprocessorStatus,
   AppInfo,
+  ExternalAiSettings,
+  GrowthGraph,
   IngestResult,
   KnowledgeAnswer,
   KnowledgeIndexStatus,
@@ -10,11 +12,18 @@ import type {
   KnowledgeSettings,
   LocalAiStatus,
   McpStatus,
+  MemoryFeedback,
+  MemoryGenerationJob,
+  MemoryGenerationRequest,
+  MemoryScope,
+  MemorySnapshot,
+  MemoryViewKind,
   Project,
   RecordBrief,
   SearchResult,
   StoredAnalysis,
   TemplateSection,
+  TimelineItem,
   TranscriptSegment,
   TranscriptBlock,
 } from "../shared/types";
@@ -156,6 +165,18 @@ export function importAudio(input: {
   });
 }
 
+export function importDocument(input: {
+  sourcePath: string;
+  projectId?: string | null;
+  duplicateConfirmed: boolean;
+}): Promise<IngestResult> {
+  return invoke<IngestResult>("import_document", {
+    sourcePath: input.sourcePath,
+    projectId: input.projectId ?? null,
+    duplicateConfirmed: input.duplicateConfirmed,
+  });
+}
+
 export function recordAudioPath(recordId: string): Promise<string> {
   return invoke<string>("record_audio_path", { recordId });
 }
@@ -194,4 +215,65 @@ export function exportRecord(recordId: string, destinationPath: string, format: 
 
 export function exportKnowledgeBase(projectId: string | null, unfiledOnly: boolean, destinationPath: string, format: "md" | "txt"): Promise<string> {
   return invoke<string>("export_knowledge_base", { projectId, unfiledOnly, destinationPath, format });
+}
+
+
+export function getExternalAiSettings(): Promise<ExternalAiSettings> {
+  return invoke<ExternalAiSettings>("get_external_ai_settings");
+}
+
+export function updateExternalAiSettings(settings: ExternalAiSettings): Promise<ExternalAiSettings> {
+  return invoke<ExternalAiSettings>("update_external_ai_settings", { settings });
+}
+
+export function setExternalAiApiKey(apiKey: string): Promise<ExternalAiSettings> {
+  return invoke<ExternalAiSettings>("set_external_ai_api_key", { apiKey });
+}
+
+export function clearExternalAiApiKey(): Promise<ExternalAiSettings> {
+  return invoke<ExternalAiSettings>("clear_external_ai_api_key");
+}
+
+export function testExternalAiConnection(): Promise<void> {
+  return invoke<void>("test_external_ai_connection");
+}
+
+export function getLocalTimeline(scope: MemoryScope, rangeStart: string | null, rangeEnd: string | null): Promise<TimelineItem[]> {
+  return invoke<TimelineItem[]>("get_local_timeline", { scope, rangeStart, rangeEnd });
+}
+
+export function getLocalGrowthGraph(scope: MemoryScope, rangeStart: string | null, rangeEnd: string | null): Promise<GrowthGraph> {
+  return invoke<GrowthGraph>("get_local_growth_graph", { scope, rangeStart, rangeEnd });
+}
+
+export function generateMemorySnapshot(request: MemoryGenerationRequest): Promise<MemorySnapshot> {
+  return invoke<MemorySnapshot>("generate_memory_snapshot", { request });
+}
+
+export function startMemoryGeneration(request: MemoryGenerationRequest): Promise<MemoryGenerationJob> {
+  return invoke<MemoryGenerationJob>("start_memory_generation", { request });
+}
+
+export function getMemoryGenerationJob(generationId: string): Promise<MemoryGenerationJob> {
+  return invoke<MemoryGenerationJob>("get_memory_generation_job", { generationId });
+}
+
+export function listMemorySnapshots(viewKind: MemoryViewKind, scope: MemoryScope, rangeStart: string | null, rangeEnd: string | null): Promise<MemorySnapshot[]> {
+  return invoke<MemorySnapshot[]>("list_memory_snapshots", { viewKind, scope, rangeStart, rangeEnd });
+}
+
+export function getMemorySnapshot(snapshotId: string): Promise<MemorySnapshot> {
+  return invoke<MemorySnapshot>("get_memory_snapshot", { snapshotId });
+}
+
+export function cancelMemoryGeneration(generationId: string): Promise<MemoryGenerationJob> {
+  return invoke<MemoryGenerationJob>("cancel_memory_generation", { generationId });
+}
+
+export function updateMemoryFeedback(snapshotId: string, itemId: string, decision: string, note: string): Promise<MemoryFeedback> {
+  return invoke<MemoryFeedback>("update_memory_feedback", { snapshotId, itemId, decision, note });
+}
+
+export function listMemoryFeedback(snapshotId: string): Promise<MemoryFeedback[]> {
+  return invoke<MemoryFeedback[]>("list_memory_feedback", { snapshotId });
 }

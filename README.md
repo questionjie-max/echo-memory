@@ -21,11 +21,15 @@ Echo Memory keeps the audio, timestamped transcript, structured analysis, and so
 - Extract summaries, key points, decisions, action items, and open questions through a local Ollama model.
 - Require decisions and action items to reference source transcript segments; unverified references are marked instead of invented.
 - Build project-based personal knowledge libraries and search titles, transcripts, summaries, decisions, and action items with time ranges.
+- Explore the library through a growth timeline and an evidence-backed cognitive evolution view.
+- Optionally generate cross-record memory snapshots with a user-configured OpenAI-compatible external model; snapshots are versioned, reviewable, and never overwrite source records.
 - Expose a user-enabled, local-only, read-only MCP server so AI tools can retrieve relevant historical context with source evidence.
 
 ## Local-first by design
 
-Audio, transcripts, SQLite data, and MCP run on your machine. In the current Alpha, Echo Memory does not upload audio or transcripts, silently fall back to cloud processing, expose a public network listener, or let MCP write to your library.
+Audio, transcripts, SQLite data, local Whisper, local Ollama analysis, knowledge-base retrieval, and MCP run on your machine by default. External AI is disabled by default. If you enable it and confirm a generation, only the selected scope's titles, dates, projects, full transcripts, and existing structured analysis are sent to the OpenAI-compatible service you configure; original audio is never uploaded.
+
+External AI is limited to cross-record timeline and cognitive-evolution data. Every generation is stored as a traceable versioned snapshot with source record and transcript-segment references, and can be confirmed or rejected without changing the original record. Cloud transcription is only reserved in the settings model and is not implemented.
 
 The trade-off is deliberate: local transcription and analysis require local dependencies. Missing models or failed analysis are shown clearly and never destroy already saved audio or transcripts.
 
@@ -36,6 +40,7 @@ Import audio
   -> local timestamped transcript
   -> source-backed decisions and action items
   -> project knowledge library + full-text search
+  -> growth timeline / cognitive evolution snapshots
   -> read-only MCP queries for your AI tools
 ```
 
@@ -45,13 +50,36 @@ The following conceptual interface uses fictional demonstration data only. It il
 
 ![Echo Memory local conversation-memory workflow](docs/images/product-overview.svg)
 
+## Screenshots
+
+The screenshots below use synthetic demonstration data and show the current macOS interface.
+
+### Evidence-backed knowledge chat
+
+![Echo Memory knowledge chat](docs/images/knowledge-chat.png)
+
+### Growth timeline
+
+![Echo Memory growth timeline](docs/images/growth-timeline.png)
+
+### Cognitive evolution
+
+![Echo Memory cognitive evolution](docs/images/cognitive-evolution.png)
+
 ## MCP: a bridge to AI, not a data export
 
 MCP is disabled by default. When you enable it in the app, Echo Memory provides a local stdio server with read-only tools for searching records, reading bounded transcript ranges, listing projects, retrieving project context, and listing action items.
 
 The server records query metadata, not audio, transcript bodies, or keys. It never opens a public port and cannot write, edit, or delete your records. See the [MCP reference](docs/mcp.md) for the tool list and development configuration.
 
-## Personal knowledge library and second brain
+## Memory views
+
+The library keeps the existing three-column workspace and adds two full-area views:
+
+- **Growth timeline:** local records, summaries, decisions, tasks, and viewpoints grouped by day, with 7/30/90-day and all-time filters.
+- **Cognitive evolution:** version chains showing viewpoints that were added, supplemented, corrected, overturned, merged, or validated, with evidence and review feedback.
+
+Without external AI configuration, the growth timeline still shows local deterministic data. Cognitive evolution explains how to configure external AI instead of inventing cross-record facts.
 
 Each conversation can be assigned to a project. Over time, the library makes recurring decisions, commitments, questions, and original wording discoverable across conversations. The goal is not to replace your notes; it is to preserve a verifiable layer of work memory that you and your AI tools can revisit.
 

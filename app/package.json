@@ -12,7 +12,8 @@
     "build:bundle": "npm run build && npm run build:mcp",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test:growth": "node --experimental-strip-types --test tests/growth-timeline.test.ts"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.1.1",
