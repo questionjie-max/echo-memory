@@ -1,7 +1,7 @@
 [package]
 name = "echo-memory"
 version = "0.1.0"
-description = "回声记忆 - 本地优先谈话记忆库"
+description = "回声记忆 - 面向 AI Agent 的本地优先个人记忆操作系统"
 authors = ["Echo Memory contributors"]
 license = "Apache-2.0"
 edition = "2021"

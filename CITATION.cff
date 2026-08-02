@@ -5,10 +5,12 @@ version: "0.1.0"
 date-released: 2026-07-19
 license: Apache-2.0
 repository-code: "https://github.com/questionjie-max/echo-memory"
-abstract: "A local-first macOS conversation memory library with timestamped transcripts, source-backed analysis, local search, and read-only MCP access."
+abstract: "A local-first Personal Memory OS that turns conversations and documents into traceable, evolving context for people and AI agents."
 keywords:
   - local-first
-  - conversation memory
+  - Personal Memory OS
+  - personal digital twin
+  - cognitive evolution
   - MCP
   - macOS
   - privacy
