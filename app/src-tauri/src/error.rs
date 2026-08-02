@@ -16,6 +16,8 @@ pub enum AppError {
     Import(String),
     #[error("本地分析错误: {0}")]
     Analysis(String),
+    #[error("外部 AI 错误: {0}")]
+    ExternalAi(String),
 }
 
 /// 后端统一结果别名。

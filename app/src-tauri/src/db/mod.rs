@@ -88,14 +88,24 @@ mod tests {
         run_migrations(&p).expect("重复迁移应幂等");
 
         let conn = Connection::open(&p).unwrap();
-        let count: i64 = conn
+        for version in [1, 13] {
+            let count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM schema_migrations WHERE version = ?1",
+                    [version],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(count, 1, "{version:04} 迁移应只记录一次");
+        }
+        let memory_tables: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM schema_migrations WHERE version = 1",
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('memory_snapshots', 'memory_feedback')",
                 [],
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(count, 1, "0001 迁移应只记录一次");
+        assert_eq!(memory_tables, 2);
     }
 
     #[test]

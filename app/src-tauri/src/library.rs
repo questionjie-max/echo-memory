@@ -16,6 +16,7 @@ use uuid::Uuid;
 
 const AUDIO_EXTENSIONS: [&str; 3] = ["mp3", "m4a", "wav"];
 
+#[derive(Clone)]
 pub struct ManagedLibrary {
     root: PathBuf,
     repository: LibraryRepository,

@@ -45,6 +45,9 @@ symphonia = { version = "0.5", features = ["aac", "mp3", "isomp4", "wav"] }
 ureq = { version = "2.10", features = ["json"] }
 hound = "3.5"
 ferrous-opencc = { version = "0.4", default-features = false, features = ["t2s-conversion"] }
+pulldown-cmark = { version = "0.13", default-features = false }
+quick-xml = "0.41"
+zip = { version = "2.4", default-features = false, features = ["deflate"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 whisper-rs = { version = "0.13.2", features = ["metal"] }

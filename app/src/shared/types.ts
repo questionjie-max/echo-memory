@@ -48,6 +48,8 @@ export interface RecordBrief {
   title: string;
   projectId: string | null; // UUID
   projectName: string | null;
+  /** import/recording 表示音频，document 表示导入的文字文档 */
+  sourceType: string;
   audioHash: string; // SHA-256
   audioDurationMs: number; // 毫秒整数
   importedAt: string; // UTC ISO-8601
@@ -295,11 +297,184 @@ export interface ProcessingJob {
   updatedAt: string; // UTC ISO-8601
 }
 
-/** import_audio 命令返回 */
+/** import_audio / import_document 命令返回 */
 export interface IngestResult {
   recordId: string; // UUID
   hash: string; // SHA-256
   duplicate: boolean; // 是否命中既有 audio_hash
   durationMs: number;
   title: string;
+}
+
+/* -------------------------- external memory views -------------------------- */
+
+export interface ExternalAiSettings {
+  enabled: boolean;
+  baseUrl: string;
+  model: string;
+  hasApiKey: boolean;
+  privacyConsentAt: string | null;
+  /** Reserved only; cloud audio transcription is not implemented. */
+  transcriptionProvider: string;
+}
+
+export type MemoryViewKind = "timeline" | "map" | "evolution";
+export type MemoryGenerationStatus = "generating" | "completed" | "partial" | "failed" | "cancelled";
+
+export interface MemoryScope {
+  kind: "all" | "project" | "unfiled";
+  projectId: string | null;
+}
+
+export interface MemorySourceReference {
+  recordId: string;
+  segmentId: string | null;
+  startMs: number | null;
+  endMs: number | null;
+  quoteText: string;
+}
+
+export interface TimelineItem {
+  id: string;
+  occurredAt: string;
+  itemType: string;
+  title: string;
+  summary: string;
+  projectId: string | null;
+  projectName: string | null;
+  inferred: boolean;
+  confidence: number | null;
+  sources: MemorySourceReference[];
+}
+
+export interface MemoryNode {
+  id: string;
+  nodeType: string;
+  label: string;
+  summary: string;
+  inferred: boolean;
+  confidence: number | null;
+  sources: MemorySourceReference[];
+}
+
+export interface MemoryEdge {
+  id: string;
+  sourceId: string;
+  targetId: string;
+  relation: string;
+  inferred: boolean;
+  confidence: number | null;
+  sources: MemorySourceReference[];
+}
+
+export interface MemoryBranch {
+  id: string;
+  label: string;
+  branchType: "project" | "theme" | "question" | "workflow" | string;
+  projectId: string | null;
+  parentId: string | null;
+  order: number;
+  inferred: boolean;
+}
+
+export interface GrowthNode {
+  id: string;
+  nodeType: string;
+  label: string;
+  summary: string;
+  occurredAt: string;
+  branchId: string;
+  projectId: string | null;
+  projectName: string | null;
+  inferred: boolean;
+  confidence: number | null;
+  sources: MemorySourceReference[];
+}
+
+export interface GrowthEdge {
+  id: string;
+  sourceId: string;
+  targetId: string;
+  relation: string;
+  inferred: boolean;
+  confidence: number | null;
+  sources: MemorySourceReference[];
+}
+
+export interface GrowthGraph {
+  branches: MemoryBranch[];
+  nodes: GrowthNode[];
+  edges: GrowthEdge[];
+  rangeStart: string | null;
+  rangeEnd: string | null;
+  generatedAt: string;
+}
+
+export interface EvolutionItem {
+  id: string;
+  topic: string;
+  changeType: "新增" | "补充" | "修正" | "推翻" | "合并" | "验证" | string;
+  beforeText: string;
+  afterText: string;
+  reason: string;
+  occurredAt: string;
+  inferred: boolean;
+  confidence: number | null;
+  sources: MemorySourceReference[];
+}
+
+export interface MemorySnapshotResult {
+  timelineItems: TimelineItem[];
+  nodes: MemoryNode[];
+  edges: MemoryEdge[];
+  evolutionItems: EvolutionItem[];
+  dormantQuestions: string[];
+  stalledProjects: string[];
+}
+
+export interface MemorySnapshot {
+  id: string;
+  viewKind: MemoryViewKind;
+  scope: MemoryScope;
+  rangeStart: string | null;
+  rangeEnd: string | null;
+  status: MemoryGenerationStatus;
+  provider: string;
+  model: string;
+  sourceRecordIds: string[];
+  requestHash: string;
+  result: MemorySnapshotResult;
+  qualityWarning: string | null;
+  errorMessage: string | null;
+  isStale: boolean;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MemoryFeedback {
+  id: string;
+  snapshotId: string;
+  itemId: string;
+  decision: "confirmed" | "rejected" | string;
+  note: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MemoryGenerationRequest {
+  generationId: string;
+  viewKind: MemoryViewKind;
+  scope: MemoryScope;
+  rangeStart: string | null;
+  rangeEnd: string | null;
+}
+
+export interface MemoryGenerationJob {
+  generationId: string;
+  snapshotId: string | null;
+  status: MemoryGenerationStatus;
+  errorMessage: string | null;
+  startedAt: string;
+  updatedAt: string;
 }

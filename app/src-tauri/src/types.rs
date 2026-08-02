@@ -30,6 +30,7 @@ pub struct Project {
 pub struct RecordBrief {
     pub id: String,
     pub title: String,
+    pub source_type: String,
     pub project_id: Option<String>,
     pub project_name: Option<String>,
     pub audio_hash: String,
@@ -262,6 +263,270 @@ pub struct KnowledgeChunkRecord {
     pub end_ms: i64,
     pub embedding_model: String,
     pub embedding: Vec<f32>,
+}
+
+/* -------------------------- external memory views -------------------------- */
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalAiSettings {
+    pub enabled: bool,
+    pub base_url: String,
+    pub model: String,
+    pub has_api_key: bool,
+    pub privacy_consent_at: Option<String>,
+    /// Reserved for a future cloud transcription provider. Audio upload is not implemented.
+    pub transcription_provider: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum MemoryViewKind {
+    Timeline,
+    Map,
+    Evolution,
+}
+
+impl MemoryViewKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Timeline => "timeline",
+            Self::Map => "map",
+            Self::Evolution => "evolution",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryScope {
+    pub kind: String,
+    pub project_id: Option<String>,
+}
+
+impl MemoryScope {
+    pub fn key(&self) -> String {
+        match self.kind.as_str() {
+            "project" => format!("project:{}", self.project_id.as_deref().unwrap_or_default()),
+            "unfiled" => "unfiled".to_owned(),
+            _ => "all".to_owned(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum MemoryGenerationStatus {
+    Generating,
+    Completed,
+    Partial,
+    Failed,
+    Cancelled,
+}
+
+impl MemoryGenerationStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Generating => "generating",
+            Self::Completed => "completed",
+            Self::Partial => "partial",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct MemorySourceReference {
+    pub record_id: String,
+    pub segment_id: Option<String>,
+    pub start_ms: Option<i64>,
+    pub end_ms: Option<i64>,
+    pub quote_text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineItem {
+    pub id: String,
+    pub occurred_at: String,
+    pub item_type: String,
+    pub title: String,
+    pub summary: String,
+    pub project_id: Option<String>,
+    pub project_name: Option<String>,
+    pub inferred: bool,
+    pub confidence: Option<f64>,
+    #[serde(default)]
+    pub sources: Vec<MemorySourceReference>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryNode {
+    pub id: String,
+    pub node_type: String,
+    pub label: String,
+    pub summary: String,
+    pub inferred: bool,
+    pub confidence: Option<f64>,
+    #[serde(default)]
+    pub sources: Vec<MemorySourceReference>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryEdge {
+    pub id: String,
+    pub source_id: String,
+    pub target_id: String,
+    pub relation: String,
+    pub inferred: bool,
+    pub confidence: Option<f64>,
+    #[serde(default)]
+    pub sources: Vec<MemorySourceReference>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryBranch {
+    pub id: String,
+    pub label: String,
+    pub branch_type: String,
+    pub project_id: Option<String>,
+    pub parent_id: Option<String>,
+    pub order: i64,
+    pub inferred: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GrowthNode {
+    pub id: String,
+    pub node_type: String,
+    pub label: String,
+    pub summary: String,
+    pub occurred_at: String,
+    pub branch_id: String,
+    pub project_id: Option<String>,
+    pub project_name: Option<String>,
+    pub inferred: bool,
+    pub confidence: Option<f64>,
+    #[serde(default)]
+    pub sources: Vec<MemorySourceReference>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GrowthEdge {
+    pub id: String,
+    pub source_id: String,
+    pub target_id: String,
+    pub relation: String,
+    pub inferred: bool,
+    pub confidence: Option<f64>,
+    #[serde(default)]
+    pub sources: Vec<MemorySourceReference>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GrowthGraph {
+    pub branches: Vec<MemoryBranch>,
+    pub nodes: Vec<GrowthNode>,
+    pub edges: Vec<GrowthEdge>,
+    pub range_start: Option<String>,
+    pub range_end: Option<String>,
+    pub generated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EvolutionItem {
+    pub id: String,
+    pub topic: String,
+    pub change_type: String,
+    pub before_text: String,
+    pub after_text: String,
+    pub reason: String,
+    pub occurred_at: String,
+    pub inferred: bool,
+    pub confidence: Option<f64>,
+    #[serde(default)]
+    pub sources: Vec<MemorySourceReference>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct MemorySnapshotResult {
+    #[serde(default)]
+    pub timeline_items: Vec<TimelineItem>,
+    #[serde(default)]
+    pub nodes: Vec<MemoryNode>,
+    #[serde(default)]
+    pub edges: Vec<MemoryEdge>,
+    #[serde(default)]
+    pub evolution_items: Vec<EvolutionItem>,
+    #[serde(default)]
+    pub dormant_questions: Vec<String>,
+    #[serde(default)]
+    pub stalled_projects: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemorySnapshot {
+    pub id: String,
+    pub view_kind: MemoryViewKind,
+    pub scope: MemoryScope,
+    pub range_start: Option<String>,
+    pub range_end: Option<String>,
+    pub status: MemoryGenerationStatus,
+    pub provider: String,
+    pub model: String,
+    pub source_record_ids: Vec<String>,
+    pub request_hash: String,
+    pub result: MemorySnapshotResult,
+    pub quality_warning: Option<String>,
+    pub error_message: Option<String>,
+    pub is_stale: bool,
+    pub version: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryFeedback {
+    pub id: String,
+    pub snapshot_id: String,
+    pub item_id: String,
+    pub decision: String,
+    pub note: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryGenerationRequest {
+    pub generation_id: String,
+    pub view_kind: MemoryViewKind,
+    pub scope: MemoryScope,
+    pub range_start: Option<String>,
+    pub range_end: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryGenerationJob {
+    pub generation_id: String,
+    pub snapshot_id: Option<String>,
+    pub status: MemoryGenerationStatus,
+    pub error_message: Option<String>,
+    pub started_at: String,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,9 +1,11 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
+import { isTauri } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import type {
   AnalysisTemplate,
   AudioPreprocessorStatus,
+  ExternalAiSettings,
   LocalAiStatus,
   ModelDownloadProgress,
   TemplateSection,
@@ -13,9 +15,14 @@ import {
   deleteAnalysisTemplate,
   downloadWhisperModel,
   getAudioPreprocessorStatus,
+  getExternalAiSettings,
   getLocalAiStatus,
   listAnalysisTemplates,
   pullOllamaModel,
+  clearExternalAiApiKey,
+  setExternalAiApiKey,
+  testExternalAiConnection,
+  updateExternalAiSettings,
   updateAnalysisTemplate,
   updateKnowledgeSettings,
 } from "../lib/tauri";
@@ -25,7 +32,7 @@ interface Props {
   onClose: () => void;
 }
 
-type SettingsTab = "ai" | "templates";
+type SettingsTab = "ai" | "external" | "templates";
 
 const LANGUAGES = [
   ["zh", "中文"],
@@ -41,6 +48,9 @@ const LANGUAGES = [
 export default function SettingsPanel({ open: visible, onClose }: Props) {
   const [tab, setTab] = useState<SettingsTab>("ai");
   const [status, setStatus] = useState<LocalAiStatus | null>(null);
+  const [external, setExternal] = useState<ExternalAiSettings | null>(null);
+  const [externalApiKey, setExternalApiKeyDraft] = useState("");
+  const [privacyAcknowledged, setPrivacyAcknowledged] = useState(false);
   const [preprocessor, setPreprocessor] = useState<AudioPreprocessorStatus | null>(null);
   const [templates, setTemplates] = useState<AnalysisTemplate[]>([]);
   const [busy, setBusy] = useState(false);
@@ -54,10 +64,12 @@ export default function SettingsPanel({ open: visible, onClose }: Props) {
   async function refresh() {
     setError("");
     try {
-      const [ai, audio, items] = await Promise.all([getLocalAiStatus(), getAudioPreprocessorStatus(), listAnalysisTemplates()]);
+      const [ai, audio, items, externalSettings] = await Promise.all([getLocalAiStatus(), getAudioPreprocessorStatus(), listAnalysisTemplates(), getExternalAiSettings()]);
       setStatus(ai);
       setPreprocessor(audio);
       setTemplates(items);
+      setExternal(externalSettings);
+      setPrivacyAcknowledged(Boolean(externalSettings.privacyConsentAt));
     } catch (reason) {
       setError(String(reason));
     }
@@ -68,6 +80,8 @@ export default function SettingsPanel({ open: visible, onClose }: Props) {
   }, [visible]);
 
   useEffect(() => {
+    if (!isTauri()) return;
+
     const unlisten = listen<ModelDownloadProgress>("model-download-progress", (event) => {
       setDownload(event.payload);
       if (event.payload.status === "completed") {
@@ -75,11 +89,16 @@ export default function SettingsPanel({ open: visible, onClose }: Props) {
         void refresh();
       }
       if (event.payload.status === "failed") setError(event.payload.error ?? "模型下载失败");
+    }).catch((reason) => {
+      setError(`无法监听模型下载进度：${String(reason)}`);
+      return () => undefined;
     });
     return () => { void unlisten.then((stop) => stop()); };
   }, []);
 
   useEffect(() => {
+    if (!isTauri()) return;
+
     const unlisten = listen<ModelDownloadProgress>("whisper-model-download-progress", (event) => {
       setWhisperDownload(event.payload);
       if (event.payload.status === "completed") {
@@ -87,6 +106,9 @@ export default function SettingsPanel({ open: visible, onClose }: Props) {
         void refresh();
       }
       if (event.payload.status === "failed") setError(event.payload.error ?? "Whisper 模型下载失败");
+    }).catch((reason) => {
+      setError(`无法监听 Whisper 下载进度：${String(reason)}`);
+      return () => undefined;
     });
     return () => { void unlisten.then((stop) => stop()); };
   }, []);
@@ -127,6 +149,77 @@ export default function SettingsPanel({ open: visible, onClose }: Props) {
     } catch (reason) {
       setDownload(null);
       setError(String(reason));
+    }
+  }
+
+  async function saveExternal() {
+    if (!external) return;
+    if (external.enabled && !external.hasApiKey) {
+      setError("启用外部 AI 前请先配置 API Key。");
+      return;
+    }
+    if (external.enabled && !external.privacyConsentAt && !privacyAcknowledged) {
+      setError("请先确认外部发送范围说明。");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const saved = await updateExternalAiSettings({
+        ...external,
+        privacyConsentAt: external.privacyConsentAt || (privacyAcknowledged ? new Date().toISOString() : null),
+      });
+      setExternal(saved);
+      setPrivacyAcknowledged(Boolean(saved.privacyConsentAt));
+      setNotice("外部 AI 设置已保存");
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveExternalKey() {
+    if (!externalApiKey.trim()) return;
+    setBusy(true);
+    setError("");
+    try {
+      const saved = await setExternalAiApiKey(externalApiKey.trim());
+      setExternal(saved);
+      setExternalApiKeyDraft("");
+      setNotice("API Key 已安全保存到 macOS 钥匙串");
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeExternalKey() {
+    if (!window.confirm("清除外部 AI API Key？外部 AI 将无法生成记忆快照。")) return;
+    setBusy(true);
+    try {
+      setExternal(await clearExternalAiApiKey());
+      setNotice("API Key 已清除");
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function checkExternalConnection() {
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      await testExternalAiConnection();
+      setNotice("连接测试成功");
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -184,6 +277,7 @@ export default function SettingsPanel({ open: visible, onClose }: Props) {
         </header>
         <div className="settings-tabs" role="tablist">
           <button type="button" className={tab === "ai" ? "selected" : ""} onClick={() => setTab("ai")}>本机 AI</button>
+          <button type="button" className={tab === "external" ? "selected" : ""} onClick={() => setTab("external")}>外部 AI</button>
           <button type="button" className={tab === "templates" ? "selected" : ""} onClick={() => setTab("templates")}>分析模板</button>
         </div>
         <div className="settings-content">
@@ -221,6 +315,28 @@ export default function SettingsPanel({ open: visible, onClose }: Props) {
                 <button type="button" className="primary-button settings-save" disabled={busy} onClick={() => void saveAi()}>{busy ? "保存中…" : "保存设置"}</button>
               </div>
             ) : <p className="settings-empty">正在读取本机状态…</p>
+          ) : tab === "external" ? (
+            external ? (
+              <div className="settings-form">
+                <section className="settings-section external-ai-warning">
+                  <div className="settings-section-title"><h3>跨记录记忆生成</h3><StatusLabel ok={external.enabled && external.hasApiKey} /></div>
+                  <p className="settings-meta">默认关闭。启用后，所选范围内的结构化分析和逐字稿全文会发送给你配置的 OpenAI-compatible 服务商；原始音频永不上传。本机 Whisper、单条分析、知识库问答和 MCP 仍保持本地。</p>
+                </section>
+                <section className="settings-section">
+                  <label className="settings-switch-row"><span>启用外部 AI</span><input type="checkbox" checked={external.enabled} onChange={(event) => setExternal({ ...external, enabled: event.target.checked })} /></label>
+                  <label><span>Base URL</span><input value={external.baseUrl} placeholder="https://api.openai.com/v1" onChange={(event) => setExternal({ ...external, baseUrl: event.target.value })} /></label>
+                  <label><span>模型名称</span><input value={external.model} placeholder="gpt-4o-mini" onChange={(event) => setExternal({ ...external, model: event.target.value })} /></label>
+                  <div className="model-row"><span>{external.hasApiKey ? "API Key 已配置（不会显示或回填）" : "尚未配置 API Key"}</span><span className={`settings-status ${external.hasApiKey ? "ready" : "missing"}`}>{external.hasApiKey ? "已配置" : "缺失"}</span></div>
+                  <label><span>设置新的 API Key</span><input type="password" value={externalApiKey} autoComplete="new-password" placeholder="仅用于保存，不会回显" onChange={(event) => setExternalApiKeyDraft(event.target.value)} /></label>
+                  <div className="settings-actions"><button type="button" className="secondary-button" disabled={busy || !externalApiKey.trim()} onClick={() => void saveExternalKey()}>保存 Key</button><button type="button" className="secondary-button" disabled={busy || !external.hasApiKey} onClick={() => void removeExternalKey()}>清除 Key</button><button type="button" className="secondary-button" disabled={busy || !external.hasApiKey} onClick={() => void checkExternalConnection()}>测试连接</button></div>
+                </section>
+                <section className="settings-section">
+                  <label className="settings-check-row"><input type="checkbox" checked={privacyAcknowledged} onChange={(event) => setPrivacyAcknowledged(event.target.checked)} /><span>我已了解：启用后会发送选定记录的逐字稿全文和现有结构化分析，但不会发送音频。</span></label>
+                  <p className="settings-meta">云端语音转写预留字段：{external.transcriptionProvider || "未启用 / 本轮不支持"}</p>
+                </section>
+                <button type="button" className="primary-button settings-save" disabled={busy} onClick={() => void saveExternal()}>{busy ? "保存中…" : "保存外部 AI 设置"}</button>
+              </div>
+            ) : <p className="settings-empty">正在读取外部 AI 设置…</p>
           ) : (
             editing ? <TemplateEditor template={editing} busy={busy} onCancel={() => setEditing(null)} onSaved={async () => { setEditing(null); await refresh(); }} onError={setError} /> : (
               <div className="template-list">

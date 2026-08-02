@@ -1,8 +1,10 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { isTauri } from "@tauri-apps/api/core";
 import { useEffect, useMemo, useState } from "react";
 import type { RecordBrief, RecordStatus } from "../shared/types";
 import { importAudio, listRecords, transcribeRecord } from "../lib/tauri";
+import DocumentImportDialog from "./DocumentImportDialog";
 
 interface Props {
   projectId: string | null;
@@ -29,6 +31,8 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [documentImportOpen, setDocumentImportOpen] = useState(false);
+  const [documentImportChanged, setDocumentImportChanged] = useState(false);
 
   async function refresh() {
     try {
@@ -40,8 +44,13 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
 
   useEffect(() => {
     void refresh();
+    if (!isTauri()) return;
+
     const unlisten = getCurrentWebviewWindow().onDragDropEvent((event) => {
       if (event.payload.type === "drop") void ingestPaths(event.payload.paths);
+    }).catch((reason) => {
+      setError(`无法启用拖拽导入：${String(reason)}`);
+      return () => undefined;
     });
     return () => {
       void unlisten.then((stop) => stop());
@@ -101,7 +110,7 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
     <section className="record-pane" aria-label="工作区">
       <header className="pane-heading workspace-heading">
         <div>
-          <p className="pane-eyebrow">音频处理</p>
+          <p className="pane-eyebrow">资料处理</p>
           <h2>工作区</h2>
         </div>
         <span className="count-badge">{visible.length}</span>
@@ -112,14 +121,25 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
         <button type="button" className={view === "recent" ? "selected" : ""} onClick={() => setView("recent")}>最近 <span>{records.length}</span></button>
       </div>
 
-      <div className="import-strip">
-        <div>
-          <strong>导入录音</strong>
-          <span>MP3、M4A、WAV，也可拖入窗口</span>
+      <div className="import-actions-grid">
+        <div className="import-strip">
+          <div>
+            <strong>导入录音</strong>
+            <span>MP3、M4A、WAV，也可拖入窗口</span>
+          </div>
+          <button type="button" className="primary-button" onClick={() => void chooseFiles()} disabled={busy}>
+            {busy ? "处理中…" : "选择音频"}
+          </button>
         </div>
-        <button type="button" className="primary-button" onClick={() => void chooseFiles()} disabled={busy}>
-          {busy ? "处理中…" : "选择文件"}
-        </button>
+        <div className="import-strip document-import-entry">
+          <div>
+            <strong>导入文档</strong>
+            <span>Markdown、TXT、Word 文档</span>
+          </div>
+          <button type="button" className="secondary-button" onClick={() => { setDocumentImportChanged(false); setDocumentImportOpen(true); }} disabled={busy}>
+            选择文档
+          </button>
+        </div>
       </div>
 
       <ul className="record-list" aria-live="polite">
@@ -129,7 +149,7 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
             <li key={record.id} className={selectedId === record.id ? "selected" : ""}>
               <button type="button" className="record-main" onClick={() => onSelect(record)}>
                 <strong>{record.title}</strong>
-                <span>{new Date(record.importedAt).toLocaleString()} · {formatDuration(record.audioDurationMs)}</span>
+                <span>{new Date(record.importedAt).toLocaleString()} · {record.sourceType === "document" ? "文字文档" : formatDuration(record.audioDurationMs)}</span>
                 <span className="record-library">{record.projectName ?? "未归档"}</span>
               </button>
               <span className={`status-pill status-${statusTone(record)}`}>{label}</span>
@@ -138,7 +158,7 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
         })}
         {visible.length === 0 && (
           <li className="record-empty">
-            {view === "pending" ? "当前没有待处理录音。" : "尚未导入录音。"}
+            {view === "pending" ? "当前没有待处理资料。" : "尚未导入录音或文档。"}
           </li>
         )}
       </ul>
@@ -147,6 +167,26 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
         {notice && <p className="inline-notice">{notice}</p>}
         {error && <p className="inline-error">{error}</p>}
       </div>
+
+      <DocumentImportDialog
+        open={documentImportOpen}
+        projectId={projectId}
+        onClose={() => {
+          setDocumentImportOpen(false);
+          if (documentImportChanged) {
+            setDocumentImportChanged(false);
+            onImported();
+          }
+        }}
+        onImported={(record, created) => {
+          setNotice(created
+            ? `已导入“${record.title}”，可查看正文和分析结果。`
+            : `已打开已有记录“${record.title}”，未创建重复副本。`);
+          if (created) setDocumentImportChanged(true);
+          void refresh();
+          onSelect(record);
+        }}
+      />
     </section>
   );
 }

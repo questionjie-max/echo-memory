@@ -2,10 +2,12 @@ pub mod analysis;
 pub mod audio;
 pub mod commands;
 pub mod db;
+pub mod document;
 pub mod error;
 pub mod export;
 pub mod knowledge;
 pub mod library;
+pub mod memory;
 pub mod state;
 pub mod transcript;
 pub mod types;
@@ -53,6 +55,7 @@ pub fn run() {
             commands::record_audio_path,
             commands::list_jobs,
             commands::import_audio,
+            commands::import_document,
             commands::list_transcript_segments,
             commands::list_transcript_blocks,
             commands::update_transcript_segment,
@@ -60,6 +63,21 @@ pub fn run() {
             commands::retranscribe_record,
             commands::analyze_record,
             commands::latest_analysis,
+            commands::get_external_ai_settings,
+            commands::update_external_ai_settings,
+            commands::set_external_ai_api_key,
+            commands::clear_external_ai_api_key,
+            commands::test_external_ai_connection,
+            commands::get_local_timeline,
+            commands::get_local_growth_graph,
+            commands::generate_memory_snapshot,
+            commands::start_memory_generation,
+            commands::get_memory_generation_job,
+            commands::list_memory_snapshots,
+            commands::get_memory_snapshot,
+            commands::cancel_memory_generation,
+            commands::update_memory_feedback,
+            commands::list_memory_feedback,
         ])
         .run(tauri::generate_context!())
         .expect("启动回声记忆失败");

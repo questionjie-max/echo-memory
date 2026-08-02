@@ -3,7 +3,8 @@
 use echo_memory_lib::analysis::{AnalysisDraft, AnalysisItemDraft};
 use echo_memory_lib::db::repository::LibraryRepository;
 use echo_memory_lib::types::{
-    KnowledgeChunkInput, KnowledgeIndexStatus, TemplateSection, TranscriptSegmentInput,
+    EvolutionItem, KnowledgeChunkInput, KnowledgeIndexStatus, MemoryGenerationStatus, MemoryScope,
+    MemorySnapshotResult, MemoryViewKind, TemplateSection, TranscriptSegmentInput,
 };
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -830,4 +831,391 @@ fn mcp_is_disabled_by_default_and_tracks_recent_calls() {
     let status = repository.mcp_status().unwrap();
     assert_eq!(status.recent_calls[0].tool_name, "search_records");
     assert_eq!(status.authorized_scope, "全部知识库（只读）");
+}
+
+#[test]
+fn interrupted_knowledge_indexes_are_recovered_without_touching_terminal_states() {
+    let repository = LibraryRepository::new(database_path()).unwrap();
+    for (scope_key, status) in [
+        ("all", "indexing"),
+        ("unfiled", "completed"),
+        ("project:stale", "stale"),
+    ] {
+        repository
+            .save_knowledge_index_status(&KnowledgeIndexStatus {
+                scope_key: scope_key.into(),
+                status: status.into(),
+                total_records: 3,
+                processed_records: 2,
+                chunk_count: 4,
+                embedding_model: "embedding-test".into(),
+                last_error: None,
+                updated_at: "2026-01-01T00:00:00Z".into(),
+            })
+            .unwrap();
+    }
+
+    assert_eq!(
+        repository.recover_interrupted_knowledge_indexes().unwrap(),
+        1
+    );
+    let recovered = repository
+        .get_knowledge_index_status("all", "embedding-test")
+        .unwrap();
+    assert_eq!(recovered.status, "failed");
+    assert!(recovered
+        .last_error
+        .as_deref()
+        .is_some_and(|message| message.contains("应用退出而中断")));
+    assert_eq!(
+        repository
+            .get_knowledge_index_status("unfiled", "embedding-test")
+            .unwrap()
+            .status,
+        "completed"
+    );
+    assert_eq!(
+        repository
+            .get_knowledge_index_status("project:stale", "embedding-test")
+            .unwrap()
+            .status,
+        "stale"
+    );
+    assert_eq!(
+        repository.recover_interrupted_knowledge_indexes().unwrap(),
+        0
+    );
+}
+
+#[test]
+fn interrupted_processing_jobs_recover_records_based_on_transcript_availability() {
+    let repository = LibraryRepository::new(database_path()).unwrap();
+
+    let analyzed_record = repository
+        .create_record(
+            "已有正文的分析任务",
+            None,
+            Path::new("audio/recover-analyzing.wav"),
+            "recover-analyzing-hash",
+            1_000,
+        )
+        .unwrap();
+    repository
+        .save_transcript(
+            &analyzed_record.id,
+            "whisper.cpp",
+            "small",
+            &[TranscriptSegmentInput {
+                start_ms: 0,
+                end_ms: 1_000,
+                speaker_label: None,
+                original_text: "已经完成转写的正文".into(),
+            }],
+        )
+        .unwrap();
+    repository
+        .update_record_status(&analyzed_record.id, "analyzing")
+        .unwrap();
+    let analyzing_job = repository
+        .create_job(&analyzed_record.id, "analyze")
+        .unwrap();
+    repository
+        .update_job_status(&analyzing_job.id, "analyzing", None)
+        .unwrap();
+
+    let transcribing_record = repository
+        .create_record(
+            "没有正文的转写任务",
+            None,
+            Path::new("audio/recover-transcribing.wav"),
+            "recover-transcribing-hash",
+            1_000,
+        )
+        .unwrap();
+    repository
+        .update_record_status(&transcribing_record.id, "transcribing")
+        .unwrap();
+    let transcribing_job = repository
+        .create_job(&transcribing_record.id, "transcribe")
+        .unwrap();
+    repository
+        .update_job_status(&transcribing_job.id, "transcribing", None)
+        .unwrap();
+
+    let completed_record = repository
+        .create_record(
+            "已完成任务",
+            None,
+            Path::new("audio/recover-completed.wav"),
+            "recover-completed-hash",
+            1_000,
+        )
+        .unwrap();
+    repository
+        .update_record_status(&completed_record.id, "completed")
+        .unwrap();
+    let completed_job = repository
+        .create_job(&completed_record.id, "transcribe")
+        .unwrap();
+    repository
+        .update_job_status(&completed_job.id, "completed", None)
+        .unwrap();
+
+    assert_eq!(repository.recover_interrupted_processing_jobs().unwrap(), 2);
+    assert_eq!(
+        repository.get_record(&analyzed_record.id).unwrap().status,
+        "completed"
+    );
+    assert_eq!(
+        repository
+            .get_record(&transcribing_record.id)
+            .unwrap()
+            .status,
+        "failed"
+    );
+    for job_id in [&analyzing_job.id, &transcribing_job.id] {
+        let job = repository.get_job(job_id).unwrap();
+        assert_eq!(job.status, "failed");
+        assert!(job
+            .last_error
+            .as_deref()
+            .is_some_and(|message| message.contains("应用退出而中断")));
+    }
+    assert_eq!(
+        repository.get_record(&completed_record.id).unwrap().status,
+        "completed"
+    );
+    assert_eq!(
+        repository.get_job(&completed_job.id).unwrap().status,
+        "completed"
+    );
+    assert_eq!(repository.recover_interrupted_processing_jobs().unwrap(), 0);
+}
+
+#[test]
+fn search_handles_natural_language_ascii_and_symbol_only_queries() {
+    let repository = LibraryRepository::new(database_path()).unwrap();
+    let record = repository
+        .create_record(
+            "Knowledge planning meeting",
+            None,
+            Path::new("audio/search-boundary.wav"),
+            "search-boundary-hash",
+            1_000,
+        )
+        .unwrap();
+    repository
+        .save_transcript(
+            &record.id,
+            "whisper.cpp",
+            "small",
+            &[TranscriptSegmentInput {
+                start_ms: 0,
+                end_ms: 1_000,
+                speaker_label: None,
+                original_text: "团队确认采用本地知识库方案，并完成 launch checklist。".into(),
+            }],
+        )
+        .unwrap();
+
+    assert_eq!(
+        repository
+            .search("我们什么时候确认采用本地知识库方案", None, false, 10)
+            .unwrap()[0]
+            .record_id,
+        record.id
+    );
+    assert_eq!(
+        repository
+            .search("launch checklist", None, false, 10)
+            .unwrap()[0]
+            .record_id,
+        record.id
+    );
+    assert!(repository
+        .search("!!!???", None, false, 10)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn interrupted_memory_snapshots_are_recovered_on_startup() {
+    let repository = LibraryRepository::new(database_path()).unwrap();
+    let scope = MemoryScope {
+        kind: "all".to_owned(),
+        project_id: None,
+    };
+    let interrupted = repository
+        .create_memory_snapshot(
+            &MemoryViewKind::Map,
+            &scope,
+            None,
+            None,
+            "test-model",
+            &[],
+            "interrupted-hash",
+        )
+        .unwrap();
+    let completed = repository
+        .create_memory_snapshot(
+            &MemoryViewKind::Evolution,
+            &scope,
+            None,
+            None,
+            "test-model",
+            &[],
+            "completed-hash",
+        )
+        .unwrap();
+    repository
+        .finish_memory_snapshot(
+            &completed.id,
+            MemoryGenerationStatus::Completed,
+            &MemorySnapshotResult::default(),
+            None,
+            None,
+        )
+        .unwrap();
+
+    assert_eq!(
+        repository.recover_interrupted_memory_snapshots().unwrap(),
+        1
+    );
+    let recovered = repository.get_memory_snapshot(&interrupted.id).unwrap();
+    assert_eq!(recovered.status, MemoryGenerationStatus::Failed);
+    assert!(recovered
+        .error_message
+        .as_deref()
+        .is_some_and(|message| message.contains("应用退出而中断")));
+    assert_eq!(
+        repository
+            .get_memory_snapshot(&completed.id)
+            .unwrap()
+            .status,
+        MemoryGenerationStatus::Completed
+    );
+    assert_eq!(
+        repository.recover_interrupted_memory_snapshots().unwrap(),
+        0
+    );
+}
+
+#[test]
+fn memory_snapshots_are_versioned_keep_feedback_and_become_stale() {
+    let repository = LibraryRepository::new(database_path()).unwrap();
+    let record = repository
+        .create_record(
+            "记忆来源",
+            None,
+            Path::new("audio/memory.wav"),
+            "memory-snapshot-hash",
+            1_000,
+        )
+        .unwrap();
+    let scope = MemoryScope {
+        kind: "all".to_owned(),
+        project_id: None,
+    };
+    let source_ids = vec![record.id.clone()];
+    let first = repository
+        .create_memory_snapshot(
+            &MemoryViewKind::Evolution,
+            &scope,
+            None,
+            None,
+            "test-model",
+            &source_ids,
+            "hash-v1",
+        )
+        .unwrap();
+    let mut first_result = MemorySnapshotResult::default();
+    first_result.evolution_items.push(EvolutionItem {
+        id: "evolution-1".to_owned(),
+        topic: "测试主题".to_owned(),
+        change_type: "changed".to_owned(),
+        before_text: "之前".to_owned(),
+        after_text: "之后".to_owned(),
+        reason: "测试".to_owned(),
+        occurred_at: "2026-01-01T00:00:00Z".to_owned(),
+        inferred: false,
+        confidence: None,
+        sources: vec![],
+    });
+    repository
+        .finish_memory_snapshot(
+            &first.id,
+            MemoryGenerationStatus::Completed,
+            &first_result,
+            None,
+            None,
+        )
+        .unwrap();
+    let feedback = repository
+        .update_memory_feedback(&first.id, "evolution-1", "confirmed", "保留这个判断")
+        .unwrap();
+    assert_eq!(feedback.decision, "confirmed");
+    assert_eq!(repository.list_memory_feedback(&first.id).unwrap().len(), 1);
+    assert!(repository
+        .update_memory_feedback(&first.id, "missing-item", "rejected", "不应保存")
+        .is_err());
+    assert_eq!(repository.list_memory_feedback(&first.id).unwrap().len(), 1);
+
+    let second = repository
+        .create_memory_snapshot(
+            &MemoryViewKind::Evolution,
+            &scope,
+            None,
+            None,
+            "test-model",
+            &source_ids,
+            "hash-v2",
+        )
+        .unwrap();
+    let mut second_result = MemorySnapshotResult::default();
+    second_result.evolution_items.push(EvolutionItem {
+        id: "evolution-2".to_owned(),
+        topic: "另一个测试主题".to_owned(),
+        change_type: "changed".to_owned(),
+        before_text: "之前".to_owned(),
+        after_text: "之后".to_owned(),
+        reason: "测试".to_owned(),
+        occurred_at: "2026-01-02T00:00:00Z".to_owned(),
+        inferred: false,
+        confidence: None,
+        sources: vec![],
+    });
+    repository
+        .finish_memory_snapshot(
+            &second.id,
+            MemoryGenerationStatus::Completed,
+            &second_result,
+            None,
+            None,
+        )
+        .unwrap();
+    assert!(repository
+        .update_memory_feedback(&first.id, "evolution-2", "confirmed", "跨快照条目")
+        .is_err());
+    assert_eq!(repository.list_memory_feedback(&first.id).unwrap().len(), 1);
+    let versions = repository
+        .list_memory_snapshots(&MemoryViewKind::Evolution, &scope, None, None)
+        .unwrap();
+    assert_eq!(versions.len(), 2);
+    assert_eq!(versions[0].id, second.id);
+    assert_eq!(versions[0].version, 2);
+    assert_eq!(versions[1].id, first.id);
+    assert_eq!(versions[1].version, 1);
+
+    repository
+        .update_record_title(&record.id, "记忆来源（已编辑）")
+        .unwrap();
+    assert!(repository.get_memory_snapshot(&first.id).unwrap().is_stale);
+    assert!(repository.get_memory_snapshot(&second.id).unwrap().is_stale);
+    assert_eq!(
+        repository
+            .feedback_context(&MemoryViewKind::Evolution, &scope)
+            .unwrap()[0]
+            .note,
+        "保留这个判断"
+    );
 }
