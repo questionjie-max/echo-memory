@@ -37,7 +37,7 @@ fi
 echo "--------------------------"
 echo "通过 $pass 项，缺失 $fail 项"
 if [ "$fail" -ne 0 ]; then
-  echo "请先补齐缺失项（见 app/README.md 的「前置依赖」）。"
+  echo "请先补齐缺失项（见仓库根目录 README.md 的「环境要求」）。"
   exit 1
 fi
 echo "环境就绪。"

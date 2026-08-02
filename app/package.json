@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "回声记忆 - 本地优先谈话记忆库（Tauri 2 + React + TS + Vite）",
+  "description": "回声记忆 - 面向 AI Agent 的本地优先个人记忆操作系统（Tauri 2 + React + TS + Vite）",
   "license": "Apache-2.0",
   "scripts": {
     "dev": "vite",

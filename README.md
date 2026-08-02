@@ -1,58 +1,72 @@
 # Echo Memory / 回声记忆
 
-[中文文档](README.zh-CN.md) · [Agent context](docs/agent-context.md) · [MCP reference](docs/mcp.md) · [Security](SECURITY.md)
+[中文文档](README.zh-CN.md) · [MCP reference](docs/mcp.md) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
 
-**A local-first conversation memory library for macOS.** Echo Memory turns important audio into searchable transcripts, traceable decisions, action items, and reusable context for AI tools.
+**A Personal Memory OS for AI-native work.** Echo Memory turns conversations, documents, decisions, and changing ideas into a traceable personal memory layer that can be reused by different AI agents.
 
-It is not a one-off meeting-summary app. Its purpose is to help you return to **what was said, why a decision was made, and where the supporting evidence lives**.
+> AI knows more about the world every day, but it still does not truly know you. Echo Memory gives your AI a memory of what you experienced, why you decided, and how your thinking changed.
 
-> Current status: Alpha. Source builds are supported; no signed macOS installer is published yet.
+The current macOS Alpha is the first working slice of this direction. It is not yet a complete personal digital twin, but it already closes the loop from source material to evidence-backed retrieval and agent access.
 
-## Why Echo Memory
+## Why it exists
 
-Important project context often lives in calls, interviews, customer conversations, and personal voice notes. Recordings are hard to revisit, summaries can lose their evidence, and AI tools repeatedly lack the background behind past decisions.
+People generate valuable context continuously: meetings, calls, customer feedback, voice notes, documents, AI conversations, decisions, and follow-up results. That context is usually scattered across tools and quickly loses its connection to time, evidence, and later outcomes.
 
-Echo Memory keeps the audio, timestamped transcript, structured analysis, and source references together on your Mac so that a conclusion can lead back to the original words and audio position.
-
-## What it does
-
-- Import `MP3`, `M4A`, and `WAV` files into a managed local library with duplicate detection.
-- Transcribe locally with embedded Whisper or a local `whisper.cpp` command; click transcript segments to seek audio and edit corrections without overwriting the original text.
-- Extract summaries, key points, decisions, action items, and open questions through a local Ollama model.
-- Require decisions and action items to reference source transcript segments; unverified references are marked instead of invented.
-- Build project-based personal knowledge libraries and search titles, transcripts, summaries, decisions, and action items with time ranges.
-- Explore the library through a growth timeline and an evidence-backed cognitive evolution view.
-- Optionally generate cross-record memory snapshots with a user-configured OpenAI-compatible external model; snapshots are versioned, reviewable, and never overwrite source records.
-- Expose a user-enabled, local-only, read-only MCP server so AI tools can retrieve relevant historical context with source evidence.
-
-## Local-first by design
-
-Audio, transcripts, SQLite data, local Whisper, local Ollama analysis, knowledge-base retrieval, and MCP run on your machine by default. External AI is disabled by default. If you enable it and confirm a generation, only the selected scope's titles, dates, projects, full transcripts, and existing structured analysis are sent to the OpenAI-compatible service you configure; original audio is never uploaded.
-
-External AI is limited to cross-record timeline and cognitive-evolution data. Every generation is stored as a traceable versioned snapshot with source record and transcript-segment references, and can be confirmed or rejected without changing the original record. Cloud transcription is only reserved in the settings model and is not implemented.
-
-The trade-off is deliberate: local transcription and analysis require local dependencies. Missing models or failed analysis are shown clearly and never destroy already saved audio or transcripts.
-
-## Product flow
+Traditional tools mainly preserve files or produce one-off summaries. Echo Memory is designed around a longer loop:
 
 ```text
-Import audio
-  -> local timestamped transcript
-  -> source-backed decisions and action items
-  -> project knowledge library + full-text search
-  -> growth timeline / cognitive evolution snapshots
-  -> read-only MCP queries for your AI tools
+Capture -> Understand -> Connect -> Evolve -> Retrieve -> Feedback
 ```
 
-## Product overview
+The goal is not to save more notes. It is to preserve a person's experiences and reasoning as a durable, user-controlled context layer for future AI.
 
-The following conceptual interface uses fictional demonstration data only. It illustrates the core workflow: import audio, navigate timestamped evidence, and keep the result in a local project library.
+## Product position
 
-![Echo Memory local conversation-memory workflow](docs/images/product-overview.svg)
+Echo Memory is not defined by transcription or meeting summaries. Those are input and processing capabilities.
 
-## Screenshots
+The long-term product has four connected layers:
 
-The screenshots below use synthetic demonstration data and show the current macOS interface.
+1. **Personal Memory Layer**: shared, permissioned context so every AI does not need to learn the user from zero.
+2. **Cognitive Database**: evidence-backed records of knowledge, decisions, open questions, and how beliefs change.
+3. **Personal Memory OS**: one system for capture, understanding, organization, retrieval, and feedback.
+4. **Digital Twin Database**: a long-term, correctable model of what a person experienced, knows, values, and how they make decisions.
+
+The digital-twin direction is a product vision, not a claim that the current Alpha can fully model a person.
+
+## What the current Alpha does
+
+- Imports `MP3`, `M4A`, and `WAV` audio with duplicate detection.
+- Imports `Markdown`, `TXT`, and `DOCX` documents into the same searchable library.
+- Transcribes audio locally with embedded Whisper or a local `whisper.cpp` command.
+- Uses local Ollama models for summaries, key points, decisions, action items, and open questions.
+- Preserves timestamped transcript evidence and lets users return from a conclusion to its source.
+- Organizes records into project knowledge libraries with local full-text and vector retrieval.
+- Answers questions across indexed audio and documents with openable citations.
+- Shows a day-based growth timeline across projects and records.
+- Generates versioned cognitive-evolution snapshots with reviewable evidence and feedback.
+- Exposes an opt-in, local, read-only MCP server for authorized AI tools.
+
+## What makes it different
+
+### Time is the backbone
+
+Memory is not a folder tree. Events, projects, people, questions, and decisions develop in parallel. Echo Memory keeps when something happened and how later information relates to it.
+
+### Evidence is more important than a summary
+
+Important conclusions should return to original transcript segments, timestamps, or document sources. AI inference is marked and reviewable instead of being presented as user-authored fact.
+
+### Memory keeps its history
+
+A changed opinion is not a database error. Versioned memory preserves what was believed before, what changed, and which evidence caused the change.
+
+### Memory is callable
+
+With user authorization, different AI tools can retrieve the context needed for a task through MCP without forcing the user to repeat the same background in every chat.
+
+## Current interface
+
+The screenshots use synthetic demonstration data.
 
 ### Evidence-backed knowledge chat
 
@@ -66,31 +80,40 @@ The screenshots below use synthetic demonstration data and show the current macO
 
 ![Echo Memory cognitive evolution](docs/images/cognitive-evolution.png)
 
-## MCP: a bridge to AI, not a data export
+## Local-first and user-controlled
 
-MCP is disabled by default. When you enable it in the app, Echo Memory provides a local stdio server with read-only tools for searching records, reading bounded transcript ranges, listing projects, retrieving project context, and listing action items.
+Audio, the SQLite library, local transcription, local analysis, retrieval, and MCP remain on the Mac by default.
 
-The server records query metadata, not audio, transcript bodies, or keys. It never opens a public port and cannot write, edit, or delete your records. See the [MCP reference](docs/mcp.md) for the tool list and development configuration.
+External AI is disabled by default. If a user enables it and explicitly confirms a generation, Echo Memory sends only the selected scope's text and existing structured analysis to the configured OpenAI-compatible service. Original audio is never uploaded by this feature. API keys are stored in macOS Keychain.
 
-## Memory views
+Generated cross-record memory is versioned, linked to sources, and can be confirmed or rejected. It does not overwrite original recordings, transcripts, or single-record analysis.
 
-The library keeps the existing three-column workspace and adds two full-area views:
+## MCP: one memory layer for many agents
 
-- **Growth timeline:** local records, summaries, decisions, tasks, and viewpoints grouped by day, with 7/30/90-day and all-time filters.
-- **Cognitive evolution:** version chains showing viewpoints that were added, supplemented, corrected, overturned, merged, or validated, with evidence and review feedback.
+The current MCP server is local stdio, disabled by default, and read-only. It can search records, retrieve bounded transcript ranges, list projects, return project context, and list action items. It does not open a public port or modify the library.
 
-Without external AI configuration, the growth timeline still shows local deterministic data. Cognitive evolution explains how to configure external AI instead of inventing cross-record facts.
+See the [MCP reference](docs/mcp.md) for tools and development configuration.
 
-Each conversation can be assigned to a project. Over time, the library makes recurring decisions, commitments, questions, and original wording discoverable across conversations. The goal is not to replace your notes; it is to preserve a verifiable layer of work memory that you and your AI tools can revisit.
+## Product principles
 
-## Audio hardware and recording cards
+- **The user owns the memory:** data should remain exportable, correctable, deletable, and revocable.
+- **Original evidence outranks AI summaries:** important claims must remain traceable.
+- **Time and versions are preserved:** new conclusions do not erase old reasoning.
+- **High-impact automation is confirmable:** inferred relationships and changes must be reviewable.
+- **Agent access follows least privilege:** tools receive only the context required for the task.
+- **The system assists decisions, not replaces the user:** uncertainty and conflicting evidence should remain visible.
 
-Echo Memory currently accepts exported audio files. If an AI recorder, recording card, phone, or field recorder can export MP3, M4A, or WAV, that file can enter the same local workflow. Direct device integrations are not part of the current Alpha and are not implied by this repository.
+## Current boundary and direction
+
+The Alpha focuses on a single-user, single-device workflow. It does not currently provide real-time recording, automatic meeting joining, mobile or Windows apps, cloud sync, team collaboration, public APIs, or MCP writes.
+
+The longer-term direction is to expand from traceable conversation memory into a personal memory infrastructure that can connect events, people, projects, questions, knowledge, decisions, and outcomes across time. That direction still requires product, privacy, and user-trust validation.
 
 ## Requirements
 
-- macOS
-- Node.js 18+, Rust stable, Cargo, Xcode Command Line Tools, and CMake for the first embedded Whisper build
+- macOS on Apple Silicon
+- Node.js 18+, Rust stable, Cargo, and Xcode Command Line Tools
+- CMake for the first embedded Whisper build
 - A local Whisper `ggml-*.bin` model for transcription
 - Optional local `whisper-cli` / `WHISPER_CPP_BIN`
 - Optional local Ollama service and model for analysis
@@ -104,7 +127,7 @@ bash scripts/check-env.sh
 npm run tauri dev
 ```
 
-The default local library is `~/Library/Application Support/回声记忆`. For development and tests, set `ECHO_LIBRARY_ROOT` to an isolated directory.
+The default library is stored at `~/Library/Application Support/回声记忆`. Use `ECHO_LIBRARY_ROOT` for an isolated development or test library.
 
 ## Verify
 
@@ -112,24 +135,21 @@ The default local library is `~/Library/Application Support/回声记忆`. For d
 cd app
 npm run typecheck
 npm run build
+npm run test:growth
 cd src-tauri
 cargo fmt --check
 cargo test --features mcp-bin
 ```
 
-## Scope and roadmap
+## Project status
 
-Alpha focuses on a single-user, single-device local workflow. It does **not** currently provide real-time recording, automatic meeting joining, mobile or Windows apps, cloud sync, team collaboration, payment/credits, public APIs, external-system writes, or MCP writes.
+Echo Memory is Alpha software. Source builds are supported. A notarized macOS installer is not currently published in GitHub Releases.
 
-Future exploration may include higher-quality processing and audio-hardware workflows, but these are not current product claims.
-
-## Contributing and security
-
-Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening an issue or pull request. Never attach real audio, transcripts, logs with sensitive content, credentials, or payment data to public issues. See [SECURITY.md](SECURITY.md) for private vulnerability reporting.
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening an issue or pull request, and never attach real audio, transcripts, databases, credentials, or private customer material to a public issue. Security reports should follow [SECURITY.md](SECURITY.md).
 
 ## Support
 
-Echo Memory is free and open source. If it helps your work, you can buy the project a coffee. Support helps cover ongoing maintenance, compatibility testing, and documentation; it does not grant paid features or priority support.
+Echo Memory is free and open source. Support helps fund maintenance, compatibility testing, and documentation.
 
 <p align="center">
   <img src="docs/images/support-qr.png" alt="Buy Echo Memory a coffee" width="260">
