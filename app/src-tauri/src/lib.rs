@@ -5,6 +5,7 @@ pub mod db;
 pub mod document;
 pub mod error;
 pub mod export;
+pub mod inbox;
 pub mod knowledge;
 pub mod library;
 pub mod memory;
@@ -21,6 +22,12 @@ pub fn run() {
     let app_state = AppState::initialize(default_library_root()).expect("初始化回声记忆资料库失败");
     Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .setup(move |app| {
+            let handle = app.handle().clone();
+            let library_root = default_library_root();
+            inbox::start(handle, library_root);
+            Ok(())
+        })
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
             commands::get_local_ai_status,
@@ -75,6 +82,24 @@ pub fn run() {
             commands::cancel_memory_generation,
             commands::update_memory_feedback,
             commands::list_memory_feedback,
+            commands::get_onboarding_status,
+            commands::complete_onboarding,
+            commands::reset_onboarding,
+            commands::suggest_watch_folders,
+            commands::get_inbox_status,
+            commands::add_inbox_watch_folder,
+            commands::remove_inbox_watch_folder,
+            commands::set_inbox_usb_detection,
+            commands::rescan_inbox,
+            commands::list_hotwords,
+            commands::add_hotword,
+            commands::remove_hotword,
+            commands::get_action_dashboard,
+            commands::set_action_item_status,
+            commands::related_records,
+            commands::correct_transcript,
+            commands::get_transcript_correction_enabled,
+            commands::set_transcript_correction_enabled,
         ])
         .run(tauri::generate_context!())
         .expect("启动回声记忆失败");

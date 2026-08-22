@@ -2,10 +2,13 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import { isTauri } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
+import { open as openDirectory } from "@tauri-apps/plugin-dialog";
 import type {
   AnalysisTemplate,
   AudioPreprocessorStatus,
   ExternalAiSettings,
+  Hotword,
+  InboxStatus,
   LocalAiStatus,
   ModelDownloadProgress,
   TemplateSection,
@@ -13,8 +16,19 @@ import type {
 import {
   createAnalysisTemplate,
   deleteAnalysisTemplate,
+  addHotword,
+  addInboxWatchFolder,
   downloadWhisperModel,
   getAudioPreprocessorStatus,
+  getInboxStatus,
+  getTranscriptCorrectionEnabled,
+  listHotwords,
+  removeHotword,
+  removeInboxWatchFolder,
+  resetOnboarding,
+  rescanInbox,
+  setInboxUsbDetection,
+  setTranscriptCorrectionEnabled,
   getExternalAiSettings,
   getLocalAiStatus,
   listAnalysisTemplates,
@@ -32,7 +46,7 @@ interface Props {
   onClose: () => void;
 }
 
-type SettingsTab = "ai" | "external" | "templates";
+type SettingsTab = "ai" | "external" | "templates" | "inbox" | "hotwords";
 
 const LANGUAGES = [
   ["zh", "中文"],
@@ -47,6 +61,69 @@ const LANGUAGES = [
 
 export default function SettingsPanel({ open: visible, onClose }: Props) {
   const [tab, setTab] = useState<SettingsTab>("ai");
+  const [inbox, setInbox] = useState<InboxStatus | null>(null);
+  const [hotwords, setHotwords] = useState<Hotword[]>([]);
+  const [hotwordInput, setHotwordInput] = useState("");
+  const [correctionEnabled, setCorrectionEnabled] = useState(false);
+  const [inboxError, setInboxError] = useState<string | null>(null);
+
+  async function refreshInbox() {
+    try {
+      setInbox(await getInboxStatus());
+      setInboxError(null);
+    } catch (reason) {
+      setInboxError(String(reason));
+    }
+  }
+
+  async function refreshHotwords() {
+    try {
+      setHotwords(await listHotwords());
+    } catch (reason) {
+      setInboxError(String(reason));
+    }
+  }
+
+  async function chooseWatchFolder() {
+    try {
+      const selected = await openDirectory({ directory: true, multiple: false });
+      if (typeof selected !== "string") return;
+      await addInboxWatchFolder(selected);
+      await refreshInbox();
+    } catch (reason) {
+      setInboxError(String(reason));
+    }
+  }
+
+  async function submitHotword() {
+    const term = hotwordInput.trim();
+    if (!term) return;
+    try {
+      await addHotword(term);
+      setHotwordInput("");
+      await refreshHotwords();
+    } catch (reason) {
+      setInboxError(String(reason));
+    }
+  }
+
+  async function toggleCorrection(enabled: boolean) {
+    try {
+      await setTranscriptCorrectionEnabled(enabled);
+      setCorrectionEnabled(enabled);
+    } catch (reason) {
+      setInboxError(String(reason));
+    }
+  }
+
+  async function rerunOnboarding() {
+    try {
+      await resetOnboarding();
+      onClose();
+    } catch (reason) {
+      setInboxError(String(reason));
+    }
+  }
   const [status, setStatus] = useState<LocalAiStatus | null>(null);
   const [external, setExternal] = useState<ExternalAiSettings | null>(null);
   const [externalApiKey, setExternalApiKeyDraft] = useState("");
@@ -76,7 +153,11 @@ export default function SettingsPanel({ open: visible, onClose }: Props) {
   }
 
   useEffect(() => {
-    if (visible) void refresh();
+    if (visible && (tab === "inbox" || tab === "hotwords")) {
+      void refreshInbox();
+      void refreshHotwords();
+      void getTranscriptCorrectionEnabled().then(setCorrectionEnabled).catch(() => setCorrectionEnabled(false));
+    }
   }, [visible]);
 
   useEffect(() => {
@@ -279,6 +360,8 @@ export default function SettingsPanel({ open: visible, onClose }: Props) {
           <button type="button" className={tab === "ai" ? "selected" : ""} onClick={() => setTab("ai")}>本机 AI</button>
           <button type="button" className={tab === "external" ? "selected" : ""} onClick={() => setTab("external")}>外部 AI</button>
           <button type="button" className={tab === "templates" ? "selected" : ""} onClick={() => setTab("templates")}>分析模板</button>
+          <button type="button" className={tab === "inbox" ? "selected" : ""} onClick={() => setTab("inbox")}>收件箱</button>
+          <button type="button" className={tab === "hotwords" ? "selected" : ""} onClick={() => setTab("hotwords")}>词汇库</button>
         </div>
         <div className="settings-content">
           {tab === "ai" ? (
@@ -337,6 +420,69 @@ export default function SettingsPanel({ open: visible, onClose }: Props) {
                 <button type="button" className="primary-button settings-save" disabled={busy} onClick={() => void saveExternal()}>{busy ? "保存中…" : "保存外部 AI 设置"}</button>
               </div>
             ) : <p className="settings-empty">正在读取外部 AI 设置…</p>
+          ) : tab === "inbox" ? (
+            inbox ? (
+              <div className="settings-form">
+                <section className="settings-section">
+                  <div className="settings-section-title"><h3>音频收件箱</h3><StatusLabel ok={inbox.watchFolders.length > 0 || inbox.usbDetection} /></div>
+                  <p className="settings-meta">监听下面的文件夹：新音频文件出现后自动导入并转写分析。任何录音设备（U 盘录音笔、手机、AirDrop、微信另存）落到这里都会被接住。</p>
+                  <label className="settings-switch-row"><span>插入 USB 录音设备时自动扫描</span><input type="checkbox" checked={inbox.usbDetection} onChange={(event) => { void setInboxUsbDetection(event.target.checked).then(refreshInbox); setInbox({ ...inbox, usbDetection: event.target.checked }); }} /></label>
+                  <div className="settings-actions">
+                    <button type="button" className="secondary-button" onClick={() => void chooseWatchFolder()}>添加监听文件夹…</button>
+                    <button type="button" className="secondary-button" onClick={() => { void rescanInbox().then(refreshInbox); }}>立即扫描</button>
+                  </div>
+                  {inbox.watchFolders.length > 0 ? (
+                    <div className="installed-models">{inbox.watchFolders.map((folder) => (
+                      <div className="model-row" key={folder.id}>
+                        <span>{folder.label} · {folder.path}</span>
+                        <button type="button" className="danger-text" onClick={() => { void removeInboxWatchFolder(folder.id).then(refreshInbox); }}>移除</button>
+                      </div>
+                    ))}</div>
+                  ) : <p className="settings-empty">尚未监听任何文件夹。</p>}
+                </section>
+                <section className="settings-section">
+                  <div className="settings-section-title"><h3>最近自动导入</h3></div>
+                  {inbox.recentFiles.length === 0 && <p className="settings-empty">还没有文件进入收件箱。</p>}
+                  {inbox.recentFiles.length > 0 && (
+                    <div className="installed-models">{inbox.recentFiles.map((file) => (
+                      <div className="model-row" key={file.id}>
+                        <span>{file.fileName} · {inboxStatusLabel(file.status)}{file.errorMessage ? ` · ${file.errorMessage}` : ""}</span>
+                      </div>
+                    ))}</div>
+                  )}
+                  <p className="settings-meta">待处理 {inbox.counts.pending} · 已导入 {inbox.counts.imported} · 失败 {inbox.counts.failed}</p>
+                </section>
+              </div>
+            ) : <p className="settings-empty">正在读取收件箱状态…</p>
+          ) : tab === "hotwords" ? (
+            <div className="settings-form">
+              <section className="settings-section">
+                <div className="settings-section-title"><h3>个人词汇库</h3><StatusLabel ok={hotwords.length > 0} /></div>
+                <p className="settings-meta">热词会注入转写提示与 AI 校对，显著改善专有名词、人名、产品名的中文识别（如「回声记忆」「小能熊」不会被写成同音字）。</p>
+                <div className="settings-actions hotword-input-row">
+                  <input value={hotwordInput} placeholder="输入热词后回车" onChange={(event) => setHotwordInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing) void submitHotword(); }} />
+                  <button type="button" className="secondary-button" disabled={!hotwordInput.trim()} onClick={() => void submitHotword()}>添加</button>
+                </div>
+                {hotwords.length > 0 ? (
+                  <div className="installed-models">{hotwords.map((hotword) => (
+                    <div className="model-row" key={hotword.id}>
+                      <span>{hotword.term}{hotword.note ? ` · ${hotword.note}` : ""}</span>
+                      <button type="button" className="danger-text" onClick={() => { void removeHotword(hotword.id).then(refreshHotwords); }}>删除</button>
+                    </div>
+                  ))}</div>
+                ) : <p className="settings-empty">还没有热词。</p>}
+              </section>
+              <section className="settings-section">
+                <div className="settings-section-title"><h3>转写 AI 校对</h3></div>
+                <label className="settings-switch-row"><span>转写完成后自动用本机模型校对（断句、标点、热词纠正）</span><input type="checkbox" checked={correctionEnabled} onChange={(event) => void toggleCorrection(event.target.checked)} /></label>
+                <p className="settings-meta">校对结果写入独立文本层，原始逐字稿永不覆盖，可随时对比。也可以在记录详情页手动触发。</p>
+              </section>
+              <section className="settings-section">
+                <div className="settings-section-title"><h3>首次启动引导</h3></div>
+                <div className="settings-actions"><button type="button" className="secondary-button" onClick={() => void rerunOnboarding()}>重新运行引导向导</button></div>
+                <p className="settings-meta">重新走一遍模型与收件箱配置流程。关闭设置后会自动弹出。</p>
+              </section>
+            </div>
           ) : (
             editing ? <TemplateEditor template={editing} busy={busy} onCancel={() => setEditing(null)} onSaved={async () => { setEditing(null); await refresh(); }} onError={setError} /> : (
               <div className="template-list">
@@ -355,11 +501,21 @@ export default function SettingsPanel({ open: visible, onClose }: Props) {
             )
           )}
           {notice && <p className="inline-notice">{notice}</p>}
+          {inboxError && <p className="inline-error" role="alert">{inboxError}</p>}
           {error && <p className="inline-error">{error}</p>}
         </div>
       </section>
     </div>
   );
+}
+
+function inboxStatusLabel(status: string) {
+  if (status === "pending") return "等待处理";
+  if (status === "importing") return "导入中";
+  if (status === "imported") return "已导入";
+  if (status === "duplicate") return "重复文件";
+  if (status === "failed") return "失败";
+  return status;
 }
 
 function StatusLabel({ ok }: { ok: boolean }) {

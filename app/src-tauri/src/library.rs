@@ -118,6 +118,11 @@ fn supported_extension(path: &Path) -> AppResult<String> {
     }
 }
 
+/// 供收件箱等模块复用的 SHA-256 计算入口。
+pub fn sha256_file_public(path: &Path) -> AppResult<String> {
+    sha256_file(path)
+}
+
 fn sha256_file(path: &Path) -> AppResult<String> {
     let mut reader = BufReader::new(File::open(path)?);
     let mut hasher = Sha256::new();
