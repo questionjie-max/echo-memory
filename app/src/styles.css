@@ -706,3 +706,50 @@ input::placeholder, textarea::placeholder { color: #86868b; }
 .related-record-card strong { overflow: hidden; color: #1d1d1f; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .related-record-card span { color: #6e6e73; font-size: 10px; }
 .related-record-card:hover { border-color: rgba(0, 122, 255, 0.4); }
+
+/* ---------------- v0.4.0：AI 伙伴停靠栏 / 模板向导 / 产出 ---------------- */
+.app-shell { grid-template-rows: auto auto minmax(0, 1fr); }
+.assistant-dock { display: grid; grid-template-rows: auto auto minmax(120px, 22vh) auto auto; gap: 8px; margin: 0 14px 10px; padding: 10px 14px; border-radius: 12px; }
+.assistant-dock.collapsed { grid-template-rows: auto; }
+.dock-header { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.dock-toggle { padding: 4px 10px; border: 0; border-radius: 7px; background: rgba(0, 122, 255, 0.1); color: #0066cc; font-size: 12px; font-weight: 650; cursor: pointer; }
+.dock-engine { padding: 4px 7px; border: 1px solid rgba(60, 60, 67, 0.15); border-radius: 6px; background: #fff; font-size: 11px; }
+.dock-modes { display: flex; gap: 4px; overflow-x: auto; }
+.dock-modes button { padding: 4px 9px; border: 0; border-radius: 999px; background: transparent; color: #6e6e73; font-size: 11px; cursor: pointer; white-space: nowrap; }
+.dock-modes button.selected { background: rgba(0, 122, 255, 0.12); color: #0066cc; font-weight: 650; }
+.dock-hint { overflow: hidden; margin-left: auto; color: #6e6e73; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.dock-clear { padding: 3px 8px; border: 0; background: none; color: #6e6e73; font-size: 10px; cursor: pointer; }
+.dock-clear:hover { color: #d70015; }
+.dock-external-warning { margin: 0; padding: 6px 10px; border: 1px solid rgba(255, 149, 0, 0.35); border-radius: 7px; background: rgba(255, 149, 0, 0.08); color: #b25000; font-size: 10px; }
+.dock-messages { display: grid; align-content: start; gap: 8px; overflow-y: auto; }
+.dock-empty { margin: 0; color: #6e6e73; font-size: 11px; line-height: 1.6; }
+.dock-message { display: grid; gap: 4px; max-width: 78%; padding: 8px 11px; border-radius: 10px; font-size: 12px; line-height: 1.55; white-space: pre-wrap; }
+.dock-message.user { justify-self: end; background: rgba(0, 122, 255, 0.12); color: #0b3d80; }
+.dock-message.assistant { justify-self: start; border: 1px solid rgba(60, 60, 67, 0.1); background: #fff; color: #1d1d1f; }
+.dock-message p { margin: 0; }
+.dock-save { justify-self: start; padding: 2px 8px; border: 0; border-radius: 6px; background: none; color: #0066cc; font-size: 10px; cursor: pointer; }
+.dock-status { margin: 0; color: #6e6e73; font-size: 11px; }
+.dock-composer { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: end; }
+.dock-composer textarea { min-height: 44px; padding: 8px 11px; border: 1px solid rgba(60, 60, 67, 0.18); border-radius: 9px; background: #fff; font: inherit; font-size: 12px; resize: none; }
+.assistant-dock .inline-error, .assistant-dock .inline-notice { margin: 0; font-size: 10px; }
+
+.template-wizard { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 12px; width: min(620px, calc(100vw - 48px)); max-height: min(620px, calc(100vh - 64px)); padding: 22px 24px 18px; border-radius: 16px; }
+.template-wizard-header { display: flex; align-items: flex-start; justify-content: space-between; }
+.template-wizard-header h3 { margin: 0; font-size: 17px; }
+.template-wizard-body { display: grid; align-content: start; gap: 12px; overflow: auto; }
+.template-wizard-chat { display: grid; gap: 8px; max-height: 220px; overflow-y: auto; }
+.template-wizard-preview { display: grid; gap: 10px; padding-top: 4px; }
+.template-wizard-preview h4 { margin: 0; font-size: 13px; }
+.template-wizard-preview label { display: grid; gap: 4px; font-size: 11px; color: #6e6e73; }
+.template-wizard-preview input { padding: 7px 10px; border: 1px solid rgba(60, 60, 67, 0.18); border-radius: 7px; font-size: 12px; color: #1d1d1f; }
+.template-wizard-sections { display: grid; gap: 8px; }
+.template-wizard-section { display: grid; gap: 4px; padding: 9px 11px; border: 1px solid rgba(60, 60, 67, 0.11); border-radius: 9px; background: #fff; }
+.template-wizard-section strong { font-size: 12px; }
+.template-wizard-section small { color: #6e6e73; font-size: 10px; line-height: 1.5; }
+.template-wizard-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.template-heading-actions { display: flex; gap: 8px; }
+
+@media (max-width: 980px) {
+  .dock-modes { max-width: 46vw; }
+  .dock-hint { display: none; }
+}

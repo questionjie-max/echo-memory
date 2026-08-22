@@ -10,13 +10,14 @@ use crate::memory::{self, OpenAiCompatibleClient};
 use crate::state::AppState;
 use crate::transcript::effective_text;
 use crate::types::{
-    ActionDashboard, AnalysisTemplate, ExternalAiSettings, GrowthGraph, Hotword, InboxStatus,
-    InboxWatchFolder, IngestResult, KnowledgeAnswer, KnowledgeIndexStatus, KnowledgeOverview,
-    KnowledgeSettings, LocalAiStatus, LocalModelInfo, LocalWhisperModel, McpStatus, MemoryFeedback,
-    MemoryGenerationJob, MemoryGenerationRequest, MemoryScope, MemorySnapshot, MemoryViewKind,
-    ModelDownloadProgress, OnboardingStatus, ProcessingJob, Project, RecordBrief, RelatedRecord,
-    SearchResult, SuggestedWatchFolder, TemplateSection, TimelineItem, TranscriptBlock,
-    TranscriptSegment, TranscriptSegmentInput,
+    ActionDashboard, AnalysisTemplate, DockReply, DockStatus, ExternalAiSettings, GrowthGraph,
+    Hotword, InboxStatus, InboxWatchFolder, IngestResult, KnowledgeAnswer, KnowledgeIndexStatus,
+    KnowledgeOverview, KnowledgeSettings, LocalAiStatus, LocalModelInfo, LocalWhisperModel,
+    McpStatus, MemoryFeedback, MemoryGenerationJob, MemoryGenerationRequest, MemoryScope,
+    MemorySnapshot, MemoryViewKind, ModelDownloadProgress, OnboardingStatus, OutputStatus,
+    ProcessingJob, Project, RecordBrief, RelatedRecord, SearchResult, SuggestedWatchFolder,
+    TemplateDraft, TemplateSection, TimelineItem, TranscriptBlock, TranscriptSegment,
+    TranscriptSegmentInput,
 };
 use crate::whisper::WhisperAdapter;
 use chrono::{Duration as ChronoDuration, Local, SecondsFormat, TimeZone, Utc};
@@ -1402,6 +1403,9 @@ fn run_analysis(library: &ManagedLibrary, record_id: &str, job: &ProcessingJob) 
         )?;
         repository.update_job_status(&job.id, "completed", None)?;
         repository.update_record_status(record_id, "completed")?;
+        if crate::dock::auto_export_enabled(&library.repository())? {
+            let _ = crate::dock::export_analysis_to_output(library, record_id);
+        }
         spawn_incremental_index(library.root().to_path_buf(), record_id.to_owned());
         Ok::<(), crate::error::AppError>(())
     })();
@@ -2024,5 +2028,200 @@ pub fn set_transcript_correction_enabled(
             "transcript_correction_enabled",
             if enabled { "true" } else { "false" },
         )
+        .map_err(|error| error.to_frontend())
+}
+
+/* ------------------------- v0.4.0：AI 伙伴 / 模板向导 / 产出文件夹 ------------------------- */
+
+#[tauri::command]
+pub fn get_dock_status(state: State<AppState>) -> Result<DockStatus, String> {
+    let repository = state.library.repository();
+    let chat = repository
+        .latest_dock_chat()
+        .map_err(|error| error.to_frontend())?;
+    let messages = match &chat {
+        Some(chat) => repository
+            .list_dock_messages(&chat.id, 60)
+            .map_err(|error| error.to_frontend())?,
+        None => Vec::new(),
+    };
+    Ok(DockStatus {
+        chat,
+        messages,
+        external_available: crate::dock::external_available(&state.library),
+    })
+}
+
+#[tauri::command]
+pub fn ask_dock(
+    state: State<AppState>,
+    mode: String,
+    message: String,
+    engine: Option<String>,
+    record_id: Option<String>,
+) -> Result<DockReply, String> {
+    let message = message.trim().to_owned();
+    if message.is_empty() || message.chars().count() > 8_000 {
+        return Err("消息内容无效".to_owned());
+    }
+    let library = &state.library;
+    let repository = library.repository();
+    let mut chat = match repository
+        .latest_dock_chat()
+        .map_err(|error| error.to_frontend())?
+    {
+        Some(chat) => chat,
+        None => repository
+            .create_dock_chat("local", "新对话")
+            .map_err(|error| error.to_frontend())?,
+    };
+    let is_new_chat = repository
+        .list_dock_messages(&chat.id, 1)
+        .map_err(|error| error.to_frontend())?
+        .is_empty();
+    let title = if is_new_chat {
+        message.chars().take(24).collect::<String>()
+    } else {
+        chat.title.clone()
+    };
+    let user_message = repository
+        .append_dock_message(&chat.id, "user", &message, &mode)
+        .map_err(|error| error.to_frontend())?;
+    let history = repository
+        .list_dock_messages(&chat.id, crate::dock::history_turns() * 2)
+        .map_err(|error| error.to_frontend())?
+        .into_iter()
+        .filter(|existing| existing.id != user_message.id)
+        .collect::<Vec<_>>();
+
+    let engine = engine.unwrap_or_else(|| "local".to_owned());
+    let reply = match engine.as_str() {
+        "external" => {
+            crate::dock::ask_external(library, &mode, &history, &message, record_id.as_deref())
+                .map_err(|error| error.to_frontend())?
+        }
+        _ => crate::dock::ask_local(library, &mode, &history, &message, record_id.as_deref())
+            .map_err(|error| error.to_frontend())?,
+    };
+    let assistant_message = repository
+        .append_dock_message(&chat.id, "assistant", &reply, &mode)
+        .map_err(|error| error.to_frontend())?;
+    repository
+        .touch_dock_chat(&chat.id, Some(&title))
+        .map_err(|error| error.to_frontend())?;
+    chat.title = title;
+    chat.engine = engine;
+    Ok(DockReply {
+        chat,
+        user_message,
+        assistant_message,
+    })
+}
+
+#[tauri::command]
+pub fn clear_dock_chat(state: State<AppState>) -> Result<(), String> {
+    state
+        .library
+        .repository()
+        .clear_dock_chats()
+        .map_err(|error| error.to_frontend())
+}
+
+#[tauri::command]
+pub fn generate_template_draft(
+    state: State<AppState>,
+    messages: Vec<crate::dock::WizardMessage>,
+) -> Result<TemplateDraft, String> {
+    crate::dock::generate_template_draft(&state.library, &messages)
+        .map_err(|error| error.to_frontend())
+}
+
+#[tauri::command]
+pub fn get_output_status(state: State<AppState>) -> Result<OutputStatus, String> {
+    let repository = state.library.repository();
+    let folder = repository
+        .setting_value("output_folder")
+        .map_err(|error| error.to_frontend())?
+        .filter(|value| !value.trim().is_empty());
+    let auto_export_analysis = repository
+        .setting_value("auto_export_analysis")
+        .map_err(|error| error.to_frontend())?
+        .as_deref()
+        .is_some_and(|value| value == "true");
+    let recent_files = match &folder {
+        Some(folder) => crate::dock::list_recent_outputs(std::path::Path::new(folder), 10),
+        None => Vec::new(),
+    };
+    Ok(OutputStatus {
+        folder,
+        auto_export_analysis,
+        recent_files,
+    })
+}
+
+#[tauri::command]
+pub fn set_output_folder(
+    state: State<AppState>,
+    path: Option<String>,
+) -> Result<OutputStatus, String> {
+    let repository = state.library.repository();
+    match path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        Some(path) => {
+            let candidate = std::path::PathBuf::from(path);
+            if !candidate.is_dir() {
+                return Err("目录不存在，请检查路径".to_owned());
+            }
+            repository
+                .set_setting_value("output_folder", &candidate.to_string_lossy())
+                .map_err(|error| error.to_frontend())?;
+        }
+        None => {
+            repository
+                .set_setting_value("output_folder", "")
+                .map_err(|error| error.to_frontend())?;
+        }
+    }
+    get_output_status(state)
+}
+
+#[tauri::command]
+pub fn set_auto_export_analysis(
+    state: State<AppState>,
+    enabled: bool,
+) -> Result<OutputStatus, String> {
+    state
+        .library
+        .repository()
+        .set_setting_value(
+            "auto_export_analysis",
+            if enabled { "true" } else { "false" },
+        )
+        .map_err(|error| error.to_frontend())?;
+    get_output_status(state)
+}
+
+#[tauri::command]
+pub fn export_record_to_output(
+    state: State<AppState>,
+    record_id: String,
+    kind: String,
+) -> Result<String, String> {
+    crate::dock::export_record_kind(&state.library, &record_id, &kind)
+        .map(|path| path.to_string_lossy().to_string())
+        .map_err(|error| error.to_frontend())
+}
+
+#[tauri::command]
+pub fn save_dock_message_to_output(
+    state: State<AppState>,
+    title: String,
+    content: String,
+) -> Result<String, String> {
+    crate::dock::save_markdown_to_output(&state.library, &title, &content, "对话")
+        .map(|path| path.to_string_lossy().to_string())
         .map_err(|error| error.to_frontend())
 }

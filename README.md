@@ -39,6 +39,9 @@ The digital-twin direction is a product vision, not a claim that the current Alp
 - Audio inbox: watch folders and USB recorders; new audio imports, transcribes, and analyzes automatically.
 - Personal hotword vocabulary injected into transcription, with optional local LLM correction that never overwrites the original transcript.
 - Cross-record action items and open questions dashboard with completion tracking and evidence jumps.
+- Assistant dock: chat with local (or optional external) models from any view — summarize the current record, create writing, or brainstorm.
+- AI template wizard: describe your needs in conversation; a local model generates the analysis template.
+- Output folder: analyses, transcripts, and AI drafts are written as standard Markdown into a folder of your choice (e.g. an Obsidian vault).
 - Imports `MP3`, `M4A`, and `WAV` audio with duplicate detection.
 - Imports `Markdown`, `TXT`, and `DOCX` documents into the same searchable library.
 - Transcribes audio locally with embedded Whisper or a local `whisper.cpp` command.

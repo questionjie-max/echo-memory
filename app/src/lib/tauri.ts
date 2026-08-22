@@ -32,6 +32,11 @@ import type {
   OnboardingStatus,
   ActionDashboard,
   RelatedRecord,
+  DockStatus,
+  DockReply,
+  DockMode,
+  TemplateDraft,
+  OutputStatus,
 } from "../shared/types";
 
 export function createProject(name: string): Promise<Project> {
@@ -344,4 +349,54 @@ export function getTranscriptCorrectionEnabled(): Promise<boolean> {
 
 export function setTranscriptCorrectionEnabled(enabled: boolean): Promise<void> {
   return invoke<void>("set_transcript_correction_enabled", { enabled });
+}
+
+/* ------------------------- v0.4.0：AI 伙伴 / 模板向导 / 产出文件夹 ------------------------- */
+
+export function getDockStatus(): Promise<DockStatus> {
+  return invoke<DockStatus>("get_dock_status");
+}
+
+export function askDock(options: {
+  mode: DockMode;
+  message: string;
+  engine?: "local" | "external";
+  recordId?: string | null;
+}): Promise<DockReply> {
+  return invoke<DockReply>("ask_dock", {
+    mode: options.mode,
+    message: options.message,
+    engine: options.engine ?? null,
+    recordId: options.recordId ?? null,
+  });
+}
+
+export function clearDockChat(): Promise<void> {
+  return invoke<void>("clear_dock_chat");
+}
+
+export function generateTemplateDraft(
+  messages: Array<{ role: string; content: string }>,
+): Promise<TemplateDraft> {
+  return invoke<TemplateDraft>("generate_template_draft", { messages });
+}
+
+export function getOutputStatus(): Promise<OutputStatus> {
+  return invoke<OutputStatus>("get_output_status");
+}
+
+export function setOutputFolder(path: string | null): Promise<OutputStatus> {
+  return invoke<OutputStatus>("set_output_folder", { path });
+}
+
+export function setAutoExportAnalysis(enabled: boolean): Promise<OutputStatus> {
+  return invoke<OutputStatus>("set_auto_export_analysis", { enabled });
+}
+
+export function exportRecordToOutput(recordId: string, kind: "analysis" | "transcript"): Promise<string> {
+  return invoke<string>("export_record_to_output", { recordId, kind });
+}
+
+export function saveDockMessageToOutput(title: string, content: string): Promise<string> {
+  return invoke<string>("save_dock_message_to_output", { title, content });
 }

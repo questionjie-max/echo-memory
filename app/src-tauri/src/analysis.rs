@@ -97,6 +97,29 @@ impl OllamaAdapter {
         })
     }
 
+    /// 纯文本生成：AI 伙伴对话等非结构化任务使用。
+    pub fn raw_text(&self, prompt: &str) -> AppResult<String> {
+        let url = format!("{}/api/generate", self.base_url.trim_end_matches('/'));
+        let body = serde_json::json!({
+            "model": self.model,
+            "prompt": prompt,
+            "stream": false,
+            "options": { "num_ctx": 8192, "num_predict": 2048, "temperature": 0.6 }
+        });
+        let response: serde_json::Value = ureq::post(&url)
+            .send_json(body)
+            .map_err(|_| {
+                AppError::Analysis("Ollama 对话请求失败。请确认本机服务仍在运行。".into())
+            })?
+            .into_json()
+            .map_err(|_| AppError::Analysis("无法读取 Ollama 对话响应".into()))?;
+        Ok(response
+            .get("response")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned())
+    }
+
     /// 通用 JSON 生成：供转写校对等非分析任务复用同一个 Ollama 会话约定。
     pub fn raw_generate(
         &self,
