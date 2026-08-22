@@ -33,6 +33,16 @@ pub fn start(app: tauri::AppHandle, library_root: PathBuf) {
     std::thread::Builder::new()
         .name("inbox-coordinator".to_owned())
         .spawn(move || {
+            // 恢复上次退出时未完成的收件箱任务（哈希去重保证不重复入库）。
+            if let Ok(library) = ManagedLibrary::open(library_root.clone()) {
+                let recoverable = library
+                    .repository()
+                    .list_active_seen_files()
+                    .unwrap_or_default();
+                for seen in recoverable {
+                    spawn_import_worker(app.clone(), library_root.clone(), seen);
+                }
+            }
             // 上一轮看到的候选文件（路径 → 大小+mtime），用于写稳检测。
             let mut previous: HashMap<PathBuf, (u64, i64)> = HashMap::new();
             loop {
@@ -188,6 +198,52 @@ fn walk_audio_files(directory: &Path, depth: usize) -> Vec<PathBuf> {
     files
 }
 
+/// 添加监听文件夹时建立基线：把当前已存在的音频文件标记为「已跳过」，
+/// 之后只接住新出现的文件——防止把用户下载目录里的存量音乐批量导入转写。
+pub fn baseline_folder(library: &ManagedLibrary, path: &Path) -> usize {
+    let repository = library.repository();
+    let now = Utc::now().to_rfc3339();
+    let mut marked = 0;
+    for file_path in walk_audio_files(path, 0) {
+        let Ok(metadata) = std::fs::metadata(&file_path) else {
+            continue;
+        };
+        let seen = InboxSeenFile {
+            id: uuid::Uuid::new_v4().to_string(),
+            source_kind: "folder".to_owned(),
+            source_path: path.to_string_lossy().to_string(),
+            file_path: file_path.to_string_lossy().to_string(),
+            file_name: file_path
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            file_size: metadata.len() as i64,
+            mtime_ms: metadata
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|duration| duration.as_millis() as i64)
+                .unwrap_or(0),
+            sha256: None,
+            status: "skipped".to_owned(),
+            record_id: None,
+            error_message: Some("添加监听时已存在，未自动导入".to_owned()),
+            seen_at: now.clone(),
+            updated_at: now.clone(),
+        };
+        if repository
+            .seen_file_by_path(&seen.file_path)
+            .ok()
+            .flatten()
+            .is_none()
+            && repository.insert_seen_file(&seen).is_ok()
+        {
+            marked += 1;
+        }
+    }
+    marked
+}
+
 fn spawn_import_worker(app: tauri::AppHandle, library_root: PathBuf, seen: InboxSeenFile) {
     let limiter = heavy_job_limiter().clone();
     std::thread::Builder::new()
@@ -300,4 +356,59 @@ pub fn validate_watch_folder(path: &str) -> AppResult<PathBuf> {
         ));
     }
     Ok(candidate)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn walk_skips_icloud_placeholders_and_limits_depth() {
+        let root = std::env::temp_dir().join(format!("echo-walk-{}", uuid::Uuid::new_v4()));
+        let deep_dir = root.join("a/b/c/d");
+        std::fs::create_dir_all(&deep_dir).unwrap();
+        std::fs::write(root.join("talk.m4a"), b"x").unwrap();
+        std::fs::write(root.join("not-ready.m4a.icloud"), b"x").unwrap();
+        std::fs::write(root.join("note.txt"), b"x").unwrap();
+        std::fs::write(root.join("a/b/c/deep.mp3"), b"x").unwrap();
+        std::fs::write(deep_dir.join("too-deep.wav"), b"x").unwrap();
+        let found = walk_audio_files(&root, 0);
+        let names: Vec<String> = found
+            .iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        assert!(names.contains(&"talk.m4a".to_owned()));
+        assert!(names.contains(&"deep.mp3".to_owned()));
+        assert!(!names.iter().any(|name| name.ends_with(".icloud")));
+        assert!(!names.contains(&"note.txt".to_owned()));
+        assert!(!names.contains(&"too-deep.wav".to_owned()));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn baseline_marks_existing_files_skipped() {
+        let root = std::env::temp_dir().join(format!("echo-baseline-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("old-song.mp3"), b"x").unwrap();
+        let library_root =
+            std::env::temp_dir().join(format!("echo-baseline-lib-{}", uuid::Uuid::new_v4()));
+        let library = ManagedLibrary::open(library_root.clone()).unwrap();
+        let marked = baseline_folder(&library, &root);
+        assert_eq!(marked, 1);
+        let seen = library
+            .repository()
+            .seen_file_by_path(&root.join("old-song.mp3").to_string_lossy())
+            .unwrap()
+            .unwrap();
+        assert_eq!(seen.status, "skipped");
+        // 新文件出现后不受基线影响。
+        std::fs::write(root.join("new-talk.m4a"), b"x").unwrap();
+        assert!(library
+            .repository()
+            .seen_file_by_path(&root.join("new-talk.m4a").to_string_lossy())
+            .unwrap()
+            .is_none());
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(library_root);
+    }
 }

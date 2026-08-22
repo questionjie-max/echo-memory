@@ -1794,6 +1794,8 @@ pub fn add_inbox_watch_folder(
     label: Option<String>,
 ) -> Result<InboxWatchFolder, String> {
     let validated = crate::inbox::validate_watch_folder(&path).map_err(|e| e.to_frontend())?;
+    // 先基线后登记：登记前扫描器不认识该目录，基线完成前的竞态窗口不存在。
+    crate::inbox::baseline_folder(&state.library, &validated);
     let label = label.unwrap_or_else(|| {
         validated
             .file_name()

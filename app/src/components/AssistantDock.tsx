@@ -238,7 +238,12 @@ export default function AssistantDock({ selectedRecordId, selectedRecordTitle }:
                 }
               }}
             />
-            <button type="button" className="primary-button" disabled={busy || !draft.trim()} onClick={() => void send()}>
+            <button
+              type="button"
+              className="primary-button"
+              disabled={busy || !draft.trim() || (mode === "summary" && !selectedRecordId)}
+              onClick={() => void send()}
+            >
               发送
             </button>
           </div>

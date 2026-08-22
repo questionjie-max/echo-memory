@@ -2369,6 +2369,19 @@ impl LibraryRepository {
         Ok(())
     }
 
+    /// 启动恢复：上次退出时仍处于 pending/importing 的收件箱文件。
+    pub fn list_active_seen_files(&self) -> AppResult<Vec<InboxSeenFile>> {
+        let connection = self.connect()?;
+        let mut statement = connection.prepare(
+            "SELECT id, source_kind, source_path, file_path, file_name, file_size, mtime_ms, sha256, status, record_id, error_message, seen_at, updated_at \
+             FROM inbox_seen_files WHERE status IN ('pending', 'importing') ORDER BY seen_at",
+        )?;
+        let rows = statement
+            .query_map([], |row| Self::row_to_seen_file(row))?
+            .collect::<Result<Vec<_>, rusqlite::Error>>()?;
+        Ok(rows)
+    }
+
     pub fn recent_seen_files(&self, limit: u32) -> AppResult<Vec<InboxSeenFile>> {
         let connection = self.connect()?;
         let mut statement = connection.prepare(

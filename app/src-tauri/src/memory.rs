@@ -73,10 +73,18 @@ impl OpenAiCompatibleClient {
     }
 
     pub fn complete_json(&self, prompt: &str) -> AppResult<String> {
+        self.complete_text(
+            "You extract traceable memory structures. Return one valid JSON object only. Never invent source IDs.",
+            prompt,
+        )
+    }
+
+    /// 通用对话补全：AI 伙伴停靠栏等自然语言场景使用自定义 system 提示。
+    pub fn complete_text(&self, system: &str, prompt: &str) -> AppResult<String> {
         let body = json!({
             "model": self.model,
             "messages": [
-                {"role": "system", "content": "You extract traceable memory structures. Return one valid JSON object only. Never invent source IDs."},
+                {"role": "system", "content": system},
                 {"role": "user", "content": prompt}
             ]
         });
