@@ -2,7 +2,6 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AnalysisTemplate,
   AudioPreprocessorStatus,
-  AppInfo,
   ExternalAiSettings,
   GrowthGraph,
   IngestResult,
@@ -27,18 +26,6 @@ import type {
   TranscriptSegment,
   TranscriptBlock,
 } from "../shared/types";
-
-export function getAppInfo(): Promise<AppInfo> {
-  return invoke<AppInfo>("app_info");
-}
-
-export function generateId(): Promise<string> {
-  return invoke<string>("generate_id");
-}
-
-export function greet(name: string): Promise<string> {
-  return invoke<string>("greet", { name });
-}
 
 export function createProject(name: string): Promise<Project> {
   return invoke<Project>("create_project", { name });

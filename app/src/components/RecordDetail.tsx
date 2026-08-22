@@ -29,6 +29,7 @@ import {
   updateRecordTitle,
   updateTranscriptSegment,
 } from "../lib/tauri";
+import { formatMinutesSeconds as formatTime, isProcessingStatus as isProcessing } from "../lib/format";
 
 interface Props {
   record: RecordBrief;
@@ -691,15 +692,6 @@ function parseAnalysis(content: string): AnalysisContent | null {
   } catch {
     return null;
   }
-}
-
-function formatTime(ms: number) {
-  const seconds = Math.floor(ms / 1000);
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
-}
-
-function isProcessing(status: RecordStatus) {
-  return status === "preparing" || status === "transcribing" || status === "analyzing";
 }
 
 function statusText(record: RecordBrief) {

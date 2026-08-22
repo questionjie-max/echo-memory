@@ -13,16 +13,6 @@
  * 须通过 #[serde(rename_all = "camelCase")] 保持字段名一致。
  */
 
-/** 应用元信息，由后端 `app_info` 命令返回 */
-export interface AppInfo {
-  name: string;
-  version: string;
-  /** 是否仅本地处理（不出本机） */
-  localOnly: boolean;
-  /** 生成时间，UTC ISO-8601 */
-  generatedAt: string;
-}
-
 /* ---------------- 领域模型（M1 起落地数据库，此处仅定义契约） ---------------- */
 
 export type RecordStatus =

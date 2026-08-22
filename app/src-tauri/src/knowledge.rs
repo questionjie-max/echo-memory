@@ -12,8 +12,6 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use uuid::Uuid;
 
-const OLLAMA_BASE_URL: &str = "http://127.0.0.1:11434";
-
 #[derive(Debug, Clone)]
 struct ChunkDraft {
     segment_ids: Vec<String>,
@@ -310,7 +308,8 @@ fn embed_texts(model: &str, inputs: &[String]) -> AppResult<Vec<Vec<f32>>> {
     if inputs.is_empty() {
         return Ok(Vec::new());
     }
-    let response: serde_json::Value = ureq::post(&format!("{OLLAMA_BASE_URL}/api/embed"))
+    let base_url = crate::analysis::ollama_base_url();
+    let response: serde_json::Value = ureq::post(&format!("{base_url}/api/embed"))
         .send_json(serde_json::json!({ "model": model, "input": inputs }))
         .map_err(|error| AppError::Analysis(format!("本地嵌入请求失败：{error}")))?
         .into_json()
@@ -325,7 +324,8 @@ fn embed_texts(model: &str, inputs: &[String]) -> AppResult<Vec<Vec<f32>>> {
 }
 
 fn ensure_model_installed(model: &str) -> AppResult<()> {
-    let tags: serde_json::Value = ureq::get(&format!("{OLLAMA_BASE_URL}/api/tags"))
+    let base_url = crate::analysis::ollama_base_url();
+    let tags: serde_json::Value = ureq::get(&format!("{base_url}/api/tags"))
         .call()
         .map_err(|_| AppError::Analysis("Ollama 未启动，无法建立知识索引".to_owned()))?
         .into_json()
@@ -416,7 +416,8 @@ fn generate_answer(model: &str, prompt: &str) -> AppResult<AnswerDraft> {
         },
         "required": ["answer", "citation_chunk_ids", "citation_quotes", "insufficient_evidence"]
     });
-    let response: serde_json::Value = ureq::post(&format!("{OLLAMA_BASE_URL}/api/generate"))
+    let base_url = crate::analysis::ollama_base_url();
+    let response: serde_json::Value = ureq::post(&format!("{base_url}/api/generate"))
         .send_json(serde_json::json!({
             "model": model,
             "prompt": prompt,

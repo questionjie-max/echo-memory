@@ -3,16 +3,6 @@
 
 use serde::{Deserialize, Serialize};
 
-/// 应用元信息，由 `app_info` 命令返回。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AppInfo {
-    pub name: String,
-    pub version: String,
-    pub local_only: bool,
-    pub generated_at: String, // UTC ISO-8601
-}
-
 /* ---------------- 领域模型（与「架构与数据.md」对齐，M1 起落地数据库） ---------------- */
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
