@@ -2,6 +2,7 @@ pub mod analysis;
 pub mod audio;
 pub mod commands;
 pub mod db;
+pub mod dock;
 pub mod document;
 pub mod error;
 pub mod export;
@@ -100,6 +101,15 @@ pub fn run() {
             commands::correct_transcript,
             commands::get_transcript_correction_enabled,
             commands::set_transcript_correction_enabled,
+            commands::get_dock_status,
+            commands::ask_dock,
+            commands::clear_dock_chat,
+            commands::generate_template_draft,
+            commands::get_output_status,
+            commands::set_output_folder,
+            commands::set_auto_export_analysis,
+            commands::export_record_to_output,
+            commands::save_dock_message_to_output,
         ])
         .run(tauri::generate_context!())
         .expect("启动回声记忆失败");

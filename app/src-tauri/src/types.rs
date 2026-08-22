@@ -724,3 +724,76 @@ pub struct SuggestedWatchFolder {
     pub label: String,
     pub path: String,
 }
+
+/* ----------------------------- v0.4.0：AI 伙伴 / 模板向导 / 产出文件夹 ----------------------------- */
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DockChat {
+    pub id: String,
+    pub title: String,
+    pub engine: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DockMessage {
+    pub id: String,
+    pub chat_id: String,
+    pub role: String,
+    pub content: String,
+    pub mode: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DockReply {
+    pub chat: DockChat,
+    pub user_message: DockMessage,
+    pub assistant_message: DockMessage,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DockStatus {
+    pub chat: Option<DockChat>,
+    pub messages: Vec<DockMessage>,
+    pub external_available: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TemplateDraftSection {
+    pub key: String,
+    pub title: String,
+    pub format: String, // paragraph | list
+    pub instruction: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TemplateDraft {
+    pub name: String,
+    pub description: String,
+    pub sections: Vec<TemplateDraftSection>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OutputFile {
+    pub file_name: String,
+    pub path: String,
+    pub size: u64,
+    pub modified_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OutputStatus {
+    pub folder: Option<String>,
+    pub auto_export_analysis: bool,
+    pub recent_files: Vec<OutputFile>,
+}

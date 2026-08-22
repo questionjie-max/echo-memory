@@ -19,6 +19,11 @@ pub fn export_record(
     Ok(destination.to_path_buf())
 }
 
+/// 渲染单条记录的 Markdown 全文（含逐字稿与分析），供产出文件夹复用。
+pub fn record_markdown(library: &ManagedLibrary, record_id: &str) -> AppResult<String> {
+    render_record(library, record_id, "md")
+}
+
 pub fn export_knowledge_base(
     library: &ManagedLibrary,
     project_id: Option<&str>,
@@ -213,6 +218,10 @@ fn append_markdown_items_body(output: &mut String, items: &[AnalysisItemDraft]) 
         output.push('\n');
     }
     output.push('\n');
+}
+
+pub fn atomic_write_public(destination: &Path, content: &[u8]) -> AppResult<()> {
+    atomic_write(destination, content)
 }
 
 fn atomic_write(destination: &Path, content: &[u8]) -> AppResult<()> {

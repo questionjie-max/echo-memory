@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import ProjectPanel from "./components/ProjectPanel";
 import ActionDashboard from "./components/ActionDashboard";
 import OnboardingWizard from "./components/OnboardingWizard";
+import AssistantDock from "./components/AssistantDock";
 import RecordPanel from "./components/RecordPanel";
 import RecordDetail from "./components/RecordDetail";
 import SearchPanel from "./components/SearchPanel";
@@ -137,6 +138,11 @@ export default function App() {
         />}
         <button type="button" className="toolbar-button" onClick={() => setSettingsOpen(true)}>设置</button>
       </header>
+
+      <AssistantDock
+        selectedRecordId={selectedRecord?.id ?? null}
+        selectedRecordTitle={selectedRecord?.title ?? null}
+      />
 
       <div className={mainView === "library" ? "workspace-grid" : "memory-workspace-grid"}>
         <ProjectPanel selectedScope={scope} refreshKey={refreshKey} onSelect={selectScope} />

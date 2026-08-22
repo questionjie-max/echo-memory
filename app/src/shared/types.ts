@@ -575,3 +575,62 @@ export interface RelatedRecord {
   similarity: number;
   projectId: string | null;
 }
+
+/* ----------------------------- v0.4.0：AI 伙伴 / 模板向导 / 产出文件夹 ----------------------------- */
+
+export type DockMode = "summary" | "creation" | "inspire" | "free";
+
+export interface DockChat {
+  id: string;
+  title: string;
+  engine: "local" | "external" | string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DockMessage {
+  id: string;
+  chatId: string;
+  role: "user" | "assistant" | string;
+  content: string;
+  mode: DockMode | string;
+  createdAt: string;
+}
+
+export interface DockReply {
+  chat: DockChat;
+  userMessage: DockMessage;
+  assistantMessage: DockMessage;
+}
+
+export interface DockStatus {
+  chat: DockChat | null;
+  messages: DockMessage[];
+  externalAvailable: boolean;
+}
+
+export interface TemplateDraftSection {
+  key: string;
+  title: string;
+  format: "paragraph" | "list" | string;
+  instruction: string;
+}
+
+export interface TemplateDraft {
+  name: string;
+  description: string;
+  sections: TemplateDraftSection[];
+}
+
+export interface OutputFile {
+  fileName: string;
+  path: string;
+  size: number;
+  modifiedAt: string;
+}
+
+export interface OutputStatus {
+  folder: string | null;
+  autoExportAnalysis: boolean;
+  recentFiles: OutputFile[];
+}

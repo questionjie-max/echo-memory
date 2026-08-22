@@ -3,12 +3,14 @@ import { listen } from "@tauri-apps/api/event";
 import { isTauri } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import { open as openDirectory } from "@tauri-apps/plugin-dialog";
+import TemplateWizard from "./TemplateWizard";
 import type {
   AnalysisTemplate,
   AudioPreprocessorStatus,
   ExternalAiSettings,
   Hotword,
   InboxStatus,
+  OutputStatus,
   LocalAiStatus,
   ModelDownloadProgress,
   TemplateSection,
@@ -27,6 +29,9 @@ import {
   removeInboxWatchFolder,
   resetOnboarding,
   rescanInbox,
+  getOutputStatus,
+  setAutoExportAnalysis,
+  setOutputFolder,
   setInboxUsbDetection,
   setTranscriptCorrectionEnabled,
   getExternalAiSettings,
@@ -46,7 +51,7 @@ interface Props {
   onClose: () => void;
 }
 
-type SettingsTab = "ai" | "external" | "templates" | "inbox" | "hotwords";
+type SettingsTab = "ai" | "external" | "templates" | "inbox" | "hotwords" | "output";
 
 const LANGUAGES = [
   ["zh", "中文"],
@@ -66,6 +71,8 @@ export default function SettingsPanel({ open: visible, onClose }: Props) {
   const [hotwordInput, setHotwordInput] = useState("");
   const [correctionEnabled, setCorrectionEnabled] = useState(false);
   const [inboxError, setInboxError] = useState<string | null>(null);
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [output, setOutput] = useState<OutputStatus | null>(null);
 
   async function refreshInbox() {
     try {
@@ -116,6 +123,33 @@ export default function SettingsPanel({ open: visible, onClose }: Props) {
     }
   }
 
+  async function chooseOutputFolder() {
+    try {
+      const selected = await openDirectory({ directory: true, multiple: false });
+      if (typeof selected !== "string") return;
+      setOutput(await setOutputFolder(selected));
+      setInboxError(null);
+    } catch (reason) {
+      setInboxError(String(reason));
+    }
+  }
+
+  async function clearOutputFolder() {
+    try {
+      setOutput(await setOutputFolder(null));
+    } catch (reason) {
+      setInboxError(String(reason));
+    }
+  }
+
+  async function toggleAutoExport(enabled: boolean) {
+    try {
+      setOutput(await setAutoExportAnalysis(enabled));
+    } catch (reason) {
+      setInboxError(String(reason));
+    }
+  }
+
   async function rerunOnboarding() {
     try {
       await resetOnboarding();
@@ -153,9 +187,13 @@ export default function SettingsPanel({ open: visible, onClose }: Props) {
   }
 
   useEffect(() => {
+    if (visible && tab === "output") {
+      void getOutputStatus().then(setOutput).catch(() => setOutput(null));
+    }
     if (visible && (tab === "inbox" || tab === "hotwords")) {
       void refreshInbox();
       void refreshHotwords();
+      void getOutputStatus().then(setOutput).catch(() => setOutput(null));
       void getTranscriptCorrectionEnabled().then(setCorrectionEnabled).catch(() => setCorrectionEnabled(false));
     }
   }, [visible]);
@@ -362,6 +400,7 @@ export default function SettingsPanel({ open: visible, onClose }: Props) {
           <button type="button" className={tab === "templates" ? "selected" : ""} onClick={() => setTab("templates")}>分析模板</button>
           <button type="button" className={tab === "inbox" ? "selected" : ""} onClick={() => setTab("inbox")}>收件箱</button>
           <button type="button" className={tab === "hotwords" ? "selected" : ""} onClick={() => setTab("hotwords")}>词汇库</button>
+          <button type="button" className={tab === "output" ? "selected" : ""} onClick={() => setTab("output")}>产出</button>
         </div>
         <div className="settings-content">
           {tab === "ai" ? (
@@ -483,10 +522,39 @@ export default function SettingsPanel({ open: visible, onClose }: Props) {
                 <p className="settings-meta">重新走一遍模型与收件箱配置流程。关闭设置后会自动弹出。</p>
               </section>
             </div>
+          ) : tab === "output" ? (
+            output ? (
+              <div className="settings-form">
+                <section className="settings-section">
+                  <div className="settings-section-title"><h3>产出文件夹</h3><StatusLabel ok={Boolean(output.folder)} /></div>
+                  <p className="settings-meta">所有生成内容（分析、逐字稿、AI 对话成稿）以标准 Markdown + YAML frontmatter 写入这个文件夹。可以指向 Obsidian 等笔记工具的目录，用你自己的体系二次管理——回声记忆只负责写出，不感知任何外部工具。</p>
+                  <label><span>当前目录</span><div className="path-control"><input readOnly value={output.folder ?? "未设置（默认：~/Documents/回声记忆产出）"} /><button type="button" onClick={() => void chooseOutputFolder()}>选择</button></div></label>
+                  <div className="settings-actions">
+                    {output.folder && <button type="button" className="secondary-button" onClick={() => void clearOutputFolder()}>恢复默认目录</button>}
+                  </div>
+                </section>
+                <section className="settings-section">
+                  <div className="settings-section-title"><h3>自动导出</h3></div>
+                  <label className="settings-switch-row"><span>分析完成后自动导出 Markdown 到产出文件夹</span><input type="checkbox" checked={output.autoExportAnalysis} onChange={(event) => void toggleAutoExport(event.target.checked)} /></label>
+                  <p className="settings-meta">默认关闭。开启后每条录音分析完成即落盘一个 md 文件；也可随时在记录详情里手动导出。</p>
+                </section>
+                <section className="settings-section">
+                  <div className="settings-section-title"><h3>最近产出</h3></div>
+                  {output.recentFiles.length === 0 && <p className="settings-empty">还没有产出文件。</p>}
+                  {output.recentFiles.length > 0 && (
+                    <div className="installed-models">{output.recentFiles.map((file) => (
+                      <div className="model-row" key={file.path}>
+                        <span>{file.fileName} · {(file.size / 1024).toFixed(1)}KB</span>
+                      </div>
+                    ))}</div>
+                  )}
+                </section>
+              </div>
+            ) : <p className="settings-empty">正在读取产出设置…</p>
           ) : (
             editing ? <TemplateEditor template={editing} busy={busy} onCancel={() => setEditing(null)} onSaved={async () => { setEditing(null); await refresh(); }} onError={setError} /> : (
               <div className="template-list">
-                <div className="template-list-heading"><span>{templates.length} 个模板</span><button type="button" className="primary-button" onClick={() => setEditing(emptyTemplate())}>新建模板</button></div>
+                <div className="template-list-heading"><span>{templates.length} 个模板</span><div className="template-heading-actions"><button type="button" className="secondary-button" onClick={() => setWizardOpen(true)}>✨ AI 生成模板</button><button type="button" className="primary-button" onClick={() => setEditing(emptyTemplate())}>新建模板</button></div></div>
                 {templates.map((template) => (
                   <div className="template-row" key={template.id}>
                     <div><strong>{template.name}</strong><span>{template.description || "自定义分析模板"}</span></div>
@@ -505,6 +573,15 @@ export default function SettingsPanel({ open: visible, onClose }: Props) {
           {error && <p className="inline-error">{error}</p>}
         </div>
       </section>
+      {wizardOpen && (
+        <TemplateWizard
+          onClose={() => setWizardOpen(false)}
+          onCreated={async () => {
+            setWizardOpen(false);
+            await refresh();
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -1310,3 +1310,37 @@ fn onboarding_and_settings_round_trip() {
     assert!(repository.onboarding_completed_at().unwrap().is_none());
     let _ = std::fs::remove_file(path);
 }
+
+#[test]
+fn dock_chat_roundtrip_keeps_history_and_clears() {
+    let path = database_path();
+    let repository = LibraryRepository::new(path.clone()).unwrap();
+
+    assert!(repository.latest_dock_chat().unwrap().is_none());
+    let chat = repository.create_dock_chat("local", "新对话").unwrap();
+    let first = repository
+        .append_dock_message(&chat.id, "user", "帮我总结这条录音", "summary")
+        .unwrap();
+    let second = repository
+        .append_dock_message(&chat.id, "assistant", "核心结论是……", "summary")
+        .unwrap();
+    repository
+        .touch_dock_chat(&chat.id, Some("帮我总结这条录音"))
+        .unwrap();
+
+    let latest = repository.latest_dock_chat().unwrap().unwrap();
+    assert_eq!(latest.id, chat.id);
+    assert_eq!(latest.title, "帮我总结这条录音");
+    let history = repository.list_dock_messages(&chat.id, 10).unwrap();
+    assert_eq!(history.len(), 2);
+    assert_eq!(history[0].id, first.id);
+    assert_eq!(history[1].id, second.id);
+    // 限制条数时保留最新的消息。
+    let limited = repository.list_dock_messages(&chat.id, 1).unwrap();
+    assert_eq!(limited.len(), 1);
+    assert_eq!(limited[0].id, second.id);
+
+    repository.clear_dock_chats().unwrap();
+    assert!(repository.latest_dock_chat().unwrap().is_none());
+    let _ = std::fs::remove_file(path);
+}

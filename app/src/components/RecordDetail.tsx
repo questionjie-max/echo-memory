@@ -25,6 +25,7 @@ import {
   listTranscriptBlocks,
   recordAudioPath,
   relatedRecords,
+  exportRecordToOutput,
   correctTranscript,
   retranscribeRecord,
   transcribeRecord,
@@ -127,6 +128,7 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
   const [retranscribeOpen, setRetranscribeOpen] = useState(false);
   const [related, setRelated] = useState<RelatedRecord[]>([]);
   const [correcting, setCorrecting] = useState(false);
+  const [exportNotice, setExportNotice] = useState<string | null>(null);
   const [retranscribeLanguage, setRetranscribeLanguage] = useState("zh");
   const [retranscribeModelPath, setRetranscribeModelPath] = useState("");
   const isDocument = currentRecord.sourceType === "document";
@@ -363,6 +365,18 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
     }
   }
 
+
+  async function exportToOutput(kind: "analysis" | "transcript") {
+    if (detailMenu.current) detailMenu.current.open = false;
+    setError("");
+    try {
+      const path = await exportRecordToOutput(currentRecord.id, kind);
+      setExportNotice(`已导出：${path}`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  }
+
   function seek(ms: number, play = true) {
     if (isDocument) return;
     if (!audio.current) return;
@@ -459,6 +473,7 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
             )}
           </div>
         </div>
+        {exportNotice && <p className="inline-notice" role="status">{exportNotice}</p>}
         <div className="detail-actions">
           <label className="knowledge-select">
             <span>知识库</span>
@@ -478,6 +493,8 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
               {!isDocument && <button type="button" disabled={busy || isProcessing(currentRecord.status)} onClick={() => { if (detailMenu.current) detailMenu.current.open = false; setRetranscribeOpen(true); }}>增强重新转写…</button>}
               <button type="button" disabled={busy || !currentRecord.hasTranscript} onClick={() => void exportOne("md")}>导出 Markdown</button>
               <button type="button" disabled={busy || !currentRecord.hasTranscript} onClick={() => void exportOne("txt")}>导出 TXT</button>
+              <button type="button" disabled={busy || !currentRecord.hasAnalysis} onClick={() => void exportToOutput("analysis")}>导出分析到产出文件夹</button>
+              <button type="button" disabled={busy || !currentRecord.hasTranscript} onClick={() => void exportToOutput("transcript")}>导出逐字稿到产出文件夹</button>
             </div>
           </details>
         </div>
