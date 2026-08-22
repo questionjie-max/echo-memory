@@ -1,7 +1,7 @@
 {
   "name": "echo-memory",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.4.1",
   "type": "module",
   "description": "回声记忆 - 面向 AI Agent 的本地优先个人记忆操作系统（Tauri 2 + React + TS + Vite）",
   "license": "Apache-2.0",

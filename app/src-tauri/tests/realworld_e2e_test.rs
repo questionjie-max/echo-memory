@@ -75,11 +75,9 @@ fn full_pipeline_from_real_speech_to_output_folder() {
     eprintln!("自动产出：{}", outputs[0].file_name);
 
     // 4.5) AI 校对（v0.3.0 功能，依赖 raw_generate 修复后真实生效）。
-    let corrected = echo_memory_lib::analysis::correct_transcript_with_library(
-        &library,
-        &ingest.record_id,
-    )
-    .expect("AI 校对失败");
+    let corrected =
+        echo_memory_lib::analysis::correct_transcript_with_library(&library, &ingest.record_id)
+            .expect("AI 校对失败");
     assert!(corrected > 0, "校对未修改任何片段");
     eprintln!("AI 校对修正了 {corrected} 个片段");
 

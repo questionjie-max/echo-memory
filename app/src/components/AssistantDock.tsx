@@ -212,7 +212,12 @@ export default function AssistantDock({ selectedRecordId, selectedRecordTitle }:
               <article key={message.id} className={`dock-message ${message.role}`}>
                 <p>{message.content}</p>
                 {message.role === "assistant" && (
-                  <button type="button" className="dock-save" onClick={() => void saveMessage(message)}>
+                  <button
+                    type="button"
+                    className="dock-save"
+                    title="把这条回复保存为 Markdown 文件到产出文件夹"
+                    onClick={() => void saveMessage(message)}
+                  >
                     保存为文档
                   </button>
                 )}

@@ -33,7 +33,16 @@ const LARGE_V3_TURBO_Q5_SHA256: &str =
     "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2";
 
 #[tauri::command]
-pub fn get_local_ai_status(state: State<AppState>) -> Result<LocalAiStatus, String> {
+pub async fn get_local_ai_status(state: State<'_, AppState>) -> Result<LocalAiStatus, String> {
+    // 命令必须 async + spawn_blocking：Ollama 探测与模型列表是网络/子进程调用，
+    // 同步命令会阻塞 Tauri 主线程导致界面冻结。
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || get_local_ai_status_blocking(&state))
+        .await
+        .map_err(|_| "读取本机 AI 状态的后台任务异常".to_owned())?
+}
+
+fn get_local_ai_status_blocking(state: &AppState) -> Result<LocalAiStatus, String> {
     let settings = state
         .library
         .repository()
@@ -638,21 +647,22 @@ pub fn rebuild_knowledge_index(
 }
 
 #[tauri::command]
-pub fn ask_knowledge_base(
-    state: State<AppState>,
+pub async fn ask_knowledge_base(
+    state: State<'_, AppState>,
     project_id: Option<String>,
     unfiled_only: bool,
     question: String,
 ) -> Result<KnowledgeAnswer, String> {
-    crate::knowledge::validate_scope(project_id.as_deref(), unfiled_only)
-        .map_err(|error| error.to_frontend())?;
-    crate::knowledge::ask(
-        &state.library,
-        project_id.as_deref(),
-        unfiled_only,
-        &question,
-    )
-    .map_err(|error| error.to_frontend())
+    // 本地模型问答是长网络调用，必须在后台线程执行，避免冻结主线程。
+    let library = state.inner().library.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::knowledge::validate_scope(project_id.as_deref(), unfiled_only)
+            .map_err(|error| error.to_frontend())?;
+        crate::knowledge::ask(&library, project_id.as_deref(), unfiled_only, &question)
+            .map_err(|error| error.to_frontend())
+    })
+    .await
+    .map_err(|_| "知识库问答后台任务异常".to_owned())?
 }
 
 #[tauri::command]
@@ -1702,7 +1712,14 @@ pub fn list_memory_feedback(
 /* ------------------------------ v0.3.0：引导 / 收件箱 / 词汇库 / 仪表盘 ------------------------------ */
 
 #[tauri::command]
-pub fn get_onboarding_status(state: State<AppState>) -> Result<OnboardingStatus, String> {
+pub async fn get_onboarding_status(state: State<'_, AppState>) -> Result<OnboardingStatus, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || get_onboarding_status_blocking(&state))
+        .await
+        .map_err(|_| "读取引导状态的后台任务异常".to_owned())?
+}
+
+fn get_onboarding_status_blocking(state: &AppState) -> Result<OnboardingStatus, String> {
     let repository = state.library.repository();
     let settings = repository
         .knowledge_settings()
@@ -2036,7 +2053,14 @@ pub fn set_transcript_correction_enabled(
 /* ------------------------- v0.4.0：AI 伙伴 / 模板向导 / 产出文件夹 ------------------------- */
 
 #[tauri::command]
-pub fn get_dock_status(state: State<AppState>) -> Result<DockStatus, String> {
+pub async fn get_dock_status(state: State<'_, AppState>) -> Result<DockStatus, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || get_dock_status_blocking(&state))
+        .await
+        .map_err(|_| "读取对话状态的后台任务异常".to_owned())?
+}
+
+fn get_dock_status_blocking(state: &AppState) -> Result<DockStatus, String> {
     let repository = state.library.repository();
     let chat = repository
         .latest_dock_chat()
@@ -2055,9 +2079,25 @@ pub fn get_dock_status(state: State<AppState>) -> Result<DockStatus, String> {
 }
 
 #[tauri::command]
-pub fn ask_dock(
-    state: State<AppState>,
+pub async fn ask_dock(
+    state: State<'_, AppState>,
     mode: String,
+    message: String,
+    engine: Option<String>,
+    record_id: Option<String>,
+) -> Result<DockReply, String> {
+    // 模型生成可能长达几十秒：必须放后台线程，主线程只等结果（UI 保持可交互）。
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        ask_dock_blocking(&state, &mode, message, engine, record_id)
+    })
+    .await
+    .map_err(|_| "AI 伙伴后台任务异常".to_owned())?
+}
+
+fn ask_dock_blocking(
+    state: &AppState,
+    mode: &str,
     message: String,
     engine: Option<String>,
     record_id: Option<String>,
@@ -2087,7 +2127,7 @@ pub fn ask_dock(
         chat.title.clone()
     };
     let user_message = repository
-        .append_dock_message(&chat.id, "user", &message, &mode)
+        .append_dock_message(&chat.id, "user", &message, mode)
         .map_err(|error| error.to_frontend())?;
     let history = repository
         .list_dock_messages(&chat.id, crate::dock::history_turns() * 2)
@@ -2106,7 +2146,7 @@ pub fn ask_dock(
             .map_err(|error| error.to_frontend())?,
     };
     let assistant_message = repository
-        .append_dock_message(&chat.id, "assistant", &reply, &mode)
+        .append_dock_message(&chat.id, "assistant", &reply, mode)
         .map_err(|error| error.to_frontend())?;
     repository
         .touch_dock_chat(&chat.id, Some(&title))
@@ -2130,12 +2170,17 @@ pub fn clear_dock_chat(state: State<AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn generate_template_draft(
-    state: State<AppState>,
+pub async fn generate_template_draft(
+    state: State<'_, AppState>,
     messages: Vec<crate::dock::WizardMessage>,
 ) -> Result<TemplateDraft, String> {
-    crate::dock::generate_template_draft(&state.library, &messages)
-        .map_err(|error| error.to_frontend())
+    let library = state.inner().library.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::dock::generate_template_draft(&library, &messages)
+            .map_err(|error| error.to_frontend())
+    })
+    .await
+    .map_err(|_| "模板草稿后台任务异常".to_owned())?
 }
 
 #[tauri::command]
