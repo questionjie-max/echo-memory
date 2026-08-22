@@ -10,7 +10,7 @@ use crate::memory::{self, OpenAiCompatibleClient};
 use crate::state::AppState;
 use crate::transcript::effective_text;
 use crate::types::{
-    AnalysisTemplate, AppInfo, ExternalAiSettings, GrowthGraph, IngestResult, KnowledgeAnswer,
+    AnalysisTemplate, ExternalAiSettings, GrowthGraph, IngestResult, KnowledgeAnswer,
     KnowledgeIndexStatus, KnowledgeOverview, KnowledgeSettings, LocalAiStatus, LocalModelInfo,
     LocalWhisperModel, McpStatus, MemoryFeedback, MemoryGenerationJob, MemoryGenerationRequest,
     MemoryScope, MemorySnapshot, MemoryViewKind, ModelDownloadProgress, ProcessingJob, Project,
@@ -29,26 +29,6 @@ const LARGE_V3_TURBO_Q5_SIZE: u64 = 574_041_195;
 const AUTO_MEMORY_UPDATE_DELAY: Duration = Duration::from_secs(120);
 const LARGE_V3_TURBO_Q5_SHA256: &str =
     "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2";
-
-#[tauri::command]
-pub fn greet(name: String) -> String {
-    format!("你好，{name}！欢迎使用回声记忆（本地优先）。")
-}
-
-#[tauri::command]
-pub fn app_info() -> AppInfo {
-    AppInfo {
-        name: "回声记忆".to_owned(),
-        version: env!("CARGO_PKG_VERSION").to_owned(),
-        local_only: true,
-        generated_at: Utc::now().to_rfc3339(),
-    }
-}
-
-#[tauri::command]
-pub fn generate_id() -> String {
-    uuid::Uuid::new_v4().to_string()
-}
 
 #[tauri::command]
 pub fn get_local_ai_status(state: State<AppState>) -> Result<LocalAiStatus, String> {
@@ -248,7 +228,7 @@ pub fn pull_ollama_model(app: AppHandle, model: String) -> Result<(), String> {
     }
     std::thread::spawn(move || {
         let result = (|| -> Result<(), String> {
-            let response = ureq::post("http://127.0.0.1:11434/api/pull")
+            let response = ureq::post(&format!("{}/api/pull", crate::analysis::ollama_base_url()))
                 .send_json(serde_json::json!({ "model": model, "stream": true }))
                 .map_err(|error| format!("无法启动模型下载：{error}"))?;
             for line in BufReader::new(response.into_reader()).lines() {
@@ -295,11 +275,12 @@ pub fn pull_ollama_model(app: AppHandle, model: String) -> Result<(), String> {
 }
 
 fn ollama_models() -> Result<Vec<LocalModelInfo>, String> {
-    let response: serde_json::Value = ureq::get("http://127.0.0.1:11434/api/tags")
-        .call()
-        .map_err(|error| error.to_string())?
-        .into_json()
-        .map_err(|error| error.to_string())?;
+    let response: serde_json::Value =
+        ureq::get(&format!("{}/api/tags", crate::analysis::ollama_base_url()))
+            .call()
+            .map_err(|error| error.to_string())?
+            .into_json()
+            .map_err(|error| error.to_string())?;
     Ok(response
         .get("models")
         .and_then(serde_json::Value::as_array)
@@ -519,7 +500,9 @@ pub fn rebuild_knowledge_index(
     let embedding_model = settings.embedding_model;
     let failure_scope_key = scope_key.clone();
     let app_state = state.inner().clone();
+    let heavy_jobs = crate::state::heavy_job_limiter().clone();
     std::thread::spawn(move || {
+        let _permit = heavy_jobs.acquire();
         match ManagedLibrary::open(library_root.clone()) {
             Ok(library) => {
                 if let Err(error) =
@@ -674,9 +657,12 @@ fn find_mcp_executable() -> Option<PathBuf> {
             }
         }
     }
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    candidates.push(manifest_dir.join("target/debug/echo-memory-mcp"));
-    candidates.push(manifest_dir.join("target/release/echo-memory-mcp"));
+    // 编译机上的 target 目录只对开发环境有意义，release 包不应探测出开发路径。
+    if cfg!(debug_assertions) {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        candidates.push(manifest_dir.join("target/debug/echo-memory-mcp"));
+        candidates.push(manifest_dir.join("target/release/echo-memory-mcp"));
+    }
     candidates.into_iter().find(|path| path.is_file())
 }
 
@@ -749,20 +735,24 @@ pub fn import_document(
         let record_id = result.record_id.clone();
         let app_state = state.inner().clone();
         spawn_incremental_index(library_root.clone(), record_id.clone());
-        std::thread::spawn(move || match ManagedLibrary::open(library_root.clone()) {
-            Ok(library) => {
-                if analyze_with_library(&library, &record_id).is_ok() {
-                    schedule_memory_update(app_state);
+        let heavy_jobs = crate::state::heavy_job_limiter().clone();
+        std::thread::spawn(move || {
+            let _permit = heavy_jobs.acquire();
+            match ManagedLibrary::open(library_root.clone()) {
+                Ok(library) => {
+                    if analyze_with_library(&library, &record_id).is_ok() {
+                        schedule_memory_update(app_state);
+                    }
                 }
-            }
-            Err(error) => {
-                mark_processing_failed(
-                    &library_root,
-                    &record_id,
-                    None,
-                    "analyze",
-                    &error.to_string(),
-                );
+                Err(error) => {
+                    mark_processing_failed(
+                        &library_root,
+                        &record_id,
+                        None,
+                        "analyze",
+                        &error.to_string(),
+                    );
+                }
             }
         });
     }
@@ -822,28 +812,32 @@ pub fn transcribe_record(state: State<AppState>, record_id: String) -> Result<()
         .map_err(|error| error.to_frontend())?;
     let library_root = state.library.root().to_path_buf();
     let app_state = state.inner().clone();
-    std::thread::spawn(move || match ManagedLibrary::open(library_root.clone()) {
-        Ok(library) => {
-            if run_transcription(
-                &library,
-                &record_id,
-                &job,
-                &settings.transcription_language,
-                Some(&settings.whisper_model_path),
-            )
-            .is_ok()
-            {
-                schedule_memory_update(app_state);
+    let heavy_jobs = crate::state::heavy_job_limiter().clone();
+    std::thread::spawn(move || {
+        let _permit = heavy_jobs.acquire();
+        match ManagedLibrary::open(library_root.clone()) {
+            Ok(library) => {
+                if run_transcription(
+                    &library,
+                    &record_id,
+                    &job,
+                    &settings.transcription_language,
+                    Some(&settings.whisper_model_path),
+                )
+                .is_ok()
+                {
+                    schedule_memory_update(app_state);
+                }
             }
-        }
-        Err(error) => {
-            mark_processing_failed(
-                &library_root,
-                &record_id,
-                Some(&job.id),
-                "transcribe",
-                &error.to_string(),
-            );
+            Err(error) => {
+                mark_processing_failed(
+                    &library_root,
+                    &record_id,
+                    Some(&job.id),
+                    "transcribe",
+                    &error.to_string(),
+                );
+            }
         }
     });
     Ok(())
@@ -909,22 +903,26 @@ pub fn retranscribe_record(
         .map_err(|error| error.to_frontend())?;
     let library_root = state.library.root().to_path_buf();
     let app_state = state.inner().clone();
-    std::thread::spawn(move || match ManagedLibrary::open(library_root.clone()) {
-        Ok(library) => {
-            if run_transcription(&library, &record_id, &job, &language, model_path.as_deref())
-                .is_ok()
-            {
-                schedule_memory_update(app_state);
+    let heavy_jobs = crate::state::heavy_job_limiter().clone();
+    std::thread::spawn(move || {
+        let _permit = heavy_jobs.acquire();
+        match ManagedLibrary::open(library_root.clone()) {
+            Ok(library) => {
+                if run_transcription(&library, &record_id, &job, &language, model_path.as_deref())
+                    .is_ok()
+                {
+                    schedule_memory_update(app_state);
+                }
             }
-        }
-        Err(error) => {
-            mark_processing_failed(
-                &library_root,
-                &record_id,
-                Some(&job.id),
-                "transcribe",
-                &error.to_string(),
-            );
+            Err(error) => {
+                mark_processing_failed(
+                    &library_root,
+                    &record_id,
+                    Some(&job.id),
+                    "transcribe",
+                    &error.to_string(),
+                );
+            }
         }
     });
     Ok(())
@@ -1112,16 +1110,22 @@ fn mark_knowledge_indexes_failed(library_root: &PathBuf, error: &str) {
 }
 
 fn spawn_incremental_index(library_root: PathBuf, record_id: String) {
-    std::thread::spawn(move || match ManagedLibrary::open(library_root.clone()) {
-        Ok(library) => {
-            if let Err(error) = crate::knowledge::incremental_rebuild_record(&library, &record_id) {
-                let _ = library
-                    .repository()
-                    .mark_knowledge_indexes_failed(&error.to_string());
+    let heavy_jobs = crate::state::heavy_job_limiter().clone();
+    std::thread::spawn(move || {
+        let _permit = heavy_jobs.acquire();
+        match ManagedLibrary::open(library_root.clone()) {
+            Ok(library) => {
+                if let Err(error) =
+                    crate::knowledge::incremental_rebuild_record(&library, &record_id)
+                {
+                    let _ = library
+                        .repository()
+                        .mark_knowledge_indexes_failed(&error.to_string());
+                }
             }
-        }
-        Err(error) => {
-            mark_knowledge_indexes_failed(&library_root, &error.to_string());
+            Err(error) => {
+                mark_knowledge_indexes_failed(&library_root, &error.to_string());
+            }
         }
     });
 }
@@ -1153,20 +1157,24 @@ pub fn analyze_record(
     let job = reserve_analysis(&state.library, &record_id).map_err(|e| e.to_frontend())?;
     let library_root = state.library.root().to_path_buf();
     let app_state = state.inner().clone();
-    std::thread::spawn(move || match ManagedLibrary::open(library_root.clone()) {
-        Ok(library) => {
-            if run_analysis(&library, &record_id, &job).is_ok() {
-                schedule_memory_update(app_state);
+    let heavy_jobs = crate::state::heavy_job_limiter().clone();
+    std::thread::spawn(move || {
+        let _permit = heavy_jobs.acquire();
+        match ManagedLibrary::open(library_root.clone()) {
+            Ok(library) => {
+                if run_analysis(&library, &record_id, &job).is_ok() {
+                    schedule_memory_update(app_state);
+                }
             }
-        }
-        Err(error) => {
-            mark_processing_failed(
-                &library_root,
-                &record_id,
-                Some(&job.id),
-                "analyze",
-                &error.to_string(),
-            );
+            Err(error) => {
+                mark_processing_failed(
+                    &library_root,
+                    &record_id,
+                    Some(&job.id),
+                    "analyze",
+                    &error.to_string(),
+                );
+            }
         }
     });
     Ok(())

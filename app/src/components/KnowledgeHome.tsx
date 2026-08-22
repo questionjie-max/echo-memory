@@ -15,6 +15,7 @@ import {
   listProjects,
   rebuildKnowledgeIndex,
 } from "../lib/tauri";
+import { formatMinutesSeconds as formatTime } from "../lib/format";
 
 interface Props {
   scope: string;
@@ -229,4 +230,3 @@ function ReferenceSection({ title, empty, items, onOpen }: { title: string; empt
   return <section className="overview-section"><h3>{title}</h3>{items.length ? <div className="overview-reference-list">{items.map((item, index) => <button type="button" disabled={!item.segmentId} key={`${item.recordId}-${index}`} onClick={() => onOpen(item)}><strong>{item.text}</strong><span>{item.recordTitle}{item.startMs !== null ? ` · ${formatTime(item.startMs)}` : ""}</span></button>)}</div> : <p>{empty}</p>}</section>;
 }
 
-function formatTime(ms: number) { const seconds = Math.floor(ms / 1000); return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`; }

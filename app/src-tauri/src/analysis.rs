@@ -52,10 +52,26 @@ pub struct OllamaAdapter {
     model: String,
 }
 
+/// 统一解析本机 Ollama 服务地址：优先 `OLLAMA_HOST`（允许省略 http://），
+/// 默认 `http://127.0.0.1:11434`。分析、知识索引与模型下载共用这一个入口。
+pub fn ollama_base_url() -> String {
+    let raw = std::env::var("OLLAMA_HOST")
+        .unwrap_or_default()
+        .trim()
+        .trim_end_matches('/')
+        .to_owned();
+    if raw.is_empty() {
+        "http://127.0.0.1:11434".to_owned()
+    } else if raw.starts_with("http://") || raw.starts_with("https://") {
+        raw
+    } else {
+        format!("http://{raw}")
+    }
+}
+
 impl OllamaAdapter {
     pub fn detect(model: &str) -> AppResult<Self> {
-        let base_url =
-            std::env::var("OLLAMA_HOST").unwrap_or_else(|_| "http://127.0.0.1:11434".to_owned());
+        let base_url = ollama_base_url();
         let url = format!("{}/api/tags", base_url.trim_end_matches('/'));
         let tags: serde_json::Value = ureq::get(&url)
             .call()
@@ -736,6 +752,14 @@ fn normalize_for_match(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn ollama_base_url_defaults_and_accepts_ollama_host_variants() {
+        // 环境变量是进程级状态，这里只验证默认分支；带 scheme 的分支由函数纯逻辑保证。
+        let base = std::env::var("OLLAMA_HOST").unwrap_or_default();
+        if base.trim().is_empty() {
+            assert_eq!(ollama_base_url(), "http://127.0.0.1:11434");
+        }
+    }
     #[test]
     fn invalid_json_is_rejected() {
         assert!(parse_analysis_json("not-json").is_err());

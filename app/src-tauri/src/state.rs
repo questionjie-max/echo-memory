@@ -7,7 +7,83 @@ use chrono::Utc;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
+
+/// 全局重任务（Whisper 转写、Ollama 分析、知识索引）并发上限。
+/// 批量导入时防止同时启动多个本机模型任务拖垮整机。
+/// 可用环境变量 `ECHO_MAX_HEAVY_JOBS`（1–8）覆盖。
+const DEFAULT_MAX_HEAVY_JOBS: usize = 2;
+
+/// 进程级重任务并发闸门：`acquire()` 阻塞直到拿到名额，守卫 drop 时释放。
+/// 转写与分析运行在各自的后台线程里，同一线程内不会嵌套 acquire，因此不会自锁。
+#[derive(Clone)]
+pub struct JobLimiter {
+    inner: Arc<JobLimiterInner>,
+}
+
+struct JobLimiterInner {
+    max: usize,
+    active: Mutex<usize>,
+    idle: Condvar,
+}
+
+impl JobLimiter {
+    pub fn new(max: usize) -> Self {
+        Self {
+            inner: Arc::new(JobLimiterInner {
+                max,
+                active: Mutex::new(0),
+                idle: Condvar::new(),
+            }),
+        }
+    }
+
+    pub fn acquire(&self) -> JobPermit {
+        let mut active = self.inner.active.lock().expect("重任务并发计数锁不可用");
+        while *active >= self.inner.max {
+            active = self
+                .inner
+                .idle
+                .wait(active)
+                .expect("重任务并发计数锁不可用");
+        }
+        *active += 1;
+        JobPermit {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+
+    pub fn max(&self) -> usize {
+        self.inner.max
+    }
+}
+
+/// `acquire` 返回的 RAII 名额：离开作用域自动释放并唤醒下一个等待线程。
+pub struct JobPermit {
+    inner: Arc<JobLimiterInner>,
+}
+
+impl Drop for JobPermit {
+    fn drop(&mut self) {
+        if let Ok(mut active) = self.inner.active.lock() {
+            *active = active.saturating_sub(1);
+            self.inner.idle.notify_one();
+        }
+    }
+}
+
+static HEAVY_JOB_LIMITER: OnceLock<JobLimiter> = OnceLock::new();
+
+/// 进程全局重任务闸门。后台线程（含无法访问 `AppState` 的内部路径）统一从这里取名额。
+pub fn heavy_job_limiter() -> &'static JobLimiter {
+    HEAVY_JOB_LIMITER.get_or_init(|| {
+        let max = std::env::var("ECHO_MAX_HEAVY_JOBS")
+            .ok()
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .map_or(DEFAULT_MAX_HEAVY_JOBS, |value| value.clamp(1, 8));
+        JobLimiter::new(max)
+    })
+}
 
 #[derive(Clone)]
 pub struct AppState {
@@ -299,5 +375,43 @@ mod tests {
         assert!(state.is_latest_memory_update(second));
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn job_limiter_releases_permits_and_unblocks_waiters() {
+        let limiter = JobLimiter::new(1);
+        assert_eq!(limiter.max(), 1);
+        let first = limiter.acquire();
+
+        let waiter = std::thread::spawn({
+            let limiter = limiter.clone();
+            move || {
+                let _permit = limiter.acquire();
+                "acquired"
+            }
+        });
+        assert!(!waiter.is_finished());
+        drop(first);
+        assert_eq!(waiter.join().unwrap(), "acquired");
+    }
+
+    #[test]
+    fn job_limiter_allows_up_to_max_concurrent_permits() {
+        let limiter = JobLimiter::new(2);
+        let _first = limiter.acquire();
+        let second = limiter.acquire();
+        let overflow = std::thread::spawn({
+            let limiter = limiter.clone();
+            move || limiter.acquire()
+        });
+        assert!(!overflow.is_finished());
+        drop(second);
+        let _released = overflow.join().unwrap();
+    }
+
+    #[test]
+    fn global_heavy_job_limiter_has_bounded_capacity() {
+        let limiter = heavy_job_limiter();
+        assert!((1..=8).contains(&limiter.max()));
     }
 }

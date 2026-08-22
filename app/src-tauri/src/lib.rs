@@ -23,9 +23,6 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
-            commands::greet,
-            commands::app_info,
-            commands::generate_id,
             commands::get_local_ai_status,
             commands::get_audio_preprocessor_status,
             commands::update_knowledge_settings,

@@ -1,7 +1,7 @@
 cff-version: 1.2.0
 message: "If you use Echo Memory in research, documentation, or an AI workflow, please cite it using this metadata."
 title: "Echo Memory"
-version: "0.1.0"
+version: "0.2.0"
 date-released: 2026-07-19
 license: Apache-2.0
 repository-code: "https://github.com/questionjie-max/echo-memory"

@@ -4,6 +4,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { useEffect, useMemo, useState } from "react";
 import type { RecordBrief, RecordStatus } from "../shared/types";
 import { importAudio, listRecords, transcribeRecord } from "../lib/tauri";
+import { formatMinutesSeconds as formatDuration, isProcessingStatus as isProcessing } from "../lib/format";
 import DocumentImportDialog from "./DocumentImportDialog";
 
 interface Props {
@@ -149,7 +150,7 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
             <li key={record.id} className={selectedId === record.id ? "selected" : ""}>
               <button type="button" className="record-main" onClick={() => onSelect(record)}>
                 <strong>{record.title}</strong>
-                <span>{new Date(record.importedAt).toLocaleString()} · {record.sourceType === "document" ? "文字文档" : formatDuration(record.audioDurationMs)}</span>
+                <span>{new Date(record.importedAt).toLocaleString()} · {record.sourceType === "document" ? "文字文档" : formatDuration(record.audioDurationMs, true)}</span>
                 <span className="record-library">{record.projectName ?? "未归档"}</span>
               </button>
               <span className={`status-pill status-${statusTone(record)}`}>{label}</span>
@@ -210,13 +211,4 @@ function statusTone(record: RecordBrief) {
   if (isProcessing(record.status)) return "progress";
   if (isPending(record)) return "attention";
   return "done";
-}
-
-function isProcessing(status: RecordStatus) {
-  return status === "preparing" || status === "transcribing" || status === "analyzing";
-}
-
-function formatDuration(milliseconds: number) {
-  const totalSeconds = Math.round(milliseconds / 1000);
-  return `${Math.floor(totalSeconds / 60)}:${String(totalSeconds % 60).padStart(2, "0")}`;
 }

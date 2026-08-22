@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import type { SearchResult } from "../shared/types";
 import { searchRecords } from "../lib/tauri";
+import { formatMinutesSeconds as formatTime } from "../lib/format";
 
 interface Props {
   projectId: string | null;
@@ -167,7 +168,3 @@ function highlightSnippet(snippet: string) {
   });
 }
 
-function formatTime(ms: number) {
-  const seconds = Math.floor(ms / 1000);
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
-}
