@@ -25,6 +25,13 @@ import type {
   TimelineItem,
   TranscriptSegment,
   TranscriptBlock,
+  InboxStatus,
+  InboxWatchFolder,
+  SuggestedWatchFolder,
+  Hotword,
+  OnboardingStatus,
+  ActionDashboard,
+  RelatedRecord,
 } from "../shared/types";
 
 export function createProject(name: string): Promise<Project> {
@@ -263,4 +270,78 @@ export function updateMemoryFeedback(snapshotId: string, itemId: string, decisio
 
 export function listMemoryFeedback(snapshotId: string): Promise<MemoryFeedback[]> {
   return invoke<MemoryFeedback[]>("list_memory_feedback", { snapshotId });
+}
+
+/* ------------------------------ v0.3.0：引导 / 收件箱 / 词汇库 / 仪表盘 ------------------------------ */
+
+export function getOnboardingStatus(): Promise<OnboardingStatus> {
+  return invoke<OnboardingStatus>("get_onboarding_status");
+}
+
+export function completeOnboarding(): Promise<void> {
+  return invoke<void>("complete_onboarding");
+}
+
+export function resetOnboarding(): Promise<void> {
+  return invoke<void>("reset_onboarding");
+}
+
+export function suggestWatchFolders(): Promise<SuggestedWatchFolder[]> {
+  return invoke<SuggestedWatchFolder[]>("suggest_watch_folders");
+}
+
+export function getInboxStatus(): Promise<InboxStatus> {
+  return invoke<InboxStatus>("get_inbox_status");
+}
+
+export function addInboxWatchFolder(path: string, label?: string): Promise<InboxWatchFolder> {
+  return invoke<InboxWatchFolder>("add_inbox_watch_folder", { path, label: label ?? null });
+}
+
+export function removeInboxWatchFolder(id: string): Promise<void> {
+  return invoke<void>("remove_inbox_watch_folder", { id });
+}
+
+export function setInboxUsbDetection(enabled: boolean): Promise<void> {
+  return invoke<void>("set_inbox_usb_detection", { enabled });
+}
+
+export function rescanInbox(): Promise<void> {
+  return invoke<void>("rescan_inbox");
+}
+
+export function listHotwords(): Promise<Hotword[]> {
+  return invoke<Hotword[]>("list_hotwords");
+}
+
+export function addHotword(term: string, note?: string): Promise<Hotword> {
+  return invoke<Hotword>("add_hotword", { term, note: note ?? null });
+}
+
+export function removeHotword(id: string): Promise<void> {
+  return invoke<void>("remove_hotword", { id });
+}
+
+export function getActionDashboard(): Promise<ActionDashboard> {
+  return invoke<ActionDashboard>("get_action_dashboard");
+}
+
+export function setActionItemStatus(id: string, status: "open" | "done"): Promise<void> {
+  return invoke<void>("set_action_item_status", { id, status });
+}
+
+export function relatedRecords(recordId: string, limit?: number): Promise<RelatedRecord[]> {
+  return invoke<RelatedRecord[]>("related_records", { recordId, limit: limit ?? null });
+}
+
+export function correctTranscript(recordId: string): Promise<void> {
+  return invoke<void>("correct_transcript", { recordId });
+}
+
+export function getTranscriptCorrectionEnabled(): Promise<boolean> {
+  return invoke<boolean>("get_transcript_correction_enabled");
+}
+
+export function setTranscriptCorrectionEnabled(enabled: boolean): Promise<void> {
+  return invoke<void>("set_transcript_correction_enabled", { enabled });
 }

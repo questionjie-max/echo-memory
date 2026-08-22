@@ -603,3 +603,124 @@ pub struct IngestResult {
     pub duration_ms: i64,
     pub title: String,
 }
+
+/* ----------------------------- v0.3.0：收件箱 / 词汇库 / 仪表盘 ----------------------------- */
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InboxWatchFolder {
+    pub id: String,
+    pub path: String,
+    pub label: String,
+    pub enabled: bool,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InboxSeenFile {
+    pub id: String,
+    pub source_kind: String, // folder | volume
+    pub source_path: String,
+    pub file_path: String,
+    pub file_name: String,
+    pub file_size: i64,
+    pub mtime_ms: i64,
+    pub sha256: Option<String>,
+    pub status: String, // pending | importing | imported | duplicate | skipped | failed
+    pub record_id: Option<String>,
+    pub error_message: Option<String>,
+    pub seen_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InboxCounts {
+    pub pending: u32,
+    pub imported: u32,
+    pub failed: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InboxStatus {
+    pub usb_detection: bool,
+    pub watch_folders: Vec<InboxWatchFolder>,
+    pub counts: InboxCounts,
+    pub recent_files: Vec<InboxSeenFile>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Hotword {
+    pub id: String,
+    pub term: String,
+    pub note: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OnboardingStatus {
+    pub completed: bool,
+    pub completed_at: Option<String>,
+    pub whisper_ready: bool,
+    pub whisper_model_path: Option<String>,
+    pub ollama_running: bool,
+    pub analysis_model_ready: bool,
+    pub analysis_model: String,
+    pub watch_folder_count: u32,
+    pub usb_detection: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActionDashboardItem {
+    pub id: String,
+    pub record_id: String,
+    pub record_title: String,
+    pub project_id: Option<String>,
+    pub project_name: Option<String>,
+    pub title: String,
+    pub owner_text: String,
+    pub due_text: String,
+    pub status: String,
+    pub source_segment_id: Option<String>,
+    pub imported_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenQuestionItem {
+    pub text: String,
+    pub citation_segment_ids: Vec<String>,
+    pub record_id: String,
+    pub record_title: String,
+    pub imported_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActionDashboard {
+    pub open_count: u32,
+    pub done_count: u32,
+    pub items: Vec<ActionDashboardItem>,
+    pub open_questions: Vec<OpenQuestionItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RelatedRecord {
+    pub record_id: String,
+    pub title: String,
+    pub similarity: f32,
+    pub project_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SuggestedWatchFolder {
+    pub label: String,
+    pub path: String,
+}

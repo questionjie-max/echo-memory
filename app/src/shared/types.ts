@@ -468,3 +468,110 @@ export interface MemoryGenerationJob {
   startedAt: string;
   updatedAt: string;
 }
+
+/* ----------------------------- v0.3.0：收件箱 / 词汇库 / 仪表盘 ----------------------------- */
+
+export interface InboxWatchFolder {
+  id: string;
+  path: string;
+  label: string;
+  enabled: boolean;
+  createdAt: string;
+}
+
+export type InboxFileStatus =
+  | "pending"
+  | "importing"
+  | "imported"
+  | "duplicate"
+  | "skipped"
+  | "failed";
+
+export interface InboxSeenFile {
+  id: string;
+  sourceKind: "folder" | "volume" | string;
+  sourcePath: string;
+  filePath: string;
+  fileName: string;
+  fileSize: number;
+  mtimeMs: number;
+  sha256: string | null;
+  status: InboxFileStatus | string;
+  recordId: string | null;
+  errorMessage: string | null;
+  seenAt: string;
+  updatedAt: string;
+}
+
+export interface InboxCounts {
+  pending: number;
+  imported: number;
+  failed: number;
+}
+
+export interface InboxStatus {
+  usbDetection: boolean;
+  watchFolders: InboxWatchFolder[];
+  counts: InboxCounts;
+  recentFiles: InboxSeenFile[];
+}
+
+export interface SuggestedWatchFolder {
+  label: string;
+  path: string;
+}
+
+export interface Hotword {
+  id: string;
+  term: string;
+  note: string;
+  createdAt: string;
+}
+
+export interface OnboardingStatus {
+  completed: boolean;
+  completedAt: string | null;
+  whisperReady: boolean;
+  whisperModelPath: string | null;
+  ollamaRunning: boolean;
+  analysisModelReady: boolean;
+  analysisModel: string;
+  watchFolderCount: number;
+  usbDetection: boolean;
+}
+
+export interface ActionDashboardItem {
+  id: string;
+  recordId: string;
+  recordTitle: string;
+  projectId: string | null;
+  projectName: string | null;
+  title: string;
+  ownerText: string;
+  dueText: string;
+  status: "open" | "done" | string;
+  sourceSegmentId: string | null;
+  importedAt: string;
+}
+
+export interface OpenQuestionItem {
+  text: string;
+  citationSegmentIds: string[];
+  recordId: string;
+  recordTitle: string;
+  importedAt: string;
+}
+
+export interface ActionDashboard {
+  openCount: number;
+  doneCount: number;
+  items: ActionDashboardItem[];
+  openQuestions: OpenQuestionItem[];
+}
+
+export interface RelatedRecord {
+  recordId: string;
+  title: string;
+  similarity: number;
+  projectId: string | null;
+}

@@ -1219,3 +1219,94 @@ fn memory_snapshots_are_versioned_keep_feedback_and_become_stale() {
         "保留这个判断"
     );
 }
+
+/* ------------------------------ v0.3.0：收件箱 / 词汇库 / 仪表盘 ------------------------------ */
+
+#[test]
+fn inbox_watch_folders_and_seen_files_track_lifecycle() {
+    let path = database_path();
+    let repository = LibraryRepository::new(path.clone()).unwrap();
+
+    let folder = repository
+        .add_watch_folder("/tmp/echo-inbox-test", "测试监听")
+        .unwrap();
+    assert!(repository.list_watch_folders().unwrap().len() == 1);
+    assert!(repository
+        .seen_file_by_path("/tmp/nope.m4a")
+        .unwrap()
+        .is_none());
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let seen = echo_memory_lib::types::InboxSeenFile {
+        id: uuid::Uuid::new_v4().to_string(),
+        source_kind: "folder".to_owned(),
+        source_path: folder.path.clone(),
+        file_path: "/tmp/echo-inbox-test/meeting.m4a".to_owned(),
+        file_name: "meeting.m4a".to_owned(),
+        file_size: 1024,
+        mtime_ms: 1_700_000_000_000,
+        sha256: None,
+        status: "pending".to_owned(),
+        record_id: None,
+        error_message: None,
+        seen_at: now.clone(),
+        updated_at: now,
+    };
+    repository.insert_seen_file(&seen).unwrap();
+    assert_eq!(
+        repository
+            .seen_file_by_path("/tmp/echo-inbox-test/meeting.m4a")
+            .unwrap()
+            .unwrap()
+            .status,
+        "pending"
+    );
+    repository
+        .update_seen_file_status(&seen.id, "imported", Some("record-1"), None)
+        .unwrap();
+    let counts = repository.inbox_status_counts().unwrap();
+    assert_eq!(counts.imported, 1);
+    assert_eq!(counts.pending, 0);
+    assert_eq!(repository.recent_seen_files(5).unwrap().len(), 1);
+
+    repository.remove_watch_folder(&folder.id).unwrap();
+    assert!(repository.list_watch_folders().unwrap().is_empty());
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn hotwords_prompt_is_bounded_and_deduplicated() {
+    let path = database_path();
+    let repository = LibraryRepository::new(path.clone()).unwrap();
+
+    repository.add_hotword("回声记忆", "").unwrap();
+    repository.add_hotword("小能熊", "笔记里出现").unwrap();
+    // 同词重复添加走 upsert，不产生两行。
+    repository.add_hotword("小能熊", "更新备注").unwrap();
+    let hotwords = repository.list_hotwords().unwrap();
+    assert_eq!(hotwords.len(), 2);
+    let prompt = repository.hotwords_prompt().unwrap();
+    assert!(prompt.starts_with("术语表："));
+    assert!(prompt.contains("回声记忆") && prompt.contains("小能熊"));
+    assert!(prompt.chars().count() <= 162);
+
+    let overflow = repository.add_hotword(&"词".repeat(41), "").unwrap_err();
+    assert!(overflow.to_string().contains("热词无效"));
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn onboarding_and_settings_round_trip() {
+    let path = database_path();
+    let repository = LibraryRepository::new(path.clone()).unwrap();
+
+    assert!(repository.onboarding_completed_at().unwrap().is_none());
+    assert!(!repository.inbox_usb_detection().unwrap());
+    repository.set_inbox_usb_detection(true).unwrap();
+    repository.complete_onboarding().unwrap();
+    assert!(repository.onboarding_completed_at().unwrap().is_some());
+    assert!(repository.inbox_usb_detection().unwrap());
+    repository.reset_onboarding().unwrap();
+    assert!(repository.onboarding_completed_at().unwrap().is_none());
+    let _ = std::fs::remove_file(path);
+}

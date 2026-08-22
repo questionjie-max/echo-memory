@@ -97,6 +97,30 @@ impl OllamaAdapter {
         })
     }
 
+    /// 通用 JSON 生成：供转写校对等非分析任务复用同一个 Ollama 会话约定。
+    pub fn raw_generate(
+        &self,
+        prompt: &str,
+        format: serde_json::Value,
+        num_predict: u32,
+    ) -> AppResult<serde_json::Value> {
+        let url = format!("{}/api/generate", self.base_url.trim_end_matches('/'));
+        let body = serde_json::json!({
+            "model": self.model,
+            "prompt": prompt,
+            "stream": false,
+            "format": format,
+            "options": { "num_ctx": 16384, "num_predict": num_predict, "temperature": 0.1 }
+        });
+        let response: serde_json::Value = ureq::post(&url)
+            .send_json(body)
+            .map_err(|_| AppError::Analysis("Ollama 请求失败。请确认本机服务仍在运行。".into()))?
+            .into_json()
+            .map_err(|_| AppError::Analysis("无法读取 Ollama 响应".into()))?;
+        serde_json::from_value(response.get("response").cloned().unwrap_or_default())
+            .map_err(|_| AppError::Analysis("Ollama 未返回有效 JSON".into()))
+    }
+
     pub fn analyze(&self, transcript: &str) -> AppResult<AnalysisDraft> {
         self.analyze_with_template(transcript, None)
     }
@@ -747,6 +771,82 @@ fn normalize_for_match(text: &str) -> String {
         .filter(|character| character.is_alphanumeric())
         .flat_map(char::to_lowercase)
         .collect()
+}
+
+const CORRECTION_BATCH_SEGMENTS: usize = 40;
+
+/// 用本地模型对逐字稿做二次校对（错别字/同音字、断句标点、热词纠正），
+/// 结果写入 normalized 文本层；原始层与用户手动编辑层永不覆盖。
+pub fn correct_transcript_with_library(
+    library: &crate::library::ManagedLibrary,
+    record_id: &str,
+) -> AppResult<u32> {
+    let repository = library.repository();
+    let segments = repository.list_transcript_segments(record_id)?;
+    if segments.is_empty() {
+        return Err(AppError::Analysis("该记录没有可校对的逐字稿".to_owned()));
+    }
+    let model = repository.knowledge_settings()?.analysis_model;
+    let adapter = OllamaAdapter::detect(&model)?;
+    let hotwords = repository.hotwords_prompt().unwrap_or_default();
+
+    let mut corrected_total = 0_u32;
+    for batch in segments.chunks(CORRECTION_BATCH_SEGMENTS) {
+        let mut prompt = String::from(
+            "你是中文转写稿校对员。下面是带序号的转写稿片段。请逐行校对：\n             1. 只修正同音字/错别字、断句与标点错误；\n             2. 若提供术语表，把其中词语修正为规范写法；\n             3. 删除无意义的语气词（嗯、啊、呃等）；\n             4. 不增删语义内容，不合并或拆分行；\n             5. 输出 JSON：corrections 数组，每项含 id（片段 ID 原样返回）与 text（校对后的完整文本）。\n",
+        );
+        if !hotwords.is_empty() {
+            prompt.push_str(&format!("术语表：{hotwords}\n"));
+        }
+        prompt.push_str("\n片段列表：\n");
+        for segment in batch {
+            prompt.push_str(&format!(
+                "id={} 序号[{}] {}\n",
+                segment.id,
+                segment.sequence,
+                crate::transcript::effective_text(segment)
+            ));
+        }
+        let format = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "corrections": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": { "type": "string" },
+                            "text": { "type": "string" }
+                        },
+                        "required": ["id", "text"]
+                    }
+                }
+            },
+            "required": ["corrections"]
+        });
+        let response = adapter.raw_generate(&prompt, format, 4096)?;
+        let Some(corrections) = response
+            .get("corrections")
+            .and_then(serde_json::Value::as_array)
+        else {
+            continue;
+        };
+        let valid_ids: std::collections::HashSet<&str> =
+            batch.iter().map(|segment| segment.id.as_str()).collect();
+        let pairs: Vec<(String, String)> = corrections
+            .iter()
+            .filter_map(|item| {
+                let id = item.get("id")?.as_str()?.to_owned();
+                let text = item.get("text")?.as_str()?.trim().to_owned();
+                if text.is_empty() || !valid_ids.contains(id.as_str()) {
+                    return None;
+                }
+                Some((id, text))
+            })
+            .collect();
+        corrected_total += repository.set_segment_normalized_texts(record_id, &pairs)?;
+    }
+    Ok(corrected_total)
 }
 
 #[cfg(test)]

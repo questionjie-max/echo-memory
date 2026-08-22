@@ -1,10 +1,12 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { isTauri } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { useEffect, useMemo, useState } from "react";
-import type { RecordBrief, RecordStatus } from "../shared/types";
+import type { InboxStatus, RecordBrief, RecordStatus } from "../shared/types";
 import { importAudio, listRecords, transcribeRecord } from "../lib/tauri";
 import { formatMinutesSeconds as formatDuration, isProcessingStatus as isProcessing } from "../lib/format";
+import { getInboxStatus } from "../lib/tauri";
 import DocumentImportDialog from "./DocumentImportDialog";
 
 interface Props {
@@ -29,6 +31,25 @@ const STATUS_LABEL: Record<RecordStatus, string> = {
 export default function RecordPanel({ projectId, unfiledOnly, onImported, selectedId, onSelect }: Props) {
   const [records, setRecords] = useState<RecordBrief[]>([]);
   const [view, setView] = useState<WorkspaceView>("pending");
+  const [inbox, setInbox] = useState<InboxStatus | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const status = await getInboxStatus();
+        if (!cancelled) setInbox(status);
+      } catch {
+        if (!cancelled) setInbox(null);
+      }
+    };
+    void load();
+    const stop = listen("inbox-update", () => void load());
+    return () => {
+      cancelled = true;
+      void stop.then((unlisten) => unlisten());
+    };
+  }, []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -116,6 +137,15 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
         </div>
         <span className="count-badge">{visible.length}</span>
       </header>
+
+      {inbox && (inbox.watchFolders.length > 0 || inbox.usbDetection) && (
+        <p className="inbox-strip" role="status">
+          📮 收件箱监听中
+          {inbox.counts.pending > 0 ? ` · ${inbox.counts.pending} 个文件处理中` : ""}
+          {inbox.counts.imported > 0 ? ` · 已自动导入 ${inbox.counts.imported}` : ""}
+          {inbox.counts.failed > 0 ? ` · ${inbox.counts.failed} 个失败` : ""}
+        </p>
+      )}
 
       <div className="segmented-control" aria-label="工作区视图">
         <button type="button" className={view === "pending" ? "selected" : ""} onClick={() => setView("pending")}>待处理 <span>{pending.length}</span></button>

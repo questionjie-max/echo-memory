@@ -10,6 +10,7 @@ import type {
   Project,
   RecordBrief,
   RecordStatus,
+  RelatedRecord,
   TranscriptBlock,
   TranscriptSegment,
 } from "../shared/types";
@@ -23,12 +24,15 @@ import {
   listAnalysisTemplates,
   listTranscriptBlocks,
   recordAudioPath,
+  relatedRecords,
+  correctTranscript,
   retranscribeRecord,
   transcribeRecord,
   updateRecordKnowledgeBase,
   updateRecordTitle,
   updateTranscriptSegment,
 } from "../lib/tauri";
+import { listen } from "@tauri-apps/api/event";
 import { formatMinutesSeconds as formatTime, isProcessingStatus as isProcessing } from "../lib/format";
 
 interface Props {
@@ -60,6 +64,47 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
   const completionNotified = useRef(false);
   const loadRequestId = useRef(0);
   const [currentRecord, setCurrentRecord] = useState(record);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const records = await relatedRecords(currentRecord.id, 5);
+        if (!cancelled) setRelated(records);
+      } catch {
+        if (!cancelled) setRelated([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentRecord.id, currentRecord.analysisStatus]);
+
+  useEffect(() => {
+    const stop = listen<{ recordId: string; ok: boolean; message: string }>(
+      "transcript-corrected",
+      (event) => {
+        if (event.payload.recordId === currentRecord.id) {
+          setCorrecting(false);
+          void load();
+        }
+      },
+    );
+    return () => {
+      void stop.then((unlisten) => unlisten());
+    };
+  }, [currentRecord.id]);
+
+  async function startCorrection() {
+    setCorrecting(true);
+    try {
+      await correctTranscript(currentRecord.id);
+    } catch (reason) {
+      setCorrecting(false);
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  }
+
   const [source, setSource] = useState("");
   const [audioLoadState, setAudioLoadState] = useState<AudioLoadState>("loading");
   const [audioError, setAudioError] = useState("");
@@ -80,6 +125,8 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
   const [selectedTemplateId, setSelectedTemplateId] = useState(record.analysisTemplateId ?? "builtin-standard");
   const [aiStatus, setAiStatus] = useState<LocalAiStatus | null>(null);
   const [retranscribeOpen, setRetranscribeOpen] = useState(false);
+  const [related, setRelated] = useState<RelatedRecord[]>([]);
+  const [correcting, setCorrecting] = useState(false);
   const [retranscribeLanguage, setRetranscribeLanguage] = useState("zh");
   const [retranscribeModelPath, setRetranscribeModelPath] = useState("");
   const isDocument = currentRecord.sourceType === "document";
@@ -427,6 +474,7 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
           <details className="detail-menu" ref={detailMenu}>
             <summary>操作</summary>
             <div className="detail-menu-popover material">
+              {!isDocument && <button type="button" disabled={busy || correcting || !currentRecord.hasTranscript} onClick={() => { if (detailMenu.current) detailMenu.current.open = false; void startCorrection(); }}>{correcting ? "AI 校对中…" : "AI 校对逐字稿"}</button>}
               {!isDocument && <button type="button" disabled={busy || isProcessing(currentRecord.status)} onClick={() => { if (detailMenu.current) detailMenu.current.open = false; setRetranscribeOpen(true); }}>增强重新转写…</button>}
               <button type="button" disabled={busy || !currentRecord.hasTranscript} onClick={() => void exportOne("md")}>导出 Markdown</button>
               <button type="button" disabled={busy || !currentRecord.hasTranscript} onClick={() => void exportOne("txt")}>导出 TXT</button>
@@ -543,6 +591,32 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
           </div>
         )}
       </div>
+      {related.length > 0 && (
+        <section className="related-records-section" aria-label="相关记录">
+          <h3>相关记录</h3>
+          <div className="related-records-list">
+            {related.map((item) => (
+              <button
+                type="button"
+                key={item.recordId}
+                className="related-record-card"
+                onClick={() => void (async () => {
+                  try {
+                    const record = await getRecord(item.recordId);
+                    onChanged(record);
+                  } catch (reason) {
+                    setError(reason instanceof Error ? reason.message : String(reason));
+                  }
+                })()}
+              >
+                <strong>{item.title}</strong>
+                <span>{Math.round(item.similarity * 100)}% 相关</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
       {!isDocument && retranscribeOpen && (
         <div className="dialog-scrim" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setRetranscribeOpen(false)}>
           <section className="retranscribe-dialog material" role="dialog" aria-modal="true" aria-label="增强重新转写">

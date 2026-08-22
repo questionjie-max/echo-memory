@@ -35,6 +35,10 @@ The digital-twin direction is a product vision, not a claim that the current Alp
 
 ## What the current Alpha does
 
+- First-run onboarding: environment check, resumable local model downloads, and inbox setup.
+- Audio inbox: watch folders and USB recorders; new audio imports, transcribes, and analyzes automatically.
+- Personal hotword vocabulary injected into transcription, with optional local LLM correction that never overwrites the original transcript.
+- Cross-record action items and open questions dashboard with completion tracking and evidence jumps.
 - Imports `MP3`, `M4A`, and `WAV` audio with duplicate detection.
 - Imports `Markdown`, `TXT`, and `DOCX` documents into the same searchable library.
 - Transcribes audio locally with embedded Whisper or a local `whisper.cpp` command.

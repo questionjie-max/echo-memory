@@ -1,5 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import ProjectPanel from "./components/ProjectPanel";
+import ActionDashboard from "./components/ActionDashboard";
+import OnboardingWizard from "./components/OnboardingWizard";
 import RecordPanel from "./components/RecordPanel";
 import RecordDetail from "./components/RecordDetail";
 import SearchPanel from "./components/SearchPanel";
@@ -9,9 +11,9 @@ import GrowthView from "./components/GrowthView";
 import EvolutionView from "./components/EvolutionView";
 import SettingsPanel from "./components/SettingsPanel";
 import type { KnowledgeAnswerCitation, MemoryScope, MemorySourceReference, RecordBrief, SearchResult } from "./shared/types";
-import { getRecord } from "./lib/tauri";
+import { getOnboardingStatus, getRecord } from "./lib/tauri";
 
-type MainView = "library" | "chat" | "growth" | "evolution";
+type MainView = "library" | "chat" | "growth" | "evolution" | "actions";
 
 export interface RecordNavigation {
   token: number;
@@ -26,6 +28,22 @@ export default function App() {
   const [selectedRecord, setSelectedRecord] = useState<RecordBrief | null>(null);
   const [navigation, setNavigation] = useState<RecordNavigation | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [onboardingNeeded, setOnboardingNeeded] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const status = await getOnboardingStatus();
+        if (!cancelled) setOnboardingNeeded(!status.completed);
+      } catch {
+        if (!cancelled) setOnboardingNeeded(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const projectId = scope === "all" || scope === "unfiled" ? null : scope;
   const unfiledOnly = scope === "unfiled";
@@ -69,6 +87,18 @@ export default function App() {
     }
   }
 
+  async function openActionRecord(recordId: string, segmentId: string | null) {
+    try {
+      const record = await getRecord(recordId);
+      setSelectedRecord(record);
+      setNavigation({ token: Date.now(), startMs: null, targetSegmentId: segmentId });
+      setMainView("library");
+    } catch (reason) {
+      const detail = reason instanceof Error ? reason.message : String(reason);
+      window.alert(`无法打开该记录。它可能已被删除。${detail ? `\n\n${detail}` : ""}`);
+    }
+  }
+
   function selectScope(nextScope: string) {
     setScope(nextScope);
     setSelectedRecord(null);
@@ -98,6 +128,7 @@ export default function App() {
           <NavButton label="AI 对话" selected={mainView === "chat"} onClick={() => setMainView("chat")} />
           <NavButton label="成长轨迹" selected={mainView === "growth"} onClick={() => setMainView("growth")} />
           <NavButton label="认知演化" selected={mainView === "evolution"} onClick={() => setMainView("evolution")} />
+          <NavButton label="行动" selected={mainView === "actions"} onClick={() => setMainView("actions")} />
         </nav>
         {mainView === "library" && <SearchPanel
           projectId={projectId}
@@ -127,9 +158,18 @@ export default function App() {
           {mainView === "chat" && <KnowledgeChatView scope={scope} projectId={projectId} unfiledOnly={unfiledOnly} refreshKey={refreshKey} onOpenCitation={(citation) => void openCitation(citation)} onOpenSettings={() => setSettingsOpen(true)} />}
           {mainView === "growth" && <GrowthView scope={memoryScope} onOpenSource={(source) => void openMemorySource(source)} onOpenSettings={() => setSettingsOpen(true)} />}
           {mainView === "evolution" && <EvolutionView scope={memoryScope} onOpenSource={(source) => void openMemorySource(source)} onOpenSettings={() => setSettingsOpen(true)} />}
+          {mainView === "actions" && <ActionDashboard onOpenRecord={openActionRecord} />}
         </div>}
       </div>
       <SettingsPanel open={settingsOpen} onClose={() => { setSettingsOpen(false); changed(); }} />
+      {onboardingNeeded && (
+        <OnboardingWizard
+          onFinished={() => {
+            setOnboardingNeeded(false);
+            changed();
+          }}
+        />
+      )}
     </main>
   );
 }

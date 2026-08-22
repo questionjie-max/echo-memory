@@ -9,9 +9,10 @@ use crate::analysis::AnalysisDraft;
 use crate::error::{AppError, AppResult};
 use crate::transcript::{build_blocks, normalize_chinese, NORMALIZATION_VERSION};
 use crate::types::{
-    AnalysisTemplate, ExternalAiSettings, KnowledgeIndexStatus, KnowledgeSettings, McpAccessLog,
-    McpStatus, MemoryFeedback, MemoryGenerationStatus, MemoryScope, MemorySnapshot,
-    MemorySnapshotResult, MemoryViewKind, ProcessingJob, Project, RecordBrief, SearchResult,
+    ActionDashboardItem, AnalysisTemplate, ExternalAiSettings, Hotword, InboxCounts, InboxSeenFile,
+    InboxWatchFolder, KnowledgeIndexStatus, KnowledgeSettings, McpAccessLog, McpStatus,
+    MemoryFeedback, MemoryGenerationStatus, MemoryScope, MemorySnapshot, MemorySnapshotResult,
+    MemoryViewKind, OpenQuestionItem, ProcessingJob, Project, RecordBrief, SearchResult,
     StoredAnalysis, TemplateSection, TranscriptBlock, TranscriptSegment, TranscriptSegmentInput,
     TranscriptVersion,
 };
@@ -2230,5 +2231,360 @@ impl LibraryRepository {
             template_snapshot_json: row.get(9)?,
             created_at: row.get(10)?,
         })
+    }
+    /* ----------------------------- v0.3.0 extensions ----------------------------- */
+
+    /// 读取通用 KV 设置；不存在时返回 None。
+    pub fn setting_value(&self, key: &str) -> AppResult<Option<String>> {
+        let connection = self.connect()?;
+        let mut statement = connection.prepare("SELECT value FROM app_settings WHERE key = ?1")?;
+        let mut rows = statement.query(params![key])?;
+        Ok(match rows.next()? {
+            Some(row) => Some(row.get(0)?),
+            None => None,
+        })
+    }
+
+    pub fn set_setting_value(&self, key: &str, value: &str) -> AppResult<()> {
+        self.connect()?.execute(
+            "INSERT INTO app_settings (key, value, updated_at) VALUES (?1, ?2, ?3)              ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            params![key, value, Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    pub fn onboarding_completed_at(&self) -> AppResult<Option<String>> {
+        Ok(self
+            .setting_value("onboarding_completed_at")?
+            .filter(|value| !value.trim().is_empty()))
+    }
+
+    pub fn complete_onboarding(&self) -> AppResult<()> {
+        self.set_setting_value("onboarding_completed_at", &Utc::now().to_rfc3339())
+    }
+
+    pub fn reset_onboarding(&self) -> AppResult<()> {
+        self.set_setting_value("onboarding_completed_at", "")
+    }
+
+    pub fn inbox_usb_detection(&self) -> AppResult<bool> {
+        Ok(self
+            .setting_value("inbox_usb_detection")?
+            .as_deref()
+            .is_some_and(|value| value == "true"))
+    }
+
+    pub fn set_inbox_usb_detection(&self, enabled: bool) -> AppResult<()> {
+        self.set_setting_value(
+            "inbox_usb_detection",
+            if enabled { "true" } else { "false" },
+        )
+    }
+
+    pub fn list_watch_folders(&self) -> AppResult<Vec<InboxWatchFolder>> {
+        let connection = self.connect()?;
+        let mut statement = connection.prepare(
+            "SELECT id, path, label, enabled, created_at FROM inbox_watch_folders ORDER BY created_at",
+        )?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok(InboxWatchFolder {
+                    id: row.get(0)?,
+                    path: row.get(1)?,
+                    label: row.get(2)?,
+                    enabled: row.get::<_, i64>(3)? != 0,
+                    created_at: row.get(4)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, rusqlite::Error>>()?;
+        Ok(rows)
+    }
+
+    pub fn add_watch_folder(&self, path: &str, label: &str) -> AppResult<InboxWatchFolder> {
+        let folder = InboxWatchFolder {
+            id: Uuid::new_v4().to_string(),
+            path: path.to_owned(),
+            label: label.to_owned(),
+            enabled: true,
+            created_at: Utc::now().to_rfc3339(),
+        };
+        self.connect()?.execute(
+            "INSERT INTO inbox_watch_folders (id, path, label, enabled, created_at) VALUES (?1, ?2, ?3, 1, ?4)",
+            params![folder.id, folder.path, folder.label, folder.created_at],
+        )?;
+        Ok(folder)
+    }
+
+    pub fn remove_watch_folder(&self, id: &str) -> AppResult<()> {
+        self.connect()?
+            .execute("DELETE FROM inbox_watch_folders WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    pub fn seen_file_by_path(&self, file_path: &str) -> AppResult<Option<InboxSeenFile>> {
+        let connection = self.connect()?;
+        let mut statement = connection.prepare(
+            "SELECT id, source_kind, source_path, file_path, file_name, file_size, mtime_ms, sha256, status, record_id, error_message, seen_at, updated_at              FROM inbox_seen_files WHERE file_path = ?1",
+        )?;
+        let mut rows = statement.query(params![file_path])?;
+        Ok(match rows.next()? {
+            Some(row) => Some(Self::row_to_seen_file(row)?),
+            None => None,
+        })
+    }
+
+    pub fn insert_seen_file(&self, file: &InboxSeenFile) -> AppResult<()> {
+        self.connect()?.execute(
+            "INSERT INTO inbox_seen_files (id, source_kind, source_path, file_path, file_name, file_size, mtime_ms, sha256, status, record_id, error_message, seen_at, updated_at)              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            params![
+                file.id,
+                file.source_kind,
+                file.source_path,
+                file.file_path,
+                file.file_name,
+                file.file_size,
+                file.mtime_ms,
+                file.sha256,
+                file.status,
+                file.record_id,
+                file.error_message,
+                file.seen_at,
+                file.updated_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_seen_file_status(
+        &self,
+        id: &str,
+        status: &str,
+        record_id: Option<&str>,
+        error_message: Option<&str>,
+    ) -> AppResult<()> {
+        self.connect()?.execute(
+            "UPDATE inbox_seen_files SET status = ?2, record_id = ?3, error_message = ?4, updated_at = ?5 WHERE id = ?1",
+            params![id, status, record_id, error_message, Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    pub fn recent_seen_files(&self, limit: u32) -> AppResult<Vec<InboxSeenFile>> {
+        let connection = self.connect()?;
+        let mut statement = connection.prepare(
+            "SELECT id, source_kind, source_path, file_path, file_name, file_size, mtime_ms, sha256, status, record_id, error_message, seen_at, updated_at              FROM inbox_seen_files ORDER BY seen_at DESC LIMIT ?1",
+        )?;
+        let rows = statement
+            .query_map(params![limit], |row| Self::row_to_seen_file(row))?
+            .collect::<Result<Vec<_>, rusqlite::Error>>()?;
+        Ok(rows)
+    }
+
+    pub fn inbox_status_counts(&self) -> AppResult<InboxCounts> {
+        let connection = self.connect()?;
+        let pending: i64 = connection.query_row(
+            "SELECT COUNT(*) FROM inbox_seen_files WHERE status IN ('pending', 'importing')",
+            [],
+            |row| row.get(0),
+        )?;
+        let imported: i64 = connection.query_row(
+            "SELECT COUNT(*) FROM inbox_seen_files WHERE status = 'imported'",
+            [],
+            |row| row.get(0),
+        )?;
+        let failed: i64 = connection.query_row(
+            "SELECT COUNT(*) FROM inbox_seen_files WHERE status = 'failed'",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(InboxCounts {
+            pending: pending.max(0) as u32,
+            imported: imported.max(0) as u32,
+            failed: failed.max(0) as u32,
+        })
+    }
+
+    fn row_to_seen_file(row: &rusqlite::Row<'_>) -> rusqlite::Result<InboxSeenFile> {
+        Ok(InboxSeenFile {
+            id: row.get(0)?,
+            source_kind: row.get(1)?,
+            source_path: row.get(2)?,
+            file_path: row.get(3)?,
+            file_name: row.get(4)?,
+            file_size: row.get(5)?,
+            mtime_ms: row.get(6)?,
+            sha256: row.get(7)?,
+            status: row.get(8)?,
+            record_id: row.get(9)?,
+            error_message: row.get(10)?,
+            seen_at: row.get(11)?,
+            updated_at: row.get(12)?,
+        })
+    }
+
+    /* --------------------------------- hotwords --------------------------------- */
+
+    pub fn list_hotwords(&self) -> AppResult<Vec<Hotword>> {
+        let connection = self.connect()?;
+        let mut statement = connection
+            .prepare("SELECT id, term, note, created_at FROM hotwords ORDER BY created_at")?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok(Hotword {
+                    id: row.get(0)?,
+                    term: row.get(1)?,
+                    note: row.get(2)?,
+                    created_at: row.get(3)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, rusqlite::Error>>()?;
+        Ok(rows)
+    }
+
+    /// 拼接为 Whisper initial_prompt 使用的热词前缀，限制在 160 个字符内。
+    pub fn hotwords_prompt(&self) -> AppResult<String> {
+        let terms: Vec<String> = self
+            .list_hotwords()?
+            .into_iter()
+            .map(|hotword| hotword.term)
+            .collect();
+        if terms.is_empty() {
+            return Ok(String::new());
+        }
+        let mut prompt = String::from("术语表：");
+        for term in terms {
+            if prompt.chars().count() + term.chars().count() + 1 > 160 {
+                break;
+            }
+            prompt.push_str(&term);
+            prompt.push('、');
+        }
+        Ok(prompt.trim_end_matches('、').to_owned())
+    }
+
+    pub fn add_hotword(&self, term: &str, note: &str) -> AppResult<Hotword> {
+        let term = term.trim();
+        if term.is_empty() || term.chars().count() > 40 {
+            return Err(crate::error::AppError::Invalid("热词无效".to_owned()));
+        }
+        let hotword = Hotword {
+            id: Uuid::new_v4().to_string(),
+            term: term.to_owned(),
+            note: note.trim().to_owned(),
+            created_at: Utc::now().to_rfc3339(),
+        };
+        self.connect()?.execute(
+            "INSERT INTO hotwords (id, term, note, created_at) VALUES (?1, ?2, ?3, ?4)              ON CONFLICT(term) DO UPDATE SET note = excluded.note",
+            params![hotword.id, hotword.term, hotword.note, hotword.created_at],
+        )?;
+        Ok(hotword)
+    }
+
+    pub fn remove_hotword(&self, id: &str) -> AppResult<()> {
+        self.connect()?
+            .execute("DELETE FROM hotwords WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    /* ------------------------------ action dashboard ------------------------------ */
+
+    pub fn list_action_items_detailed(&self) -> AppResult<Vec<ActionDashboardItem>> {
+        let connection = self.connect()?;
+        let mut statement = connection.prepare(
+            "SELECT items.id, items.record_id, records.title, items.project_id, projects.name, items.title, items.owner_text, items.due_text, items.status, items.source_segment_id, records.imported_at              FROM action_items AS items              JOIN records ON records.id = items.record_id              LEFT JOIN projects ON projects.id = items.project_id              ORDER BY CASE items.status WHEN 'open' THEN 0 ELSE 1 END, records.imported_at DESC",
+        )?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok(ActionDashboardItem {
+                    id: row.get(0)?,
+                    record_id: row.get(1)?,
+                    record_title: row.get(2)?,
+                    project_id: row.get(3)?,
+                    project_name: row.get(4)?,
+                    title: row.get(5)?,
+                    owner_text: row.get(6)?,
+                    due_text: row.get(7)?,
+                    status: row.get(8)?,
+                    source_segment_id: row.get(9)?,
+                    imported_at: row.get(10)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, rusqlite::Error>>()?;
+        Ok(rows)
+    }
+
+    pub fn set_action_item_status(&self, id: &str, status: &str) -> AppResult<()> {
+        if !matches!(status, "open" | "done") {
+            return Err(crate::error::AppError::Invalid("行动项状态无效".to_owned()));
+        }
+        let changed = self.connect()?.execute(
+            "UPDATE action_items SET status = ?2 WHERE id = ?1",
+            params![id, status],
+        )?;
+        if changed == 0 {
+            return Err(crate::error::AppError::NotFound("行动项不存在".to_owned()));
+        }
+        Ok(())
+    }
+
+    /// 从每条记录的最新分析 JSON 中提取未解决问题，供仪表盘聚合。
+    pub fn list_open_questions(&self, limit: u64) -> AppResult<Vec<OpenQuestionItem>> {
+        let connection = self.connect()?;
+        let mut statement = connection.prepare(
+            "SELECT records.id, records.title, records.imported_at, analyses.content_json              FROM records JOIN analyses ON analyses.id = (                 SELECT a2.id FROM analyses AS a2 WHERE a2.record_id = records.id ORDER BY a2.created_at DESC LIMIT 1             )              ORDER BY records.imported_at DESC LIMIT ?1",
+        )?;
+        let rows = statement
+            .query_map(params![limit as i64], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, rusqlite::Error>>()?;
+        let mut items = Vec::new();
+        for (record_id, record_title, imported_at, content_json) in rows {
+            let Ok(draft) = serde_json::from_str::<crate::analysis::AnalysisDraft>(&content_json)
+            else {
+                continue;
+            };
+            for question in draft.open_questions {
+                items.push(OpenQuestionItem {
+                    text: question.text,
+                    citation_segment_ids: question.citation_segment_ids.clone(),
+                    record_id: record_id.clone(),
+                    record_title: record_title.clone(),
+                    imported_at: imported_at.clone(),
+                });
+                if items.len() >= limit as usize {
+                    break;
+                }
+            }
+            if items.len() >= limit as usize {
+                break;
+            }
+        }
+        Ok(items)
+    }
+
+    /* --------------------------- transcript AI correction --------------------------- */
+
+    /// 将 LLM 校对后的文本写入 normalized 层（edited 层保留给用户手改，原始层不动）。
+    pub fn set_segment_normalized_texts(
+        &self,
+        record_id: &str,
+        corrections: &[(String, String)],
+    ) -> AppResult<u32> {
+        let connection = self.connect()?;
+        let mut changed = 0_u32;
+        for (segment_id, text) in corrections {
+            let updated = connection.execute(
+                "UPDATE transcript_segments SET normalized_text = ?2, normalization_version = 'llm-corrected-v1'                  WHERE id = ?1 AND record_id = ?3",
+                params![segment_id, text, record_id],
+            )?;
+            changed += updated.max(0) as u32;
+        }
+        Ok(changed)
     }
 }
