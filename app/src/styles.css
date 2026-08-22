@@ -727,7 +727,8 @@ input::placeholder, textarea::placeholder { color: #86868b; }
 .dock-message.user { justify-self: end; background: rgba(0, 122, 255, 0.12); color: #0b3d80; }
 .dock-message.assistant { justify-self: start; border: 1px solid rgba(60, 60, 67, 0.1); background: #fff; color: #1d1d1f; }
 .dock-message p { margin: 0; }
-.dock-save { justify-self: start; padding: 2px 8px; border: 0; border-radius: 6px; background: none; color: #0066cc; font-size: 10px; cursor: pointer; }
+.dock-save { justify-self: start; padding: 2px 8px; border: 0; border-radius: 6px; background: none; color: #0066cc; font-size: 10px; cursor: pointer; opacity: 0; transition: opacity 0.15s ease; }
+.dock-message:hover .dock-save, .dock-save:focus-visible { opacity: 1; }
 .dock-status { margin: 0; color: #6e6e73; font-size: 11px; }
 .dock-composer { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: end; }
 .dock-composer textarea { min-height: 44px; padding: 8px 11px; border: 1px solid rgba(60, 60, 67, 0.18); border-radius: 9px; background: #fff; font: inherit; font-size: 12px; resize: none; }

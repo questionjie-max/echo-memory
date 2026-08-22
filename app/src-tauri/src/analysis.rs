@@ -47,6 +47,11 @@ pub struct AnalysisCustomSectionDraft {
     pub items: Vec<AnalysisItemDraft>,
 }
 
+pub struct ChatMessage {
+    pub role: String, // user | assistant
+    pub content: String,
+}
+
 pub struct OllamaAdapter {
     base_url: String,
     model: String,
@@ -95,6 +100,47 @@ impl OllamaAdapter {
             base_url,
             model: model.to_owned(),
         })
+    }
+
+    /// 角色化对话（/api/chat）：AI 伙伴使用，system/user/assistant 分离可显著提升小模型指令遵循。
+    pub fn chat(
+        &self,
+        system: &str,
+        messages: &[ChatMessage],
+        temperature: f32,
+        num_predict: u32,
+    ) -> AppResult<String> {
+        let url = format!("{}/api/chat", self.base_url.trim_end_matches('/'));
+        let mut body_messages = vec![serde_json::json!({ "role": "system", "content": system })];
+        for message in messages {
+            body_messages.push(serde_json::json!({
+                "role": message.role,
+                "content": message.content,
+            }));
+        }
+        let body = serde_json::json!({
+            "model": self.model,
+            "messages": body_messages,
+            "stream": false,
+            "options": { "num_ctx": 8192, "num_predict": num_predict, "temperature": temperature }
+        });
+        let response: serde_json::Value = ureq::post(&url)
+            .send_json(body)
+            .map_err(|_| {
+                AppError::Analysis("Ollama 对话请求失败。请确认本机服务仍在运行。".into())
+            })?
+            .into_json()
+            .map_err(|_| AppError::Analysis("无法读取 Ollama 对话响应".into()))?;
+        let content = response
+            .pointer("/message/content")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_owned();
+        if content.is_empty() {
+            return Err(AppError::Analysis("本地模型没有返回内容，请重试".into()));
+        }
+        Ok(content)
     }
 
     /// 纯文本生成：AI 伙伴对话等非结构化任务使用。

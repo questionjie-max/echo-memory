@@ -2,6 +2,7 @@
 //! 文字创作 / 启发对话 / 自由聊天），以及由对话生成分析模板的向导后端。
 //! 对话默认走本机 Ollama；外部引擎仅在用户已配置并主动选择时使用。
 
+use crate::analysis::ChatMessage as OllamaAdapterChatMessage;
 use crate::analysis::OllamaAdapter;
 use crate::error::{AppError, AppResult};
 use crate::library::ManagedLibrary;
@@ -30,7 +31,7 @@ pub fn system_prompt(mode: &str) -> &'static str {
              你的职责不是替用户给出答案，而是：复述并结构化用户的想法，指出模糊或矛盾之处，\n\
              然后每次提出 1-2 个最关键的问题推动用户深入。语气平等、简洁，避免说教。"
         }
-        _ => "你是回声记忆内置的本地 AI 伙伴，用简体中文与用户对话，简洁、直接、有帮助。",
+        _ => "你是「回声记忆」内置的本地 AI 伙伴，用简体中文对话。回答具体、直接给有用内容：先结论后细节；不知道就坦白说，不说空洞客套话；适合时在结尾给一个可执行的下一步建议。",
     }
 }
 
@@ -119,7 +120,15 @@ fn record_context(library: &ManagedLibrary, record_id: &str) -> AppResult<String
     Ok(context)
 }
 
-/// 本地引擎对话：返回 AI 回复文本。
+fn mode_temperature(mode: &str) -> f32 {
+    match mode {
+        MODE_CREATION => 0.7,
+        MODE_INSPIRE => 0.5,
+        _ => 0.4,
+    }
+}
+
+/// 本地引擎对话：/api/chat 角色化消息 + 按模式调温，提升小模型回复质量。
 pub fn ask_local(
     library: &ManagedLibrary,
     mode: &str,
@@ -130,14 +139,32 @@ pub fn ask_local(
     validate_mode(mode)?;
     let model = library.repository().knowledge_settings()?.analysis_model;
     let adapter = OllamaAdapter::detect(&model)?;
-    let prompt = build_prompt(library, mode, history, user_message, record_id)?;
-    let reply = adapter.raw_text(&prompt)?;
-    if reply.trim().is_empty() {
-        return Err(AppError::Analysis(
-            "本地模型没有返回内容，请重试".to_owned(),
-        ));
+
+    // 非"总结"模式也需要选中记录时，把材料放进 system，保持对话消息干净。
+    let mut system = system_prompt(mode).to_owned();
+    if mode != MODE_FREE {
+        if let Some(record_id) = record_id {
+            system.push_str("\n\n以下是当前选中记录的材料，回答可引用其中时间点：\n");
+            system.push_str(&record_context(library, record_id)?);
+        }
     }
-    Ok(reply.trim().to_owned())
+    let mut messages: Vec<OllamaAdapterChatMessage> = history
+        .iter()
+        .map(|message| OllamaAdapterChatMessage {
+            role: if message.role == "user" {
+                "user"
+            } else {
+                "assistant"
+            }
+            .to_owned(),
+            content: message.content.clone(),
+        })
+        .collect();
+    messages.push(OllamaAdapterChatMessage {
+        role: "user".to_owned(),
+        content: user_message.to_owned(),
+    });
+    adapter.chat(&system, &messages, mode_temperature(mode), 2048)
 }
 
 /// 外部引擎对话：仅当用户已配置外部 AI 并主动选择时调用，逐字稿/文本会发送到所配置服务。
