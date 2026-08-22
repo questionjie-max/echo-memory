@@ -140,8 +140,18 @@ impl OllamaAdapter {
             .map_err(|_| AppError::Analysis("Ollama 请求失败。请确认本机服务仍在运行。".into()))?
             .into_json()
             .map_err(|_| AppError::Analysis("无法读取 Ollama 响应".into()))?;
-        serde_json::from_value(response.get("response").cloned().unwrap_or_default())
-            .map_err(|_| AppError::Analysis("Ollama 未返回有效 JSON".into()))
+        // Ollama 的 response 字段是「字符串形式的 JSON」：必须 from_str 重新解析，
+        // from_value 只会得到 String 值而不会展开成对象。
+        let text = response
+            .get("response")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_owned();
+        if text.is_empty() {
+            return Err(AppError::Analysis("Ollama 未返回内容".into()));
+        }
+        serde_json::from_str(&text).map_err(|_| AppError::Analysis("Ollama 未返回有效 JSON".into()))
     }
 
     pub fn analyze(&self, transcript: &str) -> AppResult<AnalysisDraft> {

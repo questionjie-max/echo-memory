@@ -160,7 +160,7 @@ pub fn ask_external(
     let client =
         crate::memory::OpenAiCompatibleClient::new(&settings.base_url, &settings.model, &api_key)?;
     let prompt = build_prompt(library, mode, history, user_message, record_id)?;
-    let reply = client.complete_json(&prompt)?;
+    let reply = client.complete_text(system_prompt(mode), &prompt)?;
     if reply.trim().is_empty() {
         return Err(AppError::Analysis(
             "外部模型没有返回内容，请重试".to_owned(),
@@ -243,6 +243,9 @@ pub fn generate_template_draft(
         "required": ["name", "description", "sections"]
     });
     let response = adapter.raw_generate(&prompt, format, 2048)?;
+    if std::env::var("ECHO_DEBUG").ok().as_deref() == Some("1") {
+        eprintln!("[模板草稿] 模型原始返回：{response}");
+    }
     let name = response
         .get("name")
         .and_then(serde_json::Value::as_str)
@@ -265,14 +268,21 @@ pub fn generate_template_draft(
             let Some(key) = item.get("key").and_then(serde_json::Value::as_str) else {
                 continue;
             };
-            let key = key
+            let mut key = key
                 .trim()
                 .chars()
                 .filter(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
                 .collect::<String>()
                 .to_ascii_lowercase();
-            if key.is_empty() || !seen_keys.insert(key.clone()) {
-                continue;
+            // 模型常返回中文 key（合法语义但非法标识）：清空后按序号兜底，而不是丢弃栏目。
+            if key.is_empty() {
+                key = format!("custom_{}", sections.len() + 1);
+            }
+            if !seen_keys.insert(key.clone()) {
+                key = format!("custom_{}_{}", key, sections.len() + 1);
+                if !seen_keys.insert(key.clone()) {
+                    continue;
+                }
             }
             let format = match item.get("format").and_then(serde_json::Value::as_str) {
                 Some("list") => "list",

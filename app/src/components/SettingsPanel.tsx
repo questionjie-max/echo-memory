@@ -464,7 +464,7 @@ export default function SettingsPanel({ open: visible, onClose }: Props) {
               <div className="settings-form">
                 <section className="settings-section">
                   <div className="settings-section-title"><h3>音频收件箱</h3><StatusLabel ok={inbox.watchFolders.length > 0 || inbox.usbDetection} /></div>
-                  <p className="settings-meta">监听下面的文件夹：新音频文件出现后自动导入并转写分析。任何录音设备（U 盘录音笔、手机、AirDrop、微信另存）落到这里都会被接住。</p>
+                  <p className="settings-meta">监听下面的文件夹：新音频文件出现后自动导入并转写分析。添加监听时的已有文件会被跳过（只接住之后新出现的文件）；U 盘录音设备例外——插入后设备上的录音属于你要导入的内容。</p>
                   <label className="settings-switch-row"><span>插入 USB 录音设备时自动扫描</span><input type="checkbox" checked={inbox.usbDetection} onChange={(event) => { void setInboxUsbDetection(event.target.checked).then(refreshInbox); setInbox({ ...inbox, usbDetection: event.target.checked }); }} /></label>
                   <div className="settings-actions">
                     <button type="button" className="secondary-button" onClick={() => void chooseWatchFolder()}>添加监听文件夹…</button>
