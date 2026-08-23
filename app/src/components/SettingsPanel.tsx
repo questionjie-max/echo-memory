@@ -187,16 +187,20 @@ export default function SettingsPanel({ open: visible, onClose }: Props) {
   }
 
   useEffect(() => {
-    if (visible && tab === "output") {
+    if (!visible) return;
+    // 打开设置或切换 tab 都要加载数据：核心四项随面板刷新，
+    // 收件箱/词汇库/产出按 tab 按需加载（此前依赖只看 visible，切 tab 永远不加载）。
+    void refresh();
+    if (tab === "output") {
       void getOutputStatus().then(setOutput).catch(() => setOutput(null));
     }
-    if (visible && (tab === "inbox" || tab === "hotwords")) {
+    if (tab === "inbox" || tab === "hotwords") {
       void refreshInbox();
       void refreshHotwords();
       void getOutputStatus().then(setOutput).catch(() => setOutput(null));
       void getTranscriptCorrectionEnabled().then(setCorrectionEnabled).catch(() => setCorrectionEnabled(false));
     }
-  }, [visible]);
+  }, [visible, tab]);
 
   useEffect(() => {
     if (!isTauri()) return;
