@@ -233,7 +233,8 @@ pub fn generate_template_draft(
          1. name 简短（12 字内），description 一句话；\n\
          2. sections 为 2-6 个栏目，每个栏目：key（英文小写短标识）、title（中文栏目名）、\n\
             format（paragraph 或 list）、instruction（给分析模型的中文抽取要求，具体到字段）；\n\
-         3. 栏目围绕用户的核心需求设计，不要泛泛的「其他」。\n\n对话：\n",
+         3. 栏目围绕用户的核心需求设计，不要泛泛的「其他」；\n\
+         4. 若对话中已出现草案且用户提出修改意见，输出按意见修订后的完整模板（不是补丁）。\n\n对话：\n",
     );
     for message in messages {
         let label = if message.role == "user" {
