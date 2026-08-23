@@ -34,7 +34,7 @@ v0.4.x 连续三个热修的教训：主线程冻结（0.4.1）、设置面板�
 
 ```bash
 cd app
-npm run typecheck && npm run build && npm run test:growth
+npm run typecheck && npm run build && npm run test:growth && npm run test:ui
 cd src-tauri
 cargo fmt --check && cargo test --features mcp-bin
 ```

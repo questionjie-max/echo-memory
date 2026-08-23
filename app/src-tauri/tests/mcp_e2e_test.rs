@@ -47,6 +47,7 @@ fn mcp_returns_decisions_with_traceable_source() {
                 summary: "团队讨论了产品形态，并基于隐私与离线能力确定采用本地桌面应用。".into(),
                 key_points: vec![],
                 decisions: vec![AnalysisItemDraft {
+                    owner: None,
                     text: "采用桌面应用".into(),
                     citation_segment_ids: vec![segments[0].id.clone()],
                     quote_text: "为了隐私和离线使用，我们决定采用桌面应用。".into(),

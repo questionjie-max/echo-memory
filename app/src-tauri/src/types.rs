@@ -804,3 +804,19 @@ pub struct AppInfo {
     pub version: String,
     pub library_path: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpeakerSummary {
+    pub label: String,
+    pub segment_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptionEngineStatus {
+    pub engine: String, // embedded | whisperx
+    pub whisperx_available: bool,
+    pub whisperx_path: Option<String>,
+    pub hf_token_set: bool,
+}

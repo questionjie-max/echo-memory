@@ -296,6 +296,88 @@ fn format_external_ai_http_error(code: u16, response: ureq::Response, api_key: &
     }
 }
 
+pub fn get_hf_token() -> AppResult<Option<String>> {
+    if let Ok(value) = std::env::var("ECHO_HF_TOKEN") {
+        if !value.trim().is_empty() {
+            return Ok(Some(value));
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let output = Command::new("security")
+            .args([
+                "find-generic-password",
+                "-s",
+                "com.soloplay.echo-memory.hf-token",
+                "-a",
+                "default",
+                "-w",
+            ])
+            .output()
+            .map_err(|_| AppError::Io(std::io::Error::other("无法访问 macOS 钥匙串")))?;
+        if !output.status.success() {
+            return Ok(None);
+        }
+        let value = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        return Ok((!value.is_empty()).then_some(value));
+    }
+    #[cfg(not(target_os = "macos"))]
+    Ok(None)
+}
+
+pub fn set_hf_token(token: &str) -> AppResult<()> {
+    if token.trim().is_empty() {
+        return Err(AppError::Invalid("HuggingFace Token 不能为空".to_owned()));
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let delete = Command::new("security")
+            .args([
+                "delete-generic-password",
+                "-s",
+                "com.soloplay.echo-memory.hf-token",
+                "-a",
+                "default",
+            ])
+            .output();
+        let _ = delete;
+        let status = Command::new("security")
+            .args([
+                "add-generic-password",
+                "-s",
+                "com.soloplay.echo-memory.hf-token",
+                "-a",
+                "default",
+                "-w",
+                token.trim(),
+            ])
+            .status()
+            .map_err(|_| AppError::Io(std::io::Error::other("无法写入 macOS 钥匙串")))?;
+        if !status.success() {
+            return Err(AppError::Io(std::io::Error::other("写入钥匙串失败")));
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    Ok(())
+}
+
+pub fn clear_hf_token() -> AppResult<()> {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = Command::new("security")
+            .args([
+                "delete-generic-password",
+                "-s",
+                "com.soloplay.echo-memory.hf-token",
+                "-a",
+                "default",
+            ])
+            .output();
+    }
+    Ok(())
+}
+
 pub fn get_api_key() -> AppResult<Option<String>> {
     if let Ok(value) = std::env::var("ECHO_EXTERNAL_AI_API_KEY") {
         if !value.trim().is_empty() {

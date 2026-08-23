@@ -319,6 +319,7 @@ mod tests {
                 &AnalysisDraft {
                     summary: "客户重视本地隐私。".into(),
                     key_points: vec![AnalysisItemDraft {
+                        owner: None,
                         text: "本地保存是核心需求".into(),
                         citation_segment_ids: vec![segments[0].id.clone()],
                         quote_text: "希望资料只保存在本机".into(),

@@ -367,6 +367,107 @@ fn redact_message(message: &str) -> String {
         .collect()
 }
 
+/* --------------------- v0.5.0：whisperX 外置引擎（说话人分离） --------------------- */
+
+/// 探测 whisperX CLI：优先 ECHO_WHISPERX_BIN，其次 PATH。
+pub fn whisperx_path() -> Option<std::path::PathBuf> {
+    if let Ok(path) = std::env::var("ECHO_WHISPERX_BIN") {
+        let candidate = std::path::PathBuf::from(path.trim());
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    let path = std::env::var_os("PATH")?;
+    for directory in std::env::split_paths(&path) {
+        let candidate = directory.join("whisperx");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct WhisperxSegment {
+    pub start: f64,
+    pub end: f64,
+    pub text: String,
+    #[serde(default)]
+    pub speaker: Option<String>,
+}
+
+/// 解析 whisperx --output_format json 的输出，映射为带说话人标注的片段。
+pub fn parse_whisperx_json(input: &str) -> AppResult<Vec<WhisperxSegment>> {
+    let value: Value = serde_json::from_str(input)
+        .map_err(|error| AppError::Import(format!("whisperX JSON 无法解析: {error}")))?;
+    let segments = value
+        .get("segments")
+        .and_then(Value::as_array)
+        .ok_or_else(|| AppError::Import("whisperX 输出缺少 segments".to_owned()))?;
+    let mut parsed = Vec::new();
+    for segment in segments {
+        let Ok(item) = serde_json::from_value::<WhisperxSegment>(segment.clone()) else {
+            continue;
+        };
+        if item.text.trim().is_empty() {
+            continue;
+        }
+        parsed.push(item);
+    }
+    if parsed.is_empty() {
+        return Err(AppError::Import("whisperX 没有生成可用片段".to_owned()));
+    }
+    Ok(parsed)
+}
+
+/// 运行 whisperX 转写（含说话人分离）。hf_token 用于 pyannote 模型授权。
+pub fn transcribe_whisperx(
+    binary: &std::path::Path,
+    wav_path: &std::path::Path,
+    language: &str,
+    hf_token: Option<&str>,
+) -> AppResult<Vec<WhisperxSegment>> {
+    let output_dir = wav_path
+        .parent()
+        .map(|parent| parent.to_path_buf())
+        .unwrap_or_else(std::env::temp_dir);
+    let mut command = std::process::Command::new(binary);
+    command
+        .arg(wav_path)
+        .arg("--language")
+        .arg(if language == "auto" { "en" } else { language })
+        .arg("--diarize")
+        .arg("--output_format")
+        .arg("json")
+        .arg("--output_dir")
+        .arg(&output_dir)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped());
+    if let Some(token) = hf_token {
+        command.arg("--hf_token").arg(token);
+    }
+    let output = command
+        .output()
+        .map_err(|error| AppError::Import(format!("无法启动 whisperX：{error}")))?;
+    if !output.status.success() {
+        let message = String::from_utf8_lossy(&output.stderr);
+        return Err(AppError::Import(format!(
+            "whisperX 转写失败：{}",
+            message.trim().chars().take(400).collect::<String>()
+        )));
+    }
+    let stem = wav_path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    let json_path = output_dir.join(format!("{stem}.json"));
+    let content = std::fs::read_to_string(&json_path)
+        .map_err(|error| AppError::Import(format!("无法读取 whisperX 输出：{error}")))?;
+    let segments = parse_whisperx_json(&content)?;
+    let _ = std::fs::remove_file(&json_path);
+    Ok(segments)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -406,5 +507,18 @@ mod tests {
         assert!(segments
             .iter()
             .all(|segment| segment.end_ms >= segment.start_ms));
+    }
+    #[test]
+    fn whisperx_json_parses_speaker_labels() {
+        let fixture = r#"{"segments":[
+            {"start":0.0,"end":2.5,"text":"大家好","speaker":"SPEAKER_00"},
+            {"start":2.5,"end":4.0,"text":"你好","speaker":"SPEAKER_01"},
+            {"start":4.0,"end":5.0,"text":"  "}
+        ]}"#;
+        let segments = parse_whisperx_json(fixture).unwrap();
+        assert_eq!(segments.len(), 2);
+        assert_eq!(segments[0].speaker.as_deref(), Some("SPEAKER_00"));
+        assert!((segments[0].end - 2.5).abs() < f64::EPSILON);
+        assert!(parse_whisperx_json("{}").is_err());
     }
 }

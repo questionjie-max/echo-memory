@@ -11,6 +11,8 @@ import type {
   RecordBrief,
   RecordStatus,
   RelatedRecord,
+  SpeakerSummary,
+  TranscriptionEngineStatus,
   TranscriptBlock,
   TranscriptSegment,
 } from "../shared/types";
@@ -25,6 +27,9 @@ import {
   listTranscriptBlocks,
   recordAudioPath,
   relatedRecords,
+  getRecordSpeakers,
+  renameRecordSpeaker,
+  getTranscriptionEngineStatus,
   exportRecordToOutput,
   correctTranscript,
   retranscribeRecord,
@@ -82,6 +87,30 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
   }, [currentRecord.id, currentRecord.analysisStatus]);
 
   useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [list, engine] = await Promise.all([
+          getRecordSpeakers(currentRecord.id),
+          getTranscriptionEngineStatus(),
+        ]);
+        if (!cancelled) {
+          setSpeakers(list);
+          setEngineStatus(engine);
+        }
+      } catch {
+        if (!cancelled) {
+          setSpeakers([]);
+          setEngineStatus(null);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentRecord.id, currentRecord.hasTranscript]);
+
+  useEffect(() => {
     const stop = listen<{ recordId: string; ok: boolean; message: string }>(
       "transcript-corrected",
       (event) => {
@@ -126,7 +155,10 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
   const [selectedTemplateId, setSelectedTemplateId] = useState(record.analysisTemplateId ?? "builtin-standard");
   const [aiStatus, setAiStatus] = useState<LocalAiStatus | null>(null);
   const [retranscribeOpen, setRetranscribeOpen] = useState(false);
+  const [retranscribeEngine, setRetranscribeEngine] = useState<"embedded" | "whisperx">("embedded");
   const [related, setRelated] = useState<RelatedRecord[]>([]);
+  const [speakers, setSpeakers] = useState<SpeakerSummary[]>([]);
+  const [engineStatus, setEngineStatus] = useState<TranscriptionEngineStatus | null>(null);
   const [correcting, setCorrecting] = useState(false);
   const [exportNotice, setExportNotice] = useState<string | null>(null);
   const [retranscribeLanguage, setRetranscribeLanguage] = useState("zh");
@@ -329,7 +361,7 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
     setError("");
     completionNotified.current = false;
     try {
-      await retranscribeRecord(record.id, retranscribeLanguage, retranscribeModelPath || null, "enhanced");
+      await retranscribeRecord(record.id, retranscribeLanguage, retranscribeModelPath || null, "enhanced", retranscribeEngine);
       setCurrentRecord((value) => ({ ...value, status: "preparing", hasAnalysis: false, analysisStatus: "stale" }));
       setRetranscribeOpen(false);
       setActiveTab("transcript");
@@ -608,6 +640,25 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
           </div>
         )}
       </div>
+      {speakers.length > 0 && !isDocument && (
+        <section className="speakers-section" aria-label="说话人">
+          <h3>说话人</h3>
+          <div className="speakers-list">
+            {speakers.map((speaker) => (
+              <SpeakerRow
+                key={speaker.label}
+                recordId={currentRecord.id}
+                speaker={speaker}
+                onRenamed={() => void load()}
+              />
+            ))}
+          </div>
+          {speakers.every((speaker) => speaker.label === "未知") && (
+            <p className="speakers-hint">当前没有说话人标注。用 whisperX 引擎重新转写即可自动区分说话人（设置 → 本机 AI → 转写引擎）。</p>
+          )}
+        </section>
+      )}
+
       {related.length > 0 && (
         <section className="related-records-section" aria-label="相关记录">
           <h3>相关记录</h3>
@@ -653,6 +704,16 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
               <div className="path-control"><input readOnly value={retranscribeModelPath} placeholder="使用应用默认模型" /><button type="button" onClick={() => void chooseRetranscribeModel()}>选择</button></div>
             </label>
             {aiStatus?.whisperModelSource && <small>{aiStatus.whisperModelSource}</small>}
+            <label>
+              <span>转写引擎</span>
+              <select value={retranscribeEngine} onChange={(event) => setRetranscribeEngine(event.target.value as "embedded" | "whisperx")}>
+                <option value="embedded">内嵌引擎（默认，零依赖）</option>
+                {engineStatus?.whisperxAvailable && <option value="whisperx">whisperX（说话人分离）</option>}
+              </select>
+            </label>
+            {retranscribeEngine === "whisperx" && (
+              <small>whisperX 会标注每位说话人（说话人 1、说话人 2…），完成后可在详情页重命名为真实姓名。</small>
+            )}
             <div className="dialog-actions">
               <button type="button" className="secondary-button" disabled={busy} onClick={() => setRetranscribeOpen(false)}>取消</button>
               <button type="button" className="primary-button" disabled={busy || !retranscribeLanguage} onClick={() => void startRetranscription()}>{busy ? "启动中…" : "开始增强转写"}</button>
@@ -839,4 +900,48 @@ function progressText(record: RecordBrief) {
 function processingPercent(record: RecordBrief) {
   if (record.progressTotal <= 0) return 12;
   return Math.max(4, Math.min(100, Math.round(record.progressCurrent / record.progressTotal * 100)));
+}
+
+function SpeakerRow({ recordId, speaker, onRenamed }: { recordId: string; speaker: SpeakerSummary; onRenamed: () => void }) {
+  const [name, setName] = useState(speaker.label);
+  const [busy, setBusy] = useState(false);
+  const [addHotword, setAddHotword] = useState(false);
+  const [error, setError] = useState("");
+
+  async function rename() {
+    const next = name.trim();
+    if (!next || next === speaker.label || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      await renameRecordSpeaker(recordId, speaker.label, next, addHotword);
+      onRenamed();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="speaker-row">
+      <input
+        value={name}
+        aria-label={`说话人 ${speaker.label} 名称`}
+        onChange={(event) => setName(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && !event.nativeEvent.isComposing) void rename();
+        }}
+      />
+      <span className="speaker-count">{speaker.segmentCount} 段</span>
+      <label className="speaker-hotword">
+        <input type="checkbox" checked={addHotword} onChange={(event) => setAddHotword(event.target.checked)} />
+        同时加入词汇库
+      </label>
+      <button type="button" className="toolbar-button" disabled={busy || !name.trim() || name.trim() === speaker.label} onClick={() => void rename()}>
+        {busy ? "保存中…" : "重命名"}
+      </button>
+      {error && <small className="inline-error">{error}</small>}
+    </div>
+  );
 }

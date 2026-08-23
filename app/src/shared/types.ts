@@ -639,3 +639,15 @@ export interface AppInfo {
   version: string;
   libraryPath: string;
 }
+
+export interface SpeakerSummary {
+  label: string;
+  segmentCount: number;
+}
+
+export interface TranscriptionEngineStatus {
+  engine: "embedded" | "whisperx" | string;
+  whisperxAvailable: boolean;
+  whisperxPath: string | null;
+  hfTokenSet: boolean;
+}

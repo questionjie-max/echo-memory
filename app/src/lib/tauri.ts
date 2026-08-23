@@ -38,6 +38,8 @@ import type {
   TemplateDraft,
   OutputStatus,
   AppInfo,
+  SpeakerSummary,
+  TranscriptionEngineStatus,
 } from "../shared/types";
 
 export function createProject(name: string): Promise<Project> {
@@ -197,8 +199,8 @@ export function transcribeRecord(recordId: string): Promise<void> {
   return invoke<void>("transcribe_record", { recordId });
 }
 
-export function retranscribeRecord(recordId: string, language: string, modelPath: string | null, qualityPreset = "enhanced"): Promise<void> {
-  return invoke<void>("retranscribe_record", { recordId, language, modelPath, qualityPreset });
+export function retranscribeRecord(recordId: string, language: string, modelPath: string | null, qualityPreset = "enhanced", engine?: "embedded" | "whisperx" | null): Promise<void> {
+  return invoke<void>("retranscribe_record", { recordId, language, modelPath, qualityPreset, engine: engine ?? null });
 }
 
 export function analyzeRecord(recordId: string, templateId?: string | null): Promise<void> {
@@ -404,4 +406,28 @@ export function saveDockMessageToOutput(title: string, content: string): Promise
 
 export function getAppInfo(): Promise<AppInfo> {
   return invoke<AppInfo>("app_info");
+}
+
+export function getTranscriptionEngineStatus(): Promise<TranscriptionEngineStatus> {
+  return invoke<TranscriptionEngineStatus>("get_transcription_engine_status");
+}
+
+export function setTranscriptionEngine(engine: "embedded" | "whisperx"): Promise<void> {
+  return invoke<void>("set_transcription_engine", { engine });
+}
+
+export function setHfToken(token: string): Promise<void> {
+  return invoke<void>("set_hf_token", { token });
+}
+
+export function clearHfToken(): Promise<void> {
+  return invoke<void>("clear_hf_token");
+}
+
+export function getRecordSpeakers(recordId: string): Promise<SpeakerSummary[]> {
+  return invoke<SpeakerSummary[]>("get_record_speakers", { recordId });
+}
+
+export function renameRecordSpeaker(recordId: string, fromLabel: string, toLabel: string, addHotword: boolean): Promise<number> {
+  return invoke<number>("rename_record_speaker", { recordId, fromLabel, toLabel, addHotword });
 }
