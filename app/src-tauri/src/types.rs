@@ -797,3 +797,10 @@ pub struct OutputStatus {
     pub auto_export_analysis: bool,
     pub recent_files: Vec<OutputFile>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppInfo {
+    pub version: String,
+    pub library_path: String,
+}

@@ -10,14 +10,14 @@ use crate::memory::{self, OpenAiCompatibleClient};
 use crate::state::AppState;
 use crate::transcript::effective_text;
 use crate::types::{
-    ActionDashboard, AnalysisTemplate, DockReply, DockStatus, ExternalAiSettings, GrowthGraph,
-    Hotword, InboxStatus, InboxWatchFolder, IngestResult, KnowledgeAnswer, KnowledgeIndexStatus,
-    KnowledgeOverview, KnowledgeSettings, LocalAiStatus, LocalModelInfo, LocalWhisperModel,
-    McpStatus, MemoryFeedback, MemoryGenerationJob, MemoryGenerationRequest, MemoryScope,
-    MemorySnapshot, MemoryViewKind, ModelDownloadProgress, OnboardingStatus, OutputStatus,
-    ProcessingJob, Project, RecordBrief, RelatedRecord, SearchResult, SuggestedWatchFolder,
-    TemplateDraft, TemplateSection, TimelineItem, TranscriptBlock, TranscriptSegment,
-    TranscriptSegmentInput,
+    ActionDashboard, AnalysisTemplate, AppInfo, DockReply, DockStatus, ExternalAiSettings,
+    GrowthGraph, Hotword, InboxStatus, InboxWatchFolder, IngestResult, KnowledgeAnswer,
+    KnowledgeIndexStatus, KnowledgeOverview, KnowledgeSettings, LocalAiStatus, LocalModelInfo,
+    LocalWhisperModel, McpStatus, MemoryFeedback, MemoryGenerationJob, MemoryGenerationRequest,
+    MemoryScope, MemorySnapshot, MemoryViewKind, ModelDownloadProgress, OnboardingStatus,
+    OutputStatus, ProcessingJob, Project, RecordBrief, RelatedRecord, SearchResult,
+    SuggestedWatchFolder, TemplateDraft, TemplateSection, TimelineItem, TranscriptBlock,
+    TranscriptSegment, TranscriptSegmentInput,
 };
 use crate::whisper::WhisperAdapter;
 use chrono::{Duration as ChronoDuration, Local, SecondsFormat, TimeZone, Utc};
@@ -2271,4 +2271,12 @@ pub fn save_dock_message_to_output(
     crate::dock::save_markdown_to_output(&state.library, &title, &content, "对话")
         .map(|path| path.to_string_lossy().to_string())
         .map_err(|error| error.to_frontend())
+}
+
+#[tauri::command]
+pub fn app_info(state: State<AppState>) -> AppInfo {
+    AppInfo {
+        version: env!("CARGO_PKG_VERSION").to_owned(),
+        library_path: state.library.root().to_string_lossy().to_string(),
+    }
 }

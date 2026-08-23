@@ -634,3 +634,8 @@ export interface OutputStatus {
   autoExportAnalysis: boolean;
   recentFiles: OutputFile[];
 }
+
+export interface AppInfo {
+  version: string;
+  libraryPath: string;
+}
