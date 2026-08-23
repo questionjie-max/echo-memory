@@ -13,8 +13,8 @@ use crate::types::{
     InboxCounts, InboxSeenFile, InboxWatchFolder, KnowledgeIndexStatus, KnowledgeSettings,
     McpAccessLog, McpStatus, MemoryFeedback, MemoryGenerationStatus, MemoryScope, MemorySnapshot,
     MemorySnapshotResult, MemoryViewKind, OpenQuestionItem, ProcessingJob, Project, RecordBrief,
-    SearchResult, StoredAnalysis, TemplateSection, TranscriptBlock, TranscriptSegment,
-    TranscriptSegmentInput, TranscriptVersion,
+    SearchResult, SpeakerSummary, StoredAnalysis, TemplateSection, TranscriptBlock,
+    TranscriptSegment, TranscriptSegmentInput, TranscriptVersion,
 };
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension, Row};
@@ -1403,7 +1403,7 @@ impl LibraryRepository {
                     transaction.execute("INSERT INTO citations (id, analysis_id, item_path, transcript_segment_id, quote_text, verified) VALUES (?1, ?2, ?3, ?4, ?5, 1)", params![Uuid::new_v4().to_string(), analysis.id, format!("{kind}[{index}]"), segment_id, item.quote_text])?;
                 }
                 if kind == "action_items" {
-                    transaction.execute("INSERT INTO action_items (id, record_id, project_id, title, source_segment_id, analysis_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![Uuid::new_v4().to_string(), record_id, project_id, item.text, item.citation_segment_ids.first(), analysis.id])?;
+                    transaction.execute("INSERT INTO action_items (id, record_id, project_id, title, owner_text, source_segment_id, analysis_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", params![Uuid::new_v4().to_string(), record_id, project_id, item.text, item.owner.clone().unwrap_or_default(), item.citation_segment_ids.first(), analysis.id])?;
                 }
             }
         }
@@ -2695,5 +2695,44 @@ impl LibraryRepository {
             created_at: row.get(3)?,
             updated_at: row.get(4)?,
         })
+    }
+    /* ------------------------------ v0.5.0：说话人 ------------------------------ */
+
+    pub fn list_record_speakers(&self, record_id: &str) -> AppResult<Vec<SpeakerSummary>> {
+        let connection = self.connect()?;
+        let mut statement = connection.prepare(
+            "SELECT segments.speaker_label, COUNT(*) FROM transcript_segments AS segments \
+             WHERE segments.transcript_version_id = ( \
+               SELECT versions.id FROM transcript_versions AS versions \
+               WHERE versions.record_id = ?1 ORDER BY versions.created_at DESC LIMIT 1 ) \
+             GROUP BY segments.speaker_label ORDER BY COUNT(*) DESC",
+        )?;
+        let rows = statement
+            .query_map(params![record_id], |row| {
+                Ok(SpeakerSummary {
+                    label: row.get(0)?,
+                    segment_count: row.get::<_, i64>(1)? as u32,
+                })
+            })?
+            .collect::<Result<Vec<_>, rusqlite::Error>>()?;
+        Ok(rows)
+    }
+
+    pub fn rename_record_speaker(
+        &self,
+        record_id: &str,
+        from_label: &str,
+        to_label: &str,
+    ) -> AppResult<u32> {
+        let to_label = to_label.trim();
+        if to_label.is_empty() || to_label.chars().count() > 24 {
+            return Err(crate::error::AppError::Invalid("说话人名称无效".to_owned()));
+        }
+        let changed = self.connect()?.execute(
+            "UPDATE transcript_segments SET speaker_label = ?3 \
+             WHERE record_id = ?1 AND speaker_label = ?2",
+            params![record_id, from_label, to_label],
+        )?;
+        Ok(changed.max(0) as u32)
     }
 }

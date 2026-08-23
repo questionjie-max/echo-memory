@@ -24,6 +24,7 @@ fn cited_draft(segment_id: &str, quote: &str) -> AnalysisDraft {
     AnalysisDraft {
         summary: "这是一段足够完整的测试摘要，用于验证知识记忆生命周期。".into(),
         key_points: vec![AnalysisItemDraft {
+            owner: None,
             text: "记录包含可复用结论".into(),
             citation_segment_ids: vec![segment_id.into()],
             quote_text: quote.into(),
@@ -32,6 +33,7 @@ fn cited_draft(segment_id: &str, quote: &str) -> AnalysisDraft {
         }],
         decisions: vec![],
         action_items: vec![AnalysisItemDraft {
+            owner: None,
             text: "跟进结论".into(),
             citation_segment_ids: vec![segment_id.into()],
             quote_text: quote.into(),
@@ -553,6 +555,7 @@ fn analysis_persists_citations_and_action_items() {
         summary: "摘要".into(),
         key_points: vec![],
         decisions: vec![AnalysisItemDraft {
+            owner: None,
             text: "采用桌面应用".into(),
             citation_segment_ids: vec![segments[0].id.clone()],
             quote_text: "决定使用桌面应用".into(),
@@ -560,6 +563,7 @@ fn analysis_persists_citations_and_action_items() {
             end_ms: Some(1),
         }],
         action_items: vec![AnalysisItemDraft {
+            owner: None,
             text: "完成发布".into(),
             citation_segment_ids: vec![segments[0].id.clone()],
             quote_text: "决定使用桌面应用".into(),
@@ -772,6 +776,7 @@ fn moving_record_updates_search_and_action_item_scope_atomically() {
                 key_points: vec![],
                 decisions: vec![],
                 action_items: vec![AnalysisItemDraft {
+                    owner: None,
                     text: "完成知识库迁移".into(),
                     citation_segment_ids: vec![segments[0].id.clone()],
                     quote_text: "决定迁移到目标知识库".into(),

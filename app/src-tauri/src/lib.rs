@@ -32,6 +32,12 @@ pub fn run() {
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
             commands::app_info,
+            commands::get_transcription_engine_status,
+            commands::set_transcription_engine,
+            commands::set_hf_token,
+            commands::clear_hf_token,
+            commands::get_record_speakers,
+            commands::rename_record_speaker,
             commands::get_local_ai_status,
             commands::get_audio_preprocessor_status,
             commands::update_knowledge_settings,

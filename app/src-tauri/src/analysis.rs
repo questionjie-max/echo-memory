@@ -11,6 +11,8 @@ pub struct AnalysisItemDraft {
     pub text: String,
     #[serde(default)]
     pub citation_segment_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
     #[serde(default)]
     pub quote_text: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -331,7 +333,8 @@ impl OllamaAdapter {
             "properties": {
                 "text": { "type": "string" },
                 "citation_segment_ids": { "type": "array", "items": { "type": "string" } },
-                "quote_text": { "type": "string" }
+                "quote_text": { "type": "string" },
+                "owner": { "type": "string" }
             },
             "required": ["text", "citation_segment_ids", "quote_text"]
         });

@@ -15,9 +15,9 @@ use crate::types::{
     KnowledgeIndexStatus, KnowledgeOverview, KnowledgeSettings, LocalAiStatus, LocalModelInfo,
     LocalWhisperModel, McpStatus, MemoryFeedback, MemoryGenerationJob, MemoryGenerationRequest,
     MemoryScope, MemorySnapshot, MemoryViewKind, ModelDownloadProgress, OnboardingStatus,
-    OutputStatus, ProcessingJob, Project, RecordBrief, RelatedRecord, SearchResult,
+    OutputStatus, ProcessingJob, Project, RecordBrief, RelatedRecord, SearchResult, SpeakerSummary,
     SuggestedWatchFolder, TemplateDraft, TemplateSection, TimelineItem, TranscriptBlock,
-    TranscriptSegment, TranscriptSegmentInput,
+    TranscriptSegment, TranscriptSegmentInput, TranscriptionEngineStatus,
 };
 use crate::whisper::WhisperAdapter;
 use chrono::{Duration as ChronoDuration, Local, SecondsFormat, TimeZone, Utc};
@@ -982,7 +982,13 @@ pub fn retranscribe_record(
     language: String,
     model_path: Option<String>,
     quality_preset: Option<String>,
+    engine: Option<String>,
 ) -> Result<(), String> {
+    if let Some(engine) = engine.as_deref() {
+        if !matches!(engine, "embedded" | "whisperx") {
+            return Err("转写引擎无效".to_owned());
+        }
+    }
     let language = language.trim().to_owned();
     if language.is_empty() || language.len() > 16 {
         return Err("转写语言无效".to_owned());
@@ -1026,8 +1032,15 @@ pub fn retranscribe_record(
         let _permit = heavy_jobs.acquire();
         match ManagedLibrary::open(library_root.clone()) {
             Ok(library) => {
-                if run_transcription(&library, &record_id, &job, &language, model_path.as_deref())
-                    .is_ok()
+                if run_transcription_with_engine(
+                    &library,
+                    &record_id,
+                    &job,
+                    &language,
+                    model_path.as_deref(),
+                    engine.as_deref(),
+                )
+                .is_ok()
                 {
                     schedule_memory_update(app_state);
                 }
@@ -1043,6 +1056,63 @@ pub fn retranscribe_record(
             }
         }
     });
+    Ok(())
+}
+
+/// whisperX 外置引擎路径：整段转写 + 说话人分离，跳过内嵌引擎的分块循环。
+fn run_whisperx_transcription(
+    library: &ManagedLibrary,
+    record_id: &str,
+    job: &ProcessingJob,
+    preprocessed: &std::path::Path,
+    language: &str,
+) -> AppResult<()> {
+    let repository = library.repository();
+    let binary = crate::whisper::whisperx_path().ok_or_else(|| {
+        crate::error::AppError::Invalid(
+            "已选择 whisperX 引擎，但未检测到 whisperx 命令。请先 pip install whisperx，或在设置中切回内嵌引擎。".to_owned(),
+        )
+    })?;
+    repository.update_job_progress(&job.id, "preprocessing", 0, 1)?;
+    let relative_audio = repository.audio_path_for_record(record_id)?;
+    let audio_path = library.root().join(relative_audio);
+    let output_dir = library.root().join("raw").join(record_id);
+    std::fs::create_dir_all(&output_dir)?;
+    let metadata = preprocess(&audio_path, preprocessed)?;
+    repository.update_job_status(&job.id, "transcribing", None)?;
+    repository.update_record_status(record_id, "transcribing")?;
+    let hf_token = crate::memory::get_hf_token().ok().flatten();
+    let segments =
+        crate::whisper::transcribe_whisperx(&binary, preprocessed, language, hf_token.as_deref())?;
+    let inputs = segments
+        .iter()
+        .map(|segment| TranscriptSegmentInput {
+            start_ms: (segment.start * 1000.0) as i64,
+            end_ms: (segment.end * 1000.0) as i64,
+            speaker_label: Some(segment.speaker.clone().unwrap_or_else(|| "未知".to_owned())),
+            original_text: segment.text.trim().to_owned(),
+        })
+        .collect::<Vec<_>>();
+    if inputs.is_empty() {
+        return Err(crate::error::AppError::Import(
+            "whisperX 没有生成可用片段".to_owned(),
+        ));
+    }
+    repository.update_job_progress(&job.id, "saving", 1, 1)?;
+    let metadata_json = serde_json::to_string(&metadata)
+        .map_err(|error| crate::error::AppError::Import(format!("预处理信息无效：{error}")))?;
+    repository.save_transcript_with_metadata(
+        record_id,
+        "whisperx",
+        "whisperx-large-v2",
+        language,
+        "whisperx-v1",
+        &metadata_json,
+        &inputs,
+    )?;
+    repository.update_job_status(&job.id, "completed", None)?;
+    repository.update_record_status(record_id, "completed")?;
+    spawn_incremental_index(library.root().to_path_buf(), record_id.to_owned());
     Ok(())
 }
 
@@ -1067,6 +1137,17 @@ fn run_transcription(
     language: &str,
     model_path: Option<&str>,
 ) -> AppResult<()> {
+    run_transcription_with_engine(library, record_id, job, language, model_path, None)
+}
+
+fn run_transcription_with_engine(
+    library: &ManagedLibrary,
+    record_id: &str,
+    job: &ProcessingJob,
+    language: &str,
+    model_path: Option<&str>,
+    engine_override: Option<&str>,
+) -> AppResult<()> {
     let repository = library.repository();
     let preprocessed = library
         .root()
@@ -1074,6 +1155,18 @@ fn run_transcription(
         .join(record_id)
         .join(format!("{}-enhanced.wav", job.id));
     let result = (|| {
+        let engine = engine_override
+            .map(str::to_owned)
+            .or_else(|| {
+                repository
+                    .setting_value("transcription_engine")
+                    .ok()
+                    .flatten()
+            })
+            .unwrap_or_else(|| "embedded".to_owned());
+        if engine == "whisperx" {
+            return run_whisperx_transcription(library, record_id, job, &preprocessed, language);
+        }
         let adapter = WhisperAdapter::detect_with_model_path(model_path)?;
         let relative_audio = repository.audio_path_for_record(record_id)?;
         let audio_path = library.root().join(relative_audio);
@@ -1376,7 +1469,19 @@ fn run_analysis(library: &ManagedLibrary, record_id: &str, job: &ProcessingJob) 
         let segments = repository.list_transcript_segments(record_id)?;
         let transcript = segments
             .iter()
-            .map(|segment| format!("[{}] {}", segment.sequence, effective_text(segment)))
+            .map(|segment| {
+                let speaker = segment.speaker_label.as_deref().unwrap_or("");
+                if !speaker.is_empty() && speaker != "未知" {
+                    format!(
+                        "[{}][{}] {}",
+                        segment.sequence,
+                        speaker,
+                        effective_text(segment)
+                    )
+                } else {
+                    format!("[{}] {}", segment.sequence, effective_text(segment))
+                }
+            })
             .collect::<Vec<_>>()
             .join("\n");
         let record = repository.get_record(record_id)?;
@@ -2279,4 +2384,78 @@ pub fn app_info(state: State<AppState>) -> AppInfo {
         version: env!("CARGO_PKG_VERSION").to_owned(),
         library_path: state.library.root().to_string_lossy().to_string(),
     }
+}
+
+/* ------------------------------ v0.5.0：说话人分离 ------------------------------ */
+
+#[tauri::command]
+pub fn get_transcription_engine_status(
+    state: State<AppState>,
+) -> Result<TranscriptionEngineStatus, String> {
+    let repository = state.library.repository();
+    let engine = repository
+        .setting_value("transcription_engine")
+        .map_err(|error| error.to_frontend())?
+        .unwrap_or_else(|| "embedded".to_owned());
+    let whisperx = crate::whisper::whisperx_path();
+    Ok(TranscriptionEngineStatus {
+        engine,
+        whisperx_available: whisperx.is_some(),
+        whisperx_path: whisperx.map(|path| path.to_string_lossy().to_string()),
+        hf_token_set: crate::memory::get_hf_token()
+            .map_err(|error| error.to_frontend())?
+            .is_some(),
+    })
+}
+
+#[tauri::command]
+pub fn set_transcription_engine(state: State<AppState>, engine: String) -> Result<(), String> {
+    if !matches!(engine.as_str(), "embedded" | "whisperx") {
+        return Err("转写引擎无效".to_owned());
+    }
+    state
+        .library
+        .repository()
+        .set_setting_value("transcription_engine", &engine)
+        .map_err(|error| error.to_frontend())
+}
+
+#[tauri::command]
+pub fn set_hf_token(token: String) -> Result<(), String> {
+    crate::memory::set_hf_token(&token).map_err(|error| error.to_frontend())
+}
+
+#[tauri::command]
+pub fn clear_hf_token() -> Result<(), String> {
+    crate::memory::clear_hf_token().map_err(|error| error.to_frontend())
+}
+
+#[tauri::command]
+pub fn get_record_speakers(
+    state: State<AppState>,
+    record_id: String,
+) -> Result<Vec<SpeakerSummary>, String> {
+    state
+        .library
+        .repository()
+        .list_record_speakers(&record_id)
+        .map_err(|error| error.to_frontend())
+}
+
+#[tauri::command]
+pub fn rename_record_speaker(
+    state: State<AppState>,
+    record_id: String,
+    from_label: String,
+    to_label: String,
+    add_hotword: bool,
+) -> Result<u32, String> {
+    let repository = state.library.repository();
+    let changed = repository
+        .rename_record_speaker(&record_id, &from_label, &to_label)
+        .map_err(|error| error.to_frontend())?;
+    if add_hotword {
+        let _ = repository.add_hotword(&to_label, "说话人名称");
+    }
+    Ok(changed)
 }

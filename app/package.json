@@ -1,7 +1,7 @@
 {
   "name": "echo-memory",
   "private": true,
-  "version": "0.4.4",
+  "version": "0.5.0",
   "type": "module",
   "description": "回声记忆 - 面向 AI Agent 的本地优先个人记忆操作系统（Tauri 2 + React + TS + Vite）",
   "license": "Apache-2.0",
@@ -13,7 +13,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "tauri": "tauri",
-    "test:growth": "node --experimental-strip-types --test tests/growth-timeline.test.ts"
+    "test:growth": "node --experimental-strip-types --test tests/growth-timeline.test.ts",
+    "test:ui": "vitest run"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.1.1",
@@ -23,10 +24,13 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.1.0",
+    "@testing-library/react": "^16.3.2",
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.2",
+    "jsdom": "^30.0.1",
     "typescript": "^5.6.2",
-    "vite": "^5.4.8"
+    "vite": "^5.4.8",
+    "vitest": "^4.1.11"
   }
 }

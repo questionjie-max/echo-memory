@@ -8,6 +8,7 @@ import type {
   AnalysisTemplate,
   AppInfo,
   AudioPreprocessorStatus,
+  TranscriptionEngineStatus,
   ExternalAiSettings,
   Hotword,
   InboxStatus,
@@ -22,6 +23,10 @@ import {
   addHotword,
   addInboxWatchFolder,
   getAppInfo,
+  getTranscriptionEngineStatus,
+  setTranscriptionEngine,
+  setHfToken,
+  clearHfToken,
   downloadWhisperModel,
   getAudioPreprocessorStatus,
   getInboxStatus,
@@ -75,6 +80,8 @@ export default function SettingsPanel({ open: visible, onClose }: Props) {
   const [inboxError, setInboxError] = useState<string | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
+  const [engineStatus, setEngineStatus] = useState<TranscriptionEngineStatus | null>(null);
+  const [hfTokenDraft, setHfTokenDraft] = useState("");
   const [output, setOutput] = useState<OutputStatus | null>(null);
 
   async function refreshInbox() {
@@ -121,6 +128,37 @@ export default function SettingsPanel({ open: visible, onClose }: Props) {
     try {
       await setTranscriptCorrectionEnabled(enabled);
       setCorrectionEnabled(enabled);
+    } catch (reason) {
+      setInboxError(String(reason));
+    }
+  }
+
+  async function switchEngine(engine: "embedded" | "whisperx") {
+    try {
+      await setTranscriptionEngine(engine);
+      setEngineStatus(await getTranscriptionEngineStatus());
+      setInboxError(null);
+    } catch (reason) {
+      setInboxError(String(reason));
+    }
+  }
+
+  async function saveHfToken() {
+    if (!hfTokenDraft.trim()) return;
+    try {
+      await setHfToken(hfTokenDraft.trim());
+      setHfTokenDraft("");
+      setEngineStatus(await getTranscriptionEngineStatus());
+      setNotice("HuggingFace Token 已保存到钥匙串");
+    } catch (reason) {
+      setInboxError(String(reason));
+    }
+  }
+
+  async function removeHfToken() {
+    try {
+      await clearHfToken();
+      setEngineStatus(await getTranscriptionEngineStatus());
     } catch (reason) {
       setInboxError(String(reason));
     }
@@ -192,6 +230,7 @@ export default function SettingsPanel({ open: visible, onClose }: Props) {
   useEffect(() => {
     if (!visible) return;
     if (!appInfo) void getAppInfo().then(setAppInfo).catch(() => setAppInfo(null));
+    void getTranscriptionEngineStatus().then(setEngineStatus).catch(() => setEngineStatus(null));
     // 打开设置或切换 tab 都要加载数据：核心四项随面板刷新，
     // 收件箱/词汇库/产出按 tab 按需加载（此前依赖只看 visible，切 tab 永远不加载）。
     void refresh();
@@ -428,6 +467,25 @@ export default function SettingsPanel({ open: visible, onClose }: Props) {
                   ))}</div>}
                   <div className="model-row"><span>large-v3-turbo-q5_0 · 547.4MB · SHA-256 394221709cd5…</span><button type="button" className="secondary-button" disabled={whisperDownload?.status === "downloading" || status.whisperModels.some((model) => model.id === "ggml-large-v3-turbo-q5_0")} onClick={() => void installWhisperModel()}>{status.whisperModels.some((model) => model.id === "ggml-large-v3-turbo-q5_0") ? "已安装" : "下载"}</button></div>
                   {whisperDownload && <DownloadProgress progress={whisperDownload} />}
+                  <div className="settings-subsection">
+                    <div className="settings-section-title"><h4>转写引擎</h4></div>
+                    <label className="settings-switch-row"><input type="radio" name="engine" checked={(engineStatus?.engine ?? "embedded") === "embedded"} onChange={() => void switchEngine("embedded")} /><span>内嵌引擎（默认，零依赖）</span></label>
+                    <label className="settings-switch-row"><input type="radio" name="engine" disabled={!engineStatus?.whisperxAvailable} checked={engineStatus?.engine === "whisperx"} onChange={() => void switchEngine("whisperx")} /><span>whisperX（说话人分离{engineStatus?.whisperxAvailable ? "" : " · 未检测到"}）</span></label>
+                    {engineStatus?.whisperxAvailable ? (
+                      <p className="settings-meta">已找到：{engineStatus.whisperxPath}。whisperX 转写会自动区分说话人，行动项可归属到人。</p>
+                    ) : (
+                      <p className="settings-meta">安装方法：pip install whisperx；说话人分离还需在 huggingface.co 接受 pyannote 模型协议并配置下方 Token（首次使用会下载模型，建议独显/大内存）。</p>
+                    )}
+                    <div className="model-row">
+                      <span>{engineStatus?.hfTokenSet ? "HuggingFace Token 已配置（钥匙串）" : "HuggingFace Token 未配置（说话人分离需要）"}</span>
+                      <span className={`settings-status ${engineStatus?.hfTokenSet ? "ready" : "missing"}`}>{engineStatus?.hfTokenSet ? "已配置" : "缺失"}</span>
+                    </div>
+                    <label><span>设置 HuggingFace Token</span><input type="password" value={hfTokenDraft} autoComplete="new-password" placeholder="hf_xxx（仅保存，不回显）" onChange={(event) => setHfTokenDraft(event.target.value)} /></label>
+                    <div className="settings-actions">
+                      <button type="button" className="secondary-button" disabled={!hfTokenDraft.trim()} onClick={() => void saveHfToken()}>保存 Token</button>
+                      <button type="button" className="secondary-button" disabled={!engineStatus?.hfTokenSet} onClick={() => void removeHfToken()}>清除 Token</button>
+                    </div>
+                  </div>
                 </section>
                 <section className="settings-section">
                   <div className="settings-section-title"><h3>音频预处理</h3><StatusLabel ok={Boolean(preprocessor?.enhancedAvailable)} /></div>
