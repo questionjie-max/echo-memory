@@ -6,6 +6,7 @@ import { open as openDirectory } from "@tauri-apps/plugin-dialog";
 import TemplateWizard from "./TemplateWizard";
 import type {
   AnalysisTemplate,
+  AppInfo,
   AudioPreprocessorStatus,
   ExternalAiSettings,
   Hotword,
@@ -20,6 +21,7 @@ import {
   deleteAnalysisTemplate,
   addHotword,
   addInboxWatchFolder,
+  getAppInfo,
   downloadWhisperModel,
   getAudioPreprocessorStatus,
   getInboxStatus,
@@ -51,7 +53,7 @@ interface Props {
   onClose: () => void;
 }
 
-type SettingsTab = "ai" | "external" | "templates" | "inbox" | "hotwords" | "output";
+type SettingsTab = "ai" | "external" | "templates" | "inbox" | "hotwords" | "output" | "about";
 
 const LANGUAGES = [
   ["zh", "中文"],
@@ -72,6 +74,7 @@ export default function SettingsPanel({ open: visible, onClose }: Props) {
   const [correctionEnabled, setCorrectionEnabled] = useState(false);
   const [inboxError, setInboxError] = useState<string | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
+  const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [output, setOutput] = useState<OutputStatus | null>(null);
 
   async function refreshInbox() {
@@ -188,6 +191,7 @@ export default function SettingsPanel({ open: visible, onClose }: Props) {
 
   useEffect(() => {
     if (!visible) return;
+    if (!appInfo) void getAppInfo().then(setAppInfo).catch(() => setAppInfo(null));
     // 打开设置或切换 tab 都要加载数据：核心四项随面板刷新，
     // 收件箱/词汇库/产出按 tab 按需加载（此前依赖只看 visible，切 tab 永远不加载）。
     void refresh();
@@ -395,7 +399,7 @@ export default function SettingsPanel({ open: visible, onClose }: Props) {
     <div className="settings-scrim" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section className="settings-panel material" role="dialog" aria-modal="true" aria-label="设置">
         <header className="settings-header">
-          <div><p className="pane-eyebrow">回声记忆</p><h2>设置</h2></div>
+          <div><p className="pane-eyebrow">回声记忆{appInfo ? ` · v${appInfo.version}` : ""}</p><h2>设置</h2></div>
           <button type="button" className="close-button" onClick={onClose} aria-label="关闭设置" title="关闭">×</button>
         </header>
         <div className="settings-tabs" role="tablist">
@@ -405,6 +409,7 @@ export default function SettingsPanel({ open: visible, onClose }: Props) {
           <button type="button" className={tab === "inbox" ? "selected" : ""} onClick={() => setTab("inbox")}>收件箱</button>
           <button type="button" className={tab === "hotwords" ? "selected" : ""} onClick={() => setTab("hotwords")}>词汇库</button>
           <button type="button" className={tab === "output" ? "selected" : ""} onClick={() => setTab("output")}>产出</button>
+          <button type="button" className={tab === "about" ? "selected" : ""} onClick={() => setTab("about")}>关于</button>
         </div>
         <div className="settings-content">
           {tab === "ai" ? (
@@ -520,11 +525,6 @@ export default function SettingsPanel({ open: visible, onClose }: Props) {
                 <label className="settings-switch-row"><span>转写完成后自动用本机模型校对（断句、标点、热词纠正）</span><input type="checkbox" checked={correctionEnabled} onChange={(event) => void toggleCorrection(event.target.checked)} /></label>
                 <p className="settings-meta">校对结果写入独立文本层，原始逐字稿永不覆盖，可随时对比。也可以在记录详情页手动触发。</p>
               </section>
-              <section className="settings-section">
-                <div className="settings-section-title"><h3>首次启动引导</h3></div>
-                <div className="settings-actions"><button type="button" className="secondary-button" onClick={() => void rerunOnboarding()}>重新运行引导向导</button></div>
-                <p className="settings-meta">重新走一遍模型与收件箱配置流程。关闭设置后会自动弹出。</p>
-              </section>
             </div>
           ) : tab === "output" ? (
             output ? (
@@ -555,6 +555,28 @@ export default function SettingsPanel({ open: visible, onClose }: Props) {
                 </section>
               </div>
             ) : <p className="settings-empty">正在读取产出设置…</p>
+          ) : tab === "about" ? (
+            <div className="settings-form">
+              <section className="settings-section">
+                <div className="settings-section-title"><h3>版本信息</h3></div>
+                <div className="model-row"><span>回声记忆（Echo Memory）</span><span className="settings-status ready">{appInfo ? `v${appInfo.version}` : "…"}</span></div>
+                <p className="settings-meta">Alpha 阶段 · 本地优先的个人智能记忆系统。音频、逐字稿与分析全部保存在本机。</p>
+              </section>
+              <section className="settings-section">
+                <div className="settings-section-title"><h3>数据目录</h3></div>
+                <label><span>资料库位置</span><div className="path-control"><input readOnly value={appInfo?.libraryPath ?? "…"} /><button type="button" onClick={() => { if (appInfo) void navigator.clipboard?.writeText(appInfo.libraryPath).then(() => setNotice("数据目录已复制")); }}>复制</button></div></label>
+                <p className="settings-meta">备份或迁移时复制整个目录即可；删除该目录等于清空全部本地数据。</p>
+              </section>
+              <section className="settings-section">
+                <div className="settings-section-title"><h3>开源与许可</h3></div>
+                <p className="settings-meta">Apache-2.0 开源 · 内置 Whisper（MIT）与 ffmpeg（LGPL，随包附带许可文件）。问题反馈与源码：github.com/questionjie-max/echo-memory</p>
+              </section>
+              <section className="settings-section">
+                <div className="settings-section-title"><h3>首次启动引导</h3></div>
+                <div className="settings-actions"><button type="button" className="secondary-button" onClick={() => void rerunOnboarding()}>重新运行引导向导</button></div>
+                <p className="settings-meta">重新走一遍模型与收件箱配置流程。关闭设置后会自动弹出。</p>
+              </section>
+            </div>
           ) : (
             editing ? <TemplateEditor template={editing} busy={busy} onCancel={() => setEditing(null)} onSaved={async () => { setEditing(null); await refresh(); }} onError={setError} /> : (
               <div className="template-list">

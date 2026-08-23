@@ -31,6 +31,7 @@ pub fn run() {
         })
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
+            commands::app_info,
             commands::get_local_ai_status,
             commands::get_audio_preprocessor_status,
             commands::update_knowledge_settings,

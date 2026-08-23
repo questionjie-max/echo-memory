@@ -37,6 +37,7 @@ import type {
   DockMode,
   TemplateDraft,
   OutputStatus,
+  AppInfo,
 } from "../shared/types";
 
 export function createProject(name: string): Promise<Project> {
@@ -399,4 +400,8 @@ export function exportRecordToOutput(recordId: string, kind: "analysis" | "trans
 
 export function saveDockMessageToOutput(title: string, content: string): Promise<string> {
   return invoke<string>("save_dock_message_to_output", { title, content });
+}
+
+export function getAppInfo(): Promise<AppInfo> {
+  return invoke<AppInfo>("app_info");
 }
