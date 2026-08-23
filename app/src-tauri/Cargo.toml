@@ -1,6 +1,6 @@
 [package]
 name = "echo-memory"
-version = "0.4.2"
+version = "0.4.3"
 description = "回声记忆 - 面向 AI Agent 的本地优先个人记忆操作系统"
 authors = ["Echo Memory contributors"]
 license = "Apache-2.0"

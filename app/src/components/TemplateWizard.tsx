@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { TemplateDraft } from "../shared/types";
 import { createAnalysisTemplate, generateTemplateDraft } from "../lib/tauri";
 
@@ -12,68 +12,69 @@ interface WizardTurn {
   content: string;
 }
 
+function draftSummary(draft: TemplateDraft): string {
+  return `已生成草案「${draft.name}」，栏目：${draft.sections
+    .map((section) => section.title)
+    .join("、")}。不满意就直接说要调整哪里（增删栏目、改侧重、换名字都可以），满意就点下方按钮入库。`;
+}
+
 /**
- * AI 模板向导：对话描述需求 → 本地模型生成分析模板草稿 → 预览确认入库。
- * 对话只在向导内保留，不进入 AI 伙伴的会话历史。
+ * AI 模板向导（对话式）：用户描述使用场景 → 本地模型生成模板 →
+ * 用户「满意」入库 /「不满意」继续用自然语言调整 → 循环直至满意。
  */
 export default function TemplateWizard({ onClose, onCreated }: Props) {
   const [turns, setTurns] = useState<WizardTurn[]>([]);
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState<TemplateDraft | null>(null);
+  const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [preview, setPreview] = useState<TemplateDraft | null>(null);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  async function send() {
-    const content = draft.trim();
-    if (!content || busy) return;
-    setBusy(true);
-    setError(null);
-    setTurns((current) => [...current, { role: "user", content }]);
-    setDraft("");
-    // 向导不接外部引擎：先回填一条引导性回复，用户可继续补充后点击生成。
-    setTurns((current) => [
-      ...current,
-      {
-        role: "assistant",
-        content:
-          "收到。如果还有补充（重点栏目、输出格式、行业场景）请继续说；没有的话，点击「生成模板草稿」。",
-      },
-    ]);
-    setBusy(false);
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [turns, draft, busy]);
+
+  async function generate(allTurns: WizardTurn[]) {
+    const result = await generateTemplateDraft(
+      allTurns.map((turn) => ({ role: turn.role, content: turn.content })),
+    );
+    setDraft(result);
+    setTurns((current) => [...current, { role: "assistant", content: draftSummary(result) }]);
   }
 
-  async function generate() {
-    if (turns.filter((turn) => turn.role === "user").length === 0) {
-      setError("请先描述你的模板需求");
-      return;
-    }
+  async function send() {
+    const content = input.trim();
+    if (!content || busy) return;
+    const nextTurns: WizardTurn[] = [...turns, { role: "user", content }];
+    setTurns(nextTurns);
+    setInput("");
     setBusy(true);
     setError(null);
     try {
-      const result = await generateTemplateDraft(
-        turns.map((turn) => ({ role: turn.role, content: turn.content })),
-      );
-      setPreview(result);
+      await generate(nextTurns);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
+      setError(
+        `${reason instanceof Error ? reason.message : String(reason)}（可换个说法再试一次）`,
+      );
     } finally {
       setBusy(false);
     }
   }
 
   async function confirmCreate() {
-    if (!preview) return;
+    if (!draft) return;
     setSaving(true);
     setError(null);
     try {
       await createAnalysisTemplate({
-        name: preview.name,
-        description: preview.description,
-        focusInstructions: `按「${preview.name}」模板进行结构化分析，覆盖以下栏目：${preview.sections
+        name: draft.name,
+        description: draft.description,
+        focusInstructions: `按「${draft.name}」模板进行结构化分析，覆盖以下栏目：${draft.sections
           .map((section) => section.title)
           .join("、")}。`,
-        customSections: preview.sections.map((section) => ({
+        customSections: draft.sections.map((section) => ({
           key: section.key,
           title: section.title,
           format: section.format === "list" ? "list" : "paragraph",
@@ -88,26 +89,29 @@ export default function TemplateWizard({ onClose, onCreated }: Props) {
     }
   }
 
-  function patchPreview(patch: Partial<TemplateDraft>) {
-    setPreview((current) => (current ? { ...current, ...patch } : current));
-  }
+  const hasDescribed = turns.some((turn) => turn.role === "user");
 
   return (
-    <div className="dialog-scrim" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section className="template-wizard material" role="dialog" aria-modal="true" aria-label="AI 生成分析模板">
+    <div
+      className="dialog-scrim"
+      role="presentation"
+      onMouseDown={(event) => event.target === event.currentTarget && onClose()}
+    >
+      <section className="template-wizard" role="dialog" aria-modal="true" aria-label="AI 生成分析模板">
         <header className="template-wizard-header">
           <div>
-            <p className="pane-eyebrow">本地模型生成</p>
+            <p className="pane-eyebrow">本地模型 · 对话生成</p>
             <h3>AI 模板向导</h3>
           </div>
           <button type="button" className="close-button" onClick={onClose} aria-label="关闭">×</button>
         </header>
 
         <div className="template-wizard-body">
-          <div className="template-wizard-chat" aria-live="polite">
+          <div className="template-wizard-chat" ref={scrollRef} aria-live="polite">
             {turns.length === 0 && (
               <p className="dock-empty">
-                描述你需要的分析模板，比如：「客户访谈模板，重点挖痛点和竞品对比，要一个报价讨论栏目」。
+                描述你的使用场景，比如：「我做客户访谈，想要一个重点挖痛点和竞品对比的模板，再加一个报价讨论栏目」。
+                生成后不满意可以继续说怎么改，满意再入库。
               </p>
             )}
             {turns.map((turn, index) => (
@@ -115,76 +119,79 @@ export default function TemplateWizard({ onClose, onCreated }: Props) {
                 <p>{turn.content}</p>
               </article>
             ))}
+
+            {draft && (
+              <div className="wizard-preview-card">
+                <header>
+                  <h4>模板草案（可改名）</h4>
+                  <span className="wizard-feedback-hint">{draft.sections.length} 个栏目</span>
+                </header>
+                <input
+                  className="editable-name"
+                  value={draft.name}
+                  aria-label="模板名称"
+                  onChange={(event) => setDraft({ ...draft, name: event.target.value })}
+                />
+                <div className="wizard-section-chips">
+                  {draft.sections.map((section) => (
+                    <span key={section.key} title={section.instruction}>
+                      {section.title}
+                      <small> · {section.format === "list" ? "列表" : "段落"}</small>
+                    </span>
+                  ))}
+                </div>
+                <div className="wizard-preview-actions">
+                  <button
+                    type="button"
+                    className="primary-button"
+                    disabled={saving || !draft.name.trim()}
+                    onClick={() => void confirmCreate()}
+                  >
+                    {saving ? "添加中…" : "满意，添加到模板库"}
+                  </button>
+                  <button
+                    type="button"
+                    className="toolbar-button"
+                    onClick={() => inputRef.current?.focus()}
+                  >
+                    不满意，继续调整
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {busy && (
+              <p className="dock-status" role="status">
+                本地模型正在{hasDescribed && draft ? "按你的反馈调整" : "生成"}模板…
+              </p>
+            )}
           </div>
 
-          {!preview && (
-            <div className="dock-composer">
-              <textarea
-                value={draft}
-                rows={2}
-                placeholder="描述你的模板需求…（⌘↵ 发送）"
-                onChange={(event) => setDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) {
-                    event.preventDefault();
-                    void send();
-                  }
-                }}
-              />
-              <button type="button" className="primary-button" disabled={busy || !draft.trim()} onClick={() => void send()}>
-                补充
-              </button>
-              <button type="button" className="primary-button" disabled={busy || turns.length === 0} onClick={() => void generate()}>
-                {busy ? "生成中…" : "生成模板草稿"}
-              </button>
-            </div>
-          )}
-
-          {preview && (
-            <div className="template-wizard-preview">
-              <h4>模板预览（可编辑）</h4>
-              <label>
-                <span>模板名称</span>
-                <input value={preview.name} onChange={(event) => patchPreview({ name: event.target.value })} />
-              </label>
-              <label>
-                <span>描述</span>
-                <input
-                  value={preview.description}
-                  onChange={(event) => patchPreview({ description: event.target.value })}
-                />
-              </label>
-              <div className="template-wizard-sections">
-                {preview.sections.map((section, index) => (
-                  <div className="template-wizard-section" key={section.key}>
-                    <strong>{section.title}</strong>
-                    <input
-                      value={section.title}
-                      onChange={(event) => {
-                        const sections = [...preview.sections];
-                        sections[index] = { ...section, title: event.target.value };
-                        patchPreview({ sections });
-                      }}
-                    />
-                    <small>{section.format === "list" ? "列表" : "段落"} · {section.instruction}</small>
-                  </div>
-                ))}
-              </div>
-              <div className="template-wizard-actions">
-                <button type="button" className="toolbar-button" onClick={() => setPreview(null)}>
-                  重新对话
-                </button>
-                <button
-                  type="button"
-                  className="primary-button"
-                  disabled={saving || !preview.name.trim() || preview.sections.length < 2}
-                  onClick={() => void confirmCreate()}
-                >
-                  {saving ? "添加中…" : "添加到模板库"}
-                </button>
-              </div>
-            </div>
-          )}
+          <div className="dock-composer">
+            <textarea
+              ref={inputRef}
+              value={input}
+              rows={2}
+              placeholder={
+                draft ? "说说要调整的地方，比如「加一个风险提示栏目」「去掉竞品对比」…" : "描述你的使用场景…（⌘↵ 发送）"
+              }
+              onChange={(event) => setInput(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) {
+                  event.preventDefault();
+                  void send();
+                }
+              }}
+            />
+            <button
+              type="button"
+              className="primary-button"
+              disabled={busy || !input.trim()}
+              onClick={() => void send()}
+            >
+              发送
+            </button>
+          </div>
 
           {error && <p className="inline-error" role="alert">{error}</p>}
         </div>
