@@ -165,11 +165,18 @@ export interface KnowledgeSettings {
 export interface LocalModelInfo { name: string; size: number; }
 export interface LocalWhisperModel { id: string; path: string; size: number; }
 
+/** 应用内可下载的推荐模型。尺寸由后端给，前端不再自己硬编码一份。 */
+export interface RecommendedModel { id: string; label: string; fileName: string; bytes: number; }
+/** 中断后留在磁盘上的半成品，用来显示「继续下载」。 */
+export interface PendingModelDownload { model: string; bytes: number; }
+
 export interface LocalAiStatus {
   whisperAvailable: boolean;
   whisperModelPath: string | null;
   whisperModelSource: string | null;
   whisperModels: LocalWhisperModel[];
+  recommendedWhisperModel: RecommendedModel;
+  pendingWhisperDownload: PendingModelDownload | null;
   ollamaAvailable: boolean;
   ollamaModels: LocalModelInfo[];
   settings: KnowledgeSettings;

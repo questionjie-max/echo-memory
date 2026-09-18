@@ -1,5 +1,5 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState } from "react";
 import type { RecordNavigation } from "../App";
 import type {
@@ -40,6 +40,7 @@ import {
 } from "../lib/tauri";
 import { listen } from "@tauri-apps/api/event";
 import { formatMinutesSeconds as formatTime, isProcessingStatus as isProcessing } from "../lib/format";
+import { Field, List, ListRow, Segmented } from "./SettingsKit";
 
 interface Props {
   record: RecordBrief;
@@ -373,11 +374,6 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
     }
   }
 
-  async function chooseRetranscribeModel() {
-    const selected = await openDialog({ multiple: false, directory: false, filters: [{ name: "Whisper 模型", extensions: ["bin"] }] });
-    if (typeof selected === "string") setRetranscribeModelPath(selected);
-  }
-
   async function exportOne(format: "md" | "txt") {
     if (detailMenu.current) detailMenu.current.open = false;
     const destination = await saveDialog({
@@ -687,32 +683,56 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
 
       {!isDocument && retranscribeOpen && (
         <div className="dialog-scrim" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setRetranscribeOpen(false)}>
-          <section className="retranscribe-dialog material" role="dialog" aria-modal="true" aria-label="增强重新转写">
+          <section className="retranscribe-dialog" role="dialog" aria-modal="true" aria-label="增强重新转写">
             <header>
               <div><p className="pane-eyebrow">生成新版本</p><h3>增强重新转写</h3></div>
               <button type="button" className="close-button" aria-label="关闭" title="关闭" onClick={() => setRetranscribeOpen(false)}>×</button>
             </header>
-            <p>使用音频预处理、智能分块和简体规范化。旧逐字稿会保留，新版本完成后旧分析将标记为需要更新。</p>
-            <label>
-              <span>转写语言</span>
-              <select value={retranscribeLanguage} onChange={(event) => setRetranscribeLanguage(event.target.value)}>
+            <p className="em-hint">使用音频预处理、智能分块和简体规范化。旧逐字稿会保留，新版本完成后旧分析将标记为需要更新。</p>
+            <Field label="转写语言">
+              <select className="em-select" value={retranscribeLanguage} onChange={(event) => setRetranscribeLanguage(event.target.value)}>
                 {TRANSCRIPTION_LANGUAGES.map(([value, label]) => <option value={value} key={value}>{label}</option>)}
               </select>
-            </label>
-            <label>
-              <span>Whisper 模型</span>
-              <div className="path-control"><input readOnly value={retranscribeModelPath} placeholder="使用应用默认模型" /><button type="button" onClick={() => void chooseRetranscribeModel()}>选择</button></div>
-            </label>
-            {aiStatus?.whisperModelSource && <small>{aiStatus.whisperModelSource}</small>}
-            <label>
-              <span>转写引擎</span>
-              <select value={retranscribeEngine} onChange={(event) => setRetranscribeEngine(event.target.value as "embedded" | "whisperx")}>
-                <option value="embedded">内嵌引擎（默认，零依赖）</option>
-                {engineStatus?.whisperxAvailable && <option value="whisperx">whisperX（说话人分离）</option>}
-              </select>
-            </label>
-            {retranscribeEngine === "whisperx" && (
-              <small>whisperX 会标注每位说话人（说话人 1、说话人 2…），完成后可在详情页重命名为真实姓名。</small>
+            </Field>
+            <Field label="转写引擎" hint={retranscribeEngine === "whisperx" ? "whisperX 会标注每位说话人（说话人 1、说话人 2…），完成后可在详情页重命名为真实姓名。" : undefined}>
+              <Segmented
+                label="转写引擎"
+                value={retranscribeEngine}
+                onChange={setRetranscribeEngine}
+                options={[
+                  { value: "embedded", label: "内嵌引擎", hint: "默认，零依赖" },
+                  {
+                    value: "whisperx",
+                    label: engineStatus?.whisperxAvailable ? "whisperX" : "whisperX（未安装）",
+                    disabled: !engineStatus?.whisperxAvailable,
+                    hint: engineStatus?.whisperxAvailable ? "说话人分离" : "需要先 pip install whisperx",
+                  },
+                ]}
+              />
+            </Field>
+            {aiStatus && (
+              <Field label="Whisper 模型" hint={aiStatus.whisperModelSource ? `当前使用：${aiStatus.whisperModelSource}` : undefined}>
+                <List>
+                  <ListRow
+                    state="done"
+                    selected={!retranscribeModelPath}
+                    title="使用应用默认模型"
+                    meta={aiStatus.whisperModelPath ?? "尚未配置默认模型"}
+                    onSelect={() => setRetranscribeModelPath("")}
+                  />
+                  {aiStatus.whisperModels.map((model) => (
+                    <ListRow
+                      key={model.path}
+                      state="done"
+                      selected={retranscribeModelPath === model.path}
+                      title={model.id}
+                      meta={model.path}
+                      trail={`${Math.round(model.size / 1024 / 1024)}MB`}
+                      onSelect={() => setRetranscribeModelPath(model.path)}
+                    />
+                  ))}
+                </List>
+              </Field>
             )}
             <div className="dialog-actions">
               <button type="button" className="secondary-button" disabled={busy} onClick={() => setRetranscribeOpen(false)}>取消</button>

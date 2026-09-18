@@ -43,6 +43,7 @@ pub fn run() {
             commands::update_knowledge_settings,
             commands::pull_ollama_model,
             commands::download_whisper_model,
+            commands::cancel_model_download,
             commands::create_project,
             commands::list_projects,
             commands::update_project,

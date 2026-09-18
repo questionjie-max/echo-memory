@@ -4,6 +4,67 @@
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", system-ui, sans-serif;
   font-synthesis: none;
   letter-spacing: 0;
+
+  /* ---------------- 设计 token ----------------
+     新代码只引用 token，不再写死颜色和数值；取值与既有视觉一致，
+     所以其余界面看不出变化。设置面板是第一个全面用上 token 的表面。 */
+  --em-panel: #ffffff;
+  --em-rail: #f6f6f8;
+  --em-surface: #ffffff;
+  --em-surface-2: #f8f8fa;
+  --em-surface-3: #f1f1f3;
+  --em-canvas: #f5f5f7;
+
+  /* 发丝线：设置面板内一律 0.5px，靠三档深浅区分层级 */
+  --em-hairline: rgba(60, 60, 67, 0.12);
+  --em-hairline-soft: rgba(60, 60, 67, 0.08);
+  --em-hairline-strong: rgba(60, 60, 67, 0.2);
+
+  --em-ink: #1d1d1f;
+  --em-ink-2: #3a3a3c;
+  --em-ink-3: #6e6e73;
+  --em-ink-4: #86868b;
+
+  --em-accent: #007aff;
+  --em-accent-ink: #0066cc;
+  --em-accent-soft: rgba(0, 122, 255, 0.1);
+  --em-accent-ring: rgba(0, 122, 255, 0.25);
+
+  --em-ok: #34c759;
+  --em-ok-ink: #176943;
+  --em-ok-soft: rgba(52, 199, 89, 0.12);
+
+  --em-warn: #ff9f0a;
+  --em-warn-ink: #8a5300;
+  --em-warn-soft: rgba(255, 159, 10, 0.13);
+
+  --em-err: #ff3b30;
+  --em-err-ink: #c72b22;
+  --em-err-soft: rgba(255, 59, 48, 0.1);
+
+  --em-r-xs: 6px;
+  --em-r-sm: 8px;
+  --em-r-md: 10px;
+  --em-r-lg: 14px;
+  --em-r-pill: 999px;
+
+  --em-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --em-shadow-md: 0 10px 28px rgba(0, 0, 0, 0.12);
+  --em-shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.24);
+
+  /* 动效只用于 opacity / transform，避免 WKWebView 重新栅格化 */
+  --em-motion: cubic-bezier(0.22, 0.8, 0.22, 1);
+  --em-motion-quick: cubic-bezier(0.2, 0, 0, 1);
+
+  --em-text-xs: 11px;
+  --em-text-sm: 12px;
+  --em-text-md: 13px;
+  --em-text-lg: 15px;
+  --em-text-title: 20px;
+
+  /* 下拉箭头的自绘图形。WKWebView 里 <select> 默认渲染成老式步进控件（右侧上下双箭头，
+     灰色胶囊底），和界面其它部分完全不是一个时代的东西，所以统一去掉原生外观。 */
+  --em-chevron: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%236e6e73' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 
 * { box-sizing: border-box; }
@@ -33,9 +94,13 @@ input::placeholder, textarea::placeholder { color: #86868b; }
   backdrop-filter: blur(22px) saturate(170%);
   border-bottom: 1px solid rgba(60, 60, 67, 0.14);
 }
-.brand-block { min-width: 180px; }
+/* 工具栏的版式契约是「四个固定角色」：品牌可压缩、导航不收缩、搜索吃剩余宽度、设置不收缩。
+   关键约束：搜索框必须常驻 —— 它是唯一带 flex-grow 的元素，一旦按视图增减，
+   space-between 会把剩余宽度重新分配，导航就会横着挪（此前「导航来回跳」的成因）。
+   另外副标题已收紧为一行隐私口径（见 lib/posture.ts），品牌区因此可以窄一些。 */
+.brand-block { flex: 0 1 200px; min-width: 120px; }
 .brand-block h1 { margin: 0; font-size: 18px; line-height: 1.2; font-weight: 720; letter-spacing: 0; }
-.brand-block p { margin: 4px 0 0; color: #6e6e73; font-size: 11px; white-space: nowrap; }
+.brand-block p { margin: 4px 0 0; color: #6e6e73; font-size: 11px; line-height: 1.35; }
 .workspace-grid {
   min-height: 0;
   display: grid;
@@ -151,7 +216,7 @@ input::placeholder, textarea::placeholder { color: #86868b; }
 .mcp-path button { margin-top: 5px; padding: 3px 6px; border: 1px solid rgba(60, 60, 67, 0.14); border-radius: 5px; background: #f5f5f7; color: #0066cc; cursor: pointer; font-size: 10px; }
 .mcp-path span { margin-left: 6px; color: #176943; }
 
-.search-panel { position: relative; width: min(520px, 52vw); }
+.search-panel { position: relative; flex: 1 1 220px; min-width: 0; max-width: min(520px, 52vw); }
 .search-form { display: flex; gap: 7px; }
 .search-input-wrap { position: relative; flex: 1; min-width: 0; }
 .search-input-wrap input { height: 36px; padding: 8px 34px 8px 11px; background: rgba(118, 118, 128, 0.1); border-color: transparent; }
@@ -378,12 +443,10 @@ input::placeholder, textarea::placeholder { color: #86868b; }
   backdrop-filter: blur(28px) saturate(170%);
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.25);
 }
-.retranscribe-dialog header, .settings-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.retranscribe-dialog h3, .settings-header h2 { margin: 0; font-size: 18px; letter-spacing: 0; }
+.retranscribe-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.retranscribe-dialog h3 { margin: 0; font-size: 18px; letter-spacing: 0; }
 .retranscribe-dialog > p { margin: 14px 0; color: #6e6e73; font-size: 12px; line-height: 1.5; }
-.retranscribe-dialog > label, .settings-section > label, .template-editor > label { display: grid; gap: 5px; margin-top: 11px; }
-.retranscribe-dialog label > span, .settings-section label > span, .template-editor label > span { color: #6e6e73; font-size: 10px; font-weight: 650; }
-.retranscribe-dialog select, .settings-section input, .settings-section select, .template-editor input, .template-editor textarea, .template-editor select {
+.retranscribe-dialog select {
   min-width: 0;
   width: 100%;
   padding: 7px 8px;
@@ -392,11 +455,10 @@ input::placeholder, textarea::placeholder { color: #86868b; }
   background: #fff;
   font-size: 12px;
 }
-.retranscribe-dialog small { display: block; margin-top: 7px; color: #86868b; font-size: 10px; overflow-wrap: anywhere; }
 .close-button { display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; background: rgba(118, 118, 128, 0.12); color: #3a3a3c; cursor: pointer; font-size: 18px; line-height: 1; }
 .path-control { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }
 .path-control input { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.path-control button, .template-actions button, .editor-heading button, .custom-section-heading button, .custom-section-row button {
+.path-control button {
   padding: 6px 8px;
   border: 1px solid rgba(60, 60, 67, 0.14);
   border-radius: 6px;
@@ -405,58 +467,15 @@ input::placeholder, textarea::placeholder { color: #86868b; }
   cursor: pointer;
   font-size: 11px;
 }
-.dialog-actions, .editor-actions { display: flex; justify-content: flex-end; gap: 7px; margin-top: 16px; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 7px; margin-top: 16px; }
 
-.settings-panel {
-  width: min(720px, calc(100vw - 48px));
-  height: min(680px, calc(100vh - 48px));
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
-  overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.55);
-  border-radius: 8px;
-  background: rgba(250, 250, 252, 0.96);
-  backdrop-filter: blur(30px) saturate(170%);
-  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.28);
-}
-.settings-header { padding: 15px 17px 10px; }
-.settings-tabs, .knowledge-home-tabs { display: flex; gap: 18px; padding: 0 17px; border-bottom: 1px solid rgba(60, 60, 67, 0.12); }
-.settings-tabs button, .knowledge-home-tabs button { position: relative; padding: 8px 1px 9px; border: 0; background: transparent; color: #6e6e73; cursor: pointer; font-size: 12px; font-weight: 650; }
-.settings-tabs button.selected, .knowledge-home-tabs button.selected { color: #1d1d1f; }
-.settings-tabs button.selected::after, .knowledge-home-tabs button.selected::after { content: ""; position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; background: #007aff; }
-.settings-content { min-height: 0; overflow: auto; padding: 16px 17px; }
-.settings-form { display: grid; gap: 13px; }
-.settings-section { padding: 13px; border: 1px solid rgba(60, 60, 67, 0.12); border-radius: 8px; background: #fff; }
-.settings-section-title, .model-row, .template-list-heading, .editor-heading, .custom-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.settings-section h3, .editor-heading h3 { margin: 0; font-size: 14px; }
-.settings-status { padding: 3px 6px; border-radius: 6px; font-size: 10px; font-weight: 650; }
-.settings-status.ready { background: rgba(52, 199, 89, 0.12); color: #176943; }
-.settings-status.missing { background: rgba(255, 159, 10, 0.13); color: #8a5300; }
-.settings-meta, .settings-empty { color: #6e6e73; font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
-.settings-save { justify-self: end; }
-.model-row { margin-top: 10px; color: #3a3a3c; font-size: 11px; }
-.installed-models { display: grid; gap: 6px; margin-top: 10px; }
-.installed-models .model-row { margin-top: 0; }
-.download-progress { display: grid; gap: 5px; margin-top: 9px; }
-.download-progress > div:first-child { display: flex; justify-content: space-between; color: #6e6e73; font-size: 10px; }
 .progress-track { height: 5px; overflow: hidden; border-radius: 3px; background: rgba(118, 118, 128, 0.14); }
 .progress-track span { display: block; height: 100%; border-radius: inherit; background: #007aff; transition: width 200ms ease; }
-.template-list { display: grid; gap: 7px; }
-.template-list-heading { margin-bottom: 3px; color: #6e6e73; font-size: 11px; }
-.template-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 11px; border: 1px solid rgba(60, 60, 67, 0.11); border-radius: 7px; background: #fff; }
-.template-row > div:first-child { display: grid; gap: 3px; min-width: 0; }
-.template-row strong { font-size: 12px; }
-.template-row span { color: #6e6e73; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.template-actions { display: flex; gap: 5px; flex: 0 0 auto; }
-.template-editor { display: grid; gap: 5px; }
-.template-editor textarea { min-height: 90px; resize: vertical; line-height: 1.45; }
-.custom-section-heading { margin-top: 13px; font-size: 12px; }
-.custom-section-row { display: grid; grid-template-columns: minmax(100px, 0.7fr) 88px minmax(140px, 1.3fr) 30px; gap: 6px; margin-top: 6px; }
-.custom-section-row button { padding: 0; color: #c72b22; }
 
-.knowledge-home { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto auto auto minmax(0, 1fr); overflow: hidden; background: #fff; }
-.knowledge-home-header { position: relative; z-index: 10; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px 10px; background: rgba(255, 255, 255, 0.84); backdrop-filter: blur(18px); }
-.knowledge-home-header h2 { margin: 0; font-size: 18px; letter-spacing: 0; }
+.knowledge-home { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; background: #fff; }
+.knowledge-home-header { position: relative; z-index: 10; background: rgba(255, 255, 255, 0.84); backdrop-filter: blur(18px); }
+.knowledge-home-actions { display: flex; align-items: center; gap: 8px; }
+
 .knowledge-home-content { min-height: 0; overflow: auto; padding: 14px 16px; }
 .knowledge-notice { margin: 8px 16px 0; }
 .knowledge-metrics { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid rgba(60, 60, 67, 0.11); border-radius: 8px; background: #f8f8fa; }
@@ -487,7 +506,6 @@ input::placeholder, textarea::placeholder { color: #86868b; }
 @media (max-width: 980px) {
   .workspace-grid { grid-template-columns: minmax(170px, 0.55fr) minmax(270px, 0.9fr) minmax(330px, 1.35fr); }
   .brand-block p { display: none; }
-  .search-panel { width: min(480px, 58vw); }
   .import-strip span { display: none; }
   .knowledge-select { min-width: 105px; }
   .detail-header { align-items: flex-start; }
@@ -495,16 +513,17 @@ input::placeholder, textarea::placeholder { color: #86868b; }
   .analysis-action { align-items: flex-start; }
   .analysis-controls { flex-direction: column; align-items: stretch; }
   .template-select select { max-width: 140px; }
-  .custom-section-row { grid-template-columns: minmax(100px, 1fr) 76px; }
-  .custom-section-row input:nth-of-type(2) { grid-column: 1 / -1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; }
 }
 
+/* 毛玻璃面板在「减少透明度」下换成实底白，否则半透明背景会让文字看不清。
+   设置面板已经改成实底，不在此列。 */
 @media (prefers-reduced-transparency: reduce) {
-  .material, .app-toolbar, .sidebar, .detail-header, .search-popover, .row-menu-popover, .settings-panel, .retranscribe-dialog, .detail-menu-popover, .export-popover { backdrop-filter: none !important; background: #fff !important; }
+  .app-toolbar, .sidebar, .detail-header, .search-popover, .row-menu-popover, .retranscribe-dialog, .detail-menu-popover, .export-popover, .knowledge-home-header, .onboarding-scrim { backdrop-filter: none !important; }
+  .app-toolbar, .sidebar, .detail-header, .search-popover, .row-menu-popover, .retranscribe-dialog, .detail-menu-popover, .export-popover, .knowledge-home-header { background: #fff !important; }
 }
 
 @media (prefers-contrast: more) {
@@ -512,15 +531,15 @@ input::placeholder, textarea::placeholder { color: #86868b; }
 }
 
 /* Memory views */
-.main-navigation { display: flex; align-items: center; gap: 3px; min-width: 0; padding: 3px; border: 1px solid rgba(60, 60, 67, 0.11); border-radius: 9px; background: rgba(118, 118, 128, 0.08); }
+.main-navigation { display: flex; flex: 0 0 auto; align-items: center; gap: 3px; min-width: 0; padding: 3px; border: 1px solid rgba(60, 60, 67, 0.11); border-radius: 9px; background: rgba(118, 118, 128, 0.08); }
 .main-navigation-button { padding: 7px 11px; border: 0; border-radius: 7px; background: transparent; color: #6e6e73; cursor: pointer; font-size: 12px; font-weight: 650; white-space: nowrap; }
 .main-navigation-button.selected { background: #fff; color: #1d1d1f; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08); }
 .memory-workspace-grid { min-height: 0; display: grid; grid-template-columns: minmax(180px, 0.55fr) minmax(0, 2.45fr); overflow: hidden; }
 .memory-main-content { min-width: 0; min-height: 0; overflow: hidden; background: #fff; }
 .memory-view { min-width: 0; min-height: 0; height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; background: #fff; }
 .memory-view-controls { display: grid; }
-.memory-view-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 18px 22px 12px; border-bottom: 1px solid rgba(60, 60, 67, 0.09); }
-.memory-view-header h2 { margin: 0; font-size: 21px; letter-spacing: -0.02em; }
+.memory-view-header { gap: 18px; }
+
 .memory-view-header p:not(.pane-eyebrow) { max-width: 640px; margin: 5px 0 0; color: #6e6e73; font-size: 12px; line-height: 1.45; }
 .memory-header-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 .memory-header-actions select { max-width: 230px; padding: 7px 8px; border: 1px solid rgba(60, 60, 67, 0.16); border-radius: 7px; background: #fff; font-size: 11px; }
@@ -662,7 +681,20 @@ input::placeholder, textarea::placeholder { color: #86868b; }
 
 /* ---------------- v0.3.0：引导向导 / 收件箱 / 词汇库 / 行动仪表盘 / 相关记录 ---------------- */
 .onboarding-scrim { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; background: rgba(0, 0, 0, 0.32); backdrop-filter: blur(6px); }
-.onboarding-panel { display: grid; grid-template-rows: auto auto 1fr auto; gap: 14px; width: min(560px, calc(100vw - 48px)); max-height: min(640px, calc(100vh - 64px)); padding: 26px 28px 22px; border-radius: 18px; }
+/* 引导面板必须自带背景、边框和阴影。`.material` 这个类在 CSS 里从来没有定义过，
+   只靠它撑场面的面板会变成一块透明板压在深色遮罩上（v0.4.3 记过同类教训）。 */
+.onboarding-panel {
+  display: grid;
+  grid-template-rows: auto auto 1fr auto;
+  gap: 14px;
+  width: min(620px, calc(100vw - 48px));
+  max-height: min(660px, calc(100vh - 64px));
+  padding: 24px 26px 20px;
+  border: 0.5px solid var(--em-hairline);
+  border-radius: var(--em-r-lg);
+  background: var(--em-panel);
+  box-shadow: var(--em-shadow-lg);
+}
 .onboarding-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .onboarding-header h2 { margin: 0; font-size: 20px; }
 .onboarding-header p { margin: 3px 0 0; color: #6e6e73; font-size: 11px; }
@@ -672,12 +704,6 @@ input::placeholder, textarea::placeholder { color: #86868b; }
 .onboarding-body { overflow: auto; display: grid; align-content: start; gap: 10px; }
 .onboarding-body h3 { margin: 0; font-size: 16px; }
 .onboarding-body > p { margin: 0; color: #3a3a3c; font-size: 12px; line-height: 1.6; }
-.onboarding-hint { margin: 0; color: #6e6e73; font-size: 11px; line-height: 1.55; }
-.onboarding-checklist { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; color: #3a3a3c; font-size: 12px; line-height: 1.5; }
-.onboarding-actions { display: grid; gap: 8px; }
-.onboarding-suggestions { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
-.onboarding-suggestions label, .onboarding-usb-toggle { display: flex; align-items: center; gap: 9px; padding: 9px 11px; border: 1px solid rgba(60, 60, 67, 0.12); border-radius: 9px; background: #fff; font-size: 12px; cursor: pointer; }
-.onboarding-suggestions small { display: block; overflow: hidden; color: #6e6e73; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .onboarding-footer { display: flex; justify-content: space-between; gap: 10px; }
 .onboarding-footer .primary-button { min-width: 110px; }
 
@@ -685,9 +711,10 @@ input::placeholder, textarea::placeholder { color: #86868b; }
 .hotword-input-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
 .hotword-input-row input { padding: 7px 10px; border: 1px solid rgba(60, 60, 67, 0.18); border-radius: 7px; font-size: 12px; }
 
-.action-dashboard-shell { min-height: 0; overflow: auto; padding: 20px 26px 30px; }
-.action-dashboard-header h2 { margin: 0; font-size: 18px; }
+.action-dashboard-shell { min-height: 0; overflow: auto; }
+
 .action-dashboard-header p { margin: 4px 0 0; color: #6e6e73; font-size: 11px; }
+.action-dashboard-body { padding: 20px 26px 30px; }
 .action-dashboard-section { margin-top: 18px; }
 .action-dashboard-section h3 { margin: 0 0 9px; color: #1d1d1f; font-size: 13px; }
 .action-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
@@ -748,7 +775,6 @@ input::placeholder, textarea::placeholder { color: #86868b; }
 .template-wizard-section strong { font-size: 12px; }
 .template-wizard-section small { color: #6e6e73; font-size: 10px; line-height: 1.5; }
 .template-wizard-actions { display: flex; justify-content: flex-end; gap: 8px; }
-.template-heading-actions { display: flex; gap: 8px; }
 
 @media (max-width: 980px) {
   .dock-modes { max-width: 46vw; }
@@ -775,6 +801,31 @@ input::placeholder, textarea::placeholder { color: #86868b; }
 .speaker-count { color: #6e6e73; font-size: 10px; white-space: nowrap; }
 .speaker-hotword { display: flex; align-items: center; gap: 4px; margin-left: auto; color: #6e6e73; font-size: 10px; white-space: nowrap; }
 .speakers-hint { margin: 0; color: #6e6e73; font-size: 11px; line-height: 1.5; }
-.settings-subsection { display: grid; gap: 9px; margin-top: 12px; padding-top: 12px; border-top: 1px dashed rgba(60, 60, 67, 0.14); }
-.settings-subsection h4 { margin: 0; font-size: 12px; }
-.settings-subsection input[type="password"] { padding: 7px 10px; border: 1px solid rgba(60, 60, 67, 0.18); border-radius: 7px; font-size: 12px; }
+
+/* ---------------- 全站下拉框统一外观 ----------------
+   放在文件末尾，确保不被各处 select 规则里的 background 简写把箭头清掉。
+   各 select 自己的 background 颜色仍然生效，这里只补外观与箭头。 */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 26px;
+  background-image: var(--em-chevron);
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+}
+select::-ms-expand { display: none; }
+
+
+/* ---------------- 五个视图的头部带统一 ----------------
+   此前各视图内边距与标题字号混用（14/18/20px，标题 18/19/21px），切视图时内容区纵向跳动。
+   这里统一节奏；各视图自己的背景、边框、附加控件行（如 .memory-status-row）保留不动。
+   全宽通栏的视图给头部加 .view-header；行动页的内容区内缩改由 .action-dashboard-body 承担。 */
+.view-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px 12px;
+  border-bottom: 0.5px solid rgba(60, 60, 67, 0.1);
+}
+.view-header h2 { margin: 0; font-size: 19px; line-height: 1.25; letter-spacing: -0.015em; }

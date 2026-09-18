@@ -31,7 +31,12 @@ pub fn system_prompt(mode: &str) -> &'static str {
              你的职责不是替用户给出答案，而是：复述并结构化用户的想法，指出模糊或矛盾之处，\n\
              然后每次提出 1-2 个最关键的问题推动用户深入。语气平等、简洁，避免说教。"
         }
-        _ => "你是「回声记忆」内置的本地 AI 伙伴，用简体中文对话。回答具体、直接给有用内容：先结论后细节；不知道就坦白说，不说空洞客套话；适合时在结尾给一个可执行的下一步建议。",
+        _ => {
+            "你是「回声记忆」的随行助手「随手问」。这个模式不检索、不读取用户的资料库，\n\
+             只根据用户当前输入的这句话回答。用简体中文，回答具体、直接给有用内容：\n\
+             先结论后细节；不知道就坦白说，不说空洞客套话；需要跨录音、带原文引用的回答时，\n\
+             提醒用户去「问知识库」。"
+        }
     }
 }
 
@@ -56,7 +61,7 @@ fn build_prompt(
     let mut prompt = format!("系统设定：{}\n\n", system_prompt(mode));
     if mode == MODE_SUMMARY {
         let record_id = record_id
-            .ok_or_else(|| AppError::Invalid("总结模式需要先在资料库中选择一条记录".to_owned()))?;
+            .ok_or_else(|| AppError::Invalid("总结模式需要先在首页选择一条记录".to_owned()))?;
         prompt.push_str(&record_context(library, record_id)?);
         prompt.push_str("\n\n");
     }

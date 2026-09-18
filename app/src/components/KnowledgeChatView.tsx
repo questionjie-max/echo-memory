@@ -167,9 +167,9 @@ export default function KnowledgeChatView({ scope, projectId, unfiledOnly, refre
   }
 
   return <section className="knowledge-chat-view" aria-label={`与${scopeName}对话`}>
-    <header className="knowledge-chat-header">
+    <header className="knowledge-chat-header view-header">
       <div className="knowledge-chat-title-group">
-        <p className="knowledge-chat-eyebrow">AI 对话</p>
+        <p className="knowledge-chat-eyebrow">问知识库</p>
         <h2>问你的知识库</h2>
         <p>{scopeDescription(scopeName, scope, unfiledOnly)}</p>
       </div>

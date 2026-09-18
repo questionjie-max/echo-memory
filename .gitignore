@@ -52,3 +52,7 @@ logo-concepts/
 .mimosa/
 .v2c/
 out/
+.zcode/
+
+# Personal writing drafts — not product content, never publish
+content/

@@ -1,7 +1,7 @@
 .knowledge-chat-view { min-width: 0; min-height: 0; height: 100%; display: grid; grid-template-rows: auto auto minmax(0, 1fr); overflow: hidden; background: radial-gradient(circle at 82% -10%, rgba(0, 122, 255, .08), transparent 31%), #fff; color: #1d1d1f; }
-.knowledge-chat-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 18px 22px 14px; border-bottom: 1px solid rgba(60,60,67,.1); background: rgba(255,255,255,.82); backdrop-filter: blur(18px) saturate(150%); }
+.knowledge-chat-header { background: rgba(255,255,255,.82); backdrop-filter: blur(18px) saturate(150%); }
 .knowledge-chat-title-group { min-width: 0; }
-.knowledge-chat-title-group h2 { margin: 0; font-size: 19px; line-height: 1.25; letter-spacing: -.015em; }
+
 .knowledge-chat-title-group > p:last-child { max-width: 620px; margin: 5px 0 0; color: #6e6e73; font-size: 11px; line-height: 1.5; }
 .knowledge-chat-eyebrow { margin: 0 0 3px; color: #007aff; font-size: 10px; font-weight: 720; letter-spacing: .05em; text-transform: uppercase; }
 .knowledge-chat-header-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 7px; }
