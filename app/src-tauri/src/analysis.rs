@@ -274,25 +274,13 @@ impl OllamaAdapter {
             .as_ref()
             .and_then(analysis_quality_issue)
             .unwrap_or_else(|| "返回内容不是约定的 JSON 结构".to_owned());
-        // 首次输出无法解析时，几乎总是被 token 上限截断在字符串中间。
-        // 把这段坏数据回灌给模型既浪费上下文，又会诱导它再产出同样超长的
-        // 结果，因此这种情况改为明确要求更紧凑的输出。
-        let correction = if parsed_first.is_some() {
-            format!(
-                "上一次分析不合格：{issue}。请纠正后仅返回合法 JSON。摘要必须具体完整，关键观点必须为 3 到 8 项；没有证据的决策、待办和问题保持空数组，不得编造。所有非空条目必须使用逐字稿片段编号和匹配的连续引文。\n\
-                 custom_sections 必须严格遵循模板。{template_instructions}\n\
-                 上一次输出：\n{first}\n\
-                 逐字稿：\n{transcript}"
-            )
-        } else {
-            format!(
-                "上一次输出不是完整的 JSON（很可能过长被截断）。请重新分析并仅返回合法且完整的 JSON。\n\
-                 务必控制长度：key_points 最多 5 项，decisions、action_items、open_questions 各最多 3 项，每条 quote_text 只保留最能说明问题的一句原文（不超过 40 字）。\n\
-                 没有证据的栏目返回空数组，不得编造。所有非空条目必须使用逐字稿片段编号和匹配的连续引文。\n\
-                 custom_sections 必须严格遵循模板。{template_instructions}\n\
-                 逐字稿：\n{transcript}"
-            )
-        };
+        let correction = build_correction_prompt(
+            &first,
+            parsed_first.is_some(),
+            &issue,
+            &template_instructions,
+            transcript,
+        );
         let retry = self.generate(&correction)?;
         let mut draft = resolve_analysis_attempts(&first, &retry)?;
         normalize_custom_sections(&mut draft, template);
@@ -584,6 +572,34 @@ pub fn analysis_quality_issue(draft: &AnalysisDraft) -> Option<String> {
         return Some("关键观点或其原文引述过短，无法提供足够信息".to_owned());
     }
     None
+}
+
+/// 构造纠错重试提示。首次输出无法解析时，几乎总是被 token 上限截断在字符串中间：
+/// 把这段坏数据回灌给模型既浪费上下文，又会诱导它再产出同样超长的结果，
+/// 因此这种情况改为明确要求更紧凑的输出。
+fn build_correction_prompt(
+    first: &str,
+    first_is_parsable: bool,
+    issue: &str,
+    template_instructions: &str,
+    transcript: &str,
+) -> String {
+    if first_is_parsable {
+        format!(
+            "上一次分析不合格：{issue}。请纠正后仅返回合法 JSON。摘要必须具体完整，关键观点必须为 3 到 8 项；没有证据的决策、待办和问题保持空数组，不得编造。所有非空条目必须使用逐字稿片段编号和匹配的连续引文。\n\
+             custom_sections 必须严格遵循模板。{template_instructions}\n\
+             上一次输出：\n{first}\n\
+             逐字稿：\n{transcript}"
+        )
+    } else {
+        format!(
+            "上一次输出不是完整的 JSON（很可能过长被截断）。请重新分析并仅返回合法且完整的 JSON。\n\
+             务必控制长度：key_points 最多 5 项，decisions、action_items、open_questions 各最多 3 项，每条 quote_text 只保留最能说明问题的一句原文（不超过 40 字）。\n\
+             没有证据的栏目返回空数组，不得编造。所有非空条目必须使用逐字稿片段编号和匹配的连续引文。\n\
+             custom_sections 必须严格遵循模板。{template_instructions}\n\
+             逐字稿：\n{transcript}"
+        )
+    }
 }
 
 fn resolve_analysis_attempts(first: &str, retry: &str) -> AppResult<AnalysisDraft> {
@@ -994,6 +1010,33 @@ mod tests {
         let retry = "not-json";
         let result = resolve_analysis_attempts(first, retry).unwrap();
         assert!(result.quality_warning.is_some());
+    }
+
+    #[test]
+    fn truncated_first_output_is_not_echoed_back_into_retry_prompt() {
+        // 回灌被截断的坏数据既浪费上下文，又会诱导模型再次产出同样超长的结果，
+        // 使重试必然二次失败——这正是真实录音分析 100% 失败的成因。
+        let truncated = r#"{"summary":"这是一个被截断的摘要，字符串在这里断掉"#;
+        let prompt = build_correction_prompt(
+            truncated,
+            false,
+            "返回内容不是约定的 JSON 结构",
+            "",
+            "[1] 逐字稿原文",
+        );
+        assert!(!prompt.contains(truncated));
+        assert!(prompt.contains("最多 5 项"));
+        assert!(prompt.contains("[1] 逐字稿原文"));
+    }
+
+    #[test]
+    fn parsable_but_low_quality_output_is_echoed_back_for_correction() {
+        // 能解析但质量不达标时，回灌上一次输出仍然是有用的纠正依据。
+        let low_quality = r#"{"summary":"太短","key_points":[]}"#;
+        let prompt =
+            build_correction_prompt(low_quality, true, "关键观点不足", "", "[1] 逐字稿原文");
+        assert!(prompt.contains(low_quality));
+        assert!(prompt.contains("关键观点不足"));
     }
 
     #[test]
