@@ -17,6 +17,7 @@ const SOURCE_LABEL: Record<SearchResult["sourceType"], string> = {
 
 export default function SearchPanel({ projectId, unfiledOnly, onOpen }: Props) {
   const root = useRef<HTMLElement>(null);
+  const input = useRef<HTMLInputElement>(null);
   const requestId = useRef(0);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
@@ -31,6 +32,12 @@ export default function SearchPanel({ projectId, unfiledOnly, onOpen }: Props) {
     }
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") setOpen(false);
+      // ⌘K / Ctrl+K 直接聚焦搜索框（顶栏搜索框上的提示徽标对应这个快捷键）。
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        input.current?.focus();
+        input.current?.select();
+      }
     }
     document.addEventListener("pointerdown", onPointerDown);
     document.addEventListener("keydown", onKeyDown);
@@ -95,6 +102,7 @@ export default function SearchPanel({ projectId, unfiledOnly, onOpen }: Props) {
       <div className="search-form">
         <div className="search-input-wrap">
           <input
+            ref={input}
             value={query}
             onChange={(event) => {
               const nextQuery = event.target.value;
@@ -111,6 +119,11 @@ export default function SearchPanel({ projectId, unfiledOnly, onOpen }: Props) {
             placeholder="搜索录音、逐字稿和分析"
             aria-label="搜索记录"
           />
+          {!query && (
+            <span className="search-kbd" aria-hidden="true">
+              ⌘K
+            </span>
+          )}
           {query && (
             <button type="button" className="clear-button" onClick={clear} aria-label="清空搜索" title="清空搜索">
               ×
@@ -123,7 +136,7 @@ export default function SearchPanel({ projectId, unfiledOnly, onOpen }: Props) {
       </div>
 
       {open && (
-        <div className="search-popover material" role="dialog" aria-label="搜索结果" aria-busy={loading}>
+        <div className="search-popover" role="dialog" aria-label="搜索结果" aria-busy={loading}>
           <div className="popover-header">
             <strong>搜索结果</strong>
             {!loading && <span>{results.length} 条</span>}

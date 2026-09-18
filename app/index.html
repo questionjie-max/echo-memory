@@ -4,6 +4,20 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>回声记忆</title>
+    <script>
+      // 首帧定主题：在 CSS 加载前把 data-theme 挂到 <html> 上，避免深色用户看到一帧白底。
+      // 取值必须与 src/lib/theme.ts 保持一致；localStorage 不可用时静默回退到深色。
+      (function () {
+        var theme = "dark";
+        try {
+          var stored = window.localStorage.getItem("em.theme");
+          if (stored === "light" || stored === "dark") theme = stored;
+        } catch (error) {
+          /* 隐私模式等场景拿不到 localStorage，用默认值 */
+        }
+        document.documentElement.setAttribute("data-theme", theme);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

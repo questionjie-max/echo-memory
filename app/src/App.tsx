@@ -18,6 +18,8 @@ export interface RecordNavigation {
   token: number;
   startMs: number | null;
   targetSegmentId: string | null;
+  /** 工作区列表播放钮使用：定位后直接开始播放。 */
+  autoPlay?: boolean;
 }
 
 export default function App() {
@@ -105,6 +107,13 @@ export default function App() {
     setNavigation(null);
   }
 
+  /** 工作区列表的播放钮：选中记录、切回首页并自动开播。 */
+  function playFromList(record: RecordBrief) {
+    setSelectedRecord(record);
+    setMainView("library");
+    setNavigation({ token: Date.now(), startMs: 0, targetSegmentId: null, autoPlay: true });
+  }
+
   function changed(record?: RecordBrief) {
     if (record) setSelectedRecord(record);
     setRefreshKey((value) => value + 1);
@@ -142,6 +151,7 @@ export default function App() {
             onImported={() => changed()}
             selectedId={selectedRecord?.id ?? null}
             onSelect={setSelectedRecord}
+            onPlay={playFromList}
           />
           {selectedRecord ? (
             <RecordDetail record={selectedRecord} navigation={navigation} onChanged={changed} />

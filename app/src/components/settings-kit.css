@@ -9,7 +9,7 @@
 .em-rail-brand span { display: block; margin-top: 2px; color: var(--em-ink-4); font-size: 10px; }
 .em-rail-group { display: grid; gap: 3px; }
 .em-nav-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 10px; border: 0; border-radius: var(--em-r-sm); background: transparent; color: var(--em-ink-2); cursor: pointer; font-size: var(--em-text-md); font-weight: 560; text-align: left; transition: background-color 140ms var(--em-motion), color 140ms var(--em-motion); }
-.em-nav-item:hover { background: rgba(60, 60, 67, 0.05); color: var(--em-ink); }
+.em-nav-item:hover { background: var(--em-soft-fill); color: var(--em-ink); }
 .em-nav-item[aria-selected="true"] { background: var(--em-surface); color: var(--em-ink); font-weight: 660; box-shadow: var(--em-shadow-sm); }
 .em-nav-dot { width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: var(--em-ink-4); }
 .em-nav-item[aria-selected="true"] .em-nav-dot { background: var(--em-accent); }
@@ -21,12 +21,12 @@
 .em-main-head h2 { margin: 0; font-size: var(--em-text-title); font-weight: 680; letter-spacing: -0.02em; }
 .em-main-head p { margin: 3px 0 0; color: var(--em-ink-3); font-size: var(--em-text-xs); line-height: 1.5; }
 .em-main-body { min-height: 0; overflow: auto; padding: 2px 22px 22px; }
-.em-close { position: absolute; top: 16px; right: 16px; display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: var(--em-r-pill); background: rgba(118, 118, 128, 0.12); color: var(--em-ink-2); cursor: pointer; font-size: 16px; line-height: 1; }
+.em-close { position: absolute; top: 16px; right: 16px; display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: var(--em-r-pill); background: var(--em-soft-fill-2); color: var(--em-ink-2); cursor: pointer; font-size: 16px; line-height: 1; }
 
 /* ---------------- 卡片 ---------------- */
 .em-stack { display: grid; gap: 12px; }
 .em-card { display: grid; gap: 12px; padding: 16px; border: 0.5px solid var(--em-hairline); border-radius: var(--em-r-lg); background: var(--em-surface); box-shadow: var(--em-shadow-sm); }
-.em-card.accent { border-color: rgba(255, 159, 10, 0.32); background: rgba(255, 159, 10, 0.05); }
+.em-card.accent { border-color: var(--em-warn-border); background: var(--em-warn-soft); }
 .em-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .em-card-head h3 { margin: 0; font-size: var(--em-text-lg); font-weight: 660; letter-spacing: -0.01em; }
 .em-card-head p { margin: 4px 0 0; color: var(--em-ink-3); font-size: var(--em-text-xs); line-height: 1.55; }
@@ -34,7 +34,7 @@
 .em-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 12px; border-top: 0.5px solid var(--em-hairline-soft); }
 
 /* ---------------- 药丸 / 状态 ---------------- */
-.em-pill { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: var(--em-r-pill); background: rgba(118, 118, 128, 0.1); color: var(--em-ink-3); font-size: var(--em-text-xs); font-weight: 620; white-space: nowrap; }
+.em-pill { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: var(--em-r-pill); background: var(--em-soft-fill); color: var(--em-ink-3); font-size: var(--em-text-xs); font-weight: 620; white-space: nowrap; }
 .em-pill.ok { background: var(--em-ok-soft); color: var(--em-ok-ink); }
 .em-pill.warn { background: var(--em-warn-soft); color: var(--em-warn-ink); }
 .em-pill.err { background: var(--em-err-soft); color: var(--em-err-ink); }
@@ -43,12 +43,12 @@
 
 /* ---------------- 按钮 ---------------- */
 .em-btn { display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 7px 12px; border: 0.5px solid transparent; border-radius: var(--em-r-sm); background: transparent; cursor: pointer; font-size: var(--em-text-sm); font-weight: 620; white-space: nowrap; transition: background-color 160ms var(--em-motion), border-color 160ms var(--em-motion); }
-.em-btn.primary { background: var(--em-accent); color: #fff; box-shadow: 0 1px 3px rgba(0, 102, 204, 0.24); }
-.em-btn.primary:hover:not(:disabled) { background: #0a6fe0; }
+.em-btn.primary { background: var(--em-accent); color: var(--em-on-accent); box-shadow: 0 1px 3px var(--em-accent-glow); }
+.em-btn.primary:hover:not(:disabled) { background: var(--em-accent-strong); }
 .em-btn.ghost { border-color: var(--em-hairline); background: var(--em-surface); color: var(--em-ink-2); }
 .em-btn.ghost:hover:not(:disabled) { border-color: var(--em-hairline-strong); background: var(--em-surface-2); }
 .em-btn.soft { background: var(--em-surface-3); color: var(--em-ink-2); }
-.em-btn.soft:hover:not(:disabled) { background: rgba(118, 118, 128, 0.16); }
+.em-btn.soft:hover:not(:disabled) { background: var(--em-soft-fill-2); }
 /* 危险操作默认安静：列表一长，一列常驻红字就是噪声，而且容易误点。
    悬停时才变成红色，意图和风险都在那一刻说清楚。 */
 .em-btn.danger { color: var(--em-ink-3); }
@@ -60,7 +60,7 @@
 .em-btn:disabled { cursor: not-allowed; opacity: 0.5; }
 
 /* ---------------- 分段控件 ---------------- */
-.em-seg { display: inline-flex; gap: 3px; padding: 3px; border-radius: var(--em-r-md); background: rgba(118, 118, 128, 0.1); }
+.em-seg { display: inline-flex; gap: 3px; padding: 3px; border-radius: var(--em-r-md); background: var(--em-soft-fill); }
 .em-seg-item { padding: 6px 12px; border: 0; border-radius: var(--em-r-xs); background: transparent; color: var(--em-ink-3); cursor: pointer; font-size: var(--em-text-sm); font-weight: 620; transition: background-color 180ms var(--em-motion), color 180ms var(--em-motion); }
 .em-seg-item:hover:not(:disabled) { color: var(--em-ink); }
 .em-seg-item[aria-pressed="true"] { background: var(--em-surface); color: var(--em-ink); box-shadow: var(--em-shadow-sm); }
@@ -70,13 +70,13 @@
 .em-list { display: grid; gap: 2px; }
 .em-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; width: 100%; padding: 10px 11px; border: 0.5px solid transparent; border-radius: var(--em-r-md); background: transparent; color: inherit; cursor: pointer; text-align: left; transition: background-color 160ms var(--em-motion), border-color 160ms var(--em-motion); }
 .em-row:hover:not(:disabled) { background: var(--em-surface-2); }
-.em-row[aria-pressed="true"] { border-color: rgba(0, 122, 255, 0.28); background: var(--em-accent-soft); }
+.em-row[aria-pressed="true"] { border-color: var(--em-accent-border); background: var(--em-accent-soft); }
 .em-row:disabled { cursor: default; }
 .em-row.static { cursor: default; }
 .em-row.static:hover { background: transparent; }
 .em-row-glyph { display: grid; place-items: center; width: 18px; height: 18px; flex: 0 0 18px; border-radius: 50%; color: var(--em-ink-4); font-size: var(--em-text-xs); }
 .em-row-glyph.done { background: var(--em-ok-soft); color: var(--em-ok-ink); }
-.em-row-glyph.working { border: 1.5px solid rgba(0, 122, 255, 0.28); border-top-color: var(--em-accent); animation: em-spin 0.8s linear infinite; }
+.em-row-glyph.working { border: 1.5px solid var(--em-accent-border); border-top-color: var(--em-accent); animation: em-spin 0.8s linear infinite; }
 .em-row-glyph.error { background: var(--em-err-soft); color: var(--em-err-ink); }
 @keyframes em-spin { to { transform: rotate(360deg); } }
 .em-row-main { min-width: 0; display: grid; gap: 3px; }
@@ -88,7 +88,7 @@
 /* ---------------- 进度 ---------------- */
 .em-progress { display: grid; gap: 5px; margin-top: 2px; }
 .em-progress-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--em-ink-3); font-size: var(--em-text-xs); font-variant-numeric: tabular-nums; }
-.em-progress-track { height: 6px; overflow: hidden; border-radius: var(--em-r-pill); background: rgba(118, 118, 128, 0.14); }
+.em-progress-track { height: 6px; overflow: hidden; border-radius: var(--em-r-pill); background: var(--em-soft-fill-2); }
 .em-progress-fill { display: block; height: 100%; border-radius: inherit; background: var(--em-accent); transition: width 220ms var(--em-motion); }
 .em-progress.indeterminate .em-progress-fill { width: 32%; animation: em-slide 1.2s var(--em-motion) infinite; }
 @keyframes em-slide { 0% { transform: translateX(-110%); } 100% { transform: translateX(340%); } }
