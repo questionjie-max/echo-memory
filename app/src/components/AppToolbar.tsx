@@ -1,5 +1,5 @@
 /**
- * 顶栏：品牌 + 主导航 + 搜索 + 设置。
+ * 顶栏：品牌徽标 + 主导航（图标 + 文字）+ 搜索 + 设置。
  *
  * 版式契约是「四个固定角色」：品牌可压缩、导航不收缩、搜索吃剩余宽度、设置不收缩。
  * 关键约束是搜索框必须**常驻** —— 它是顶栏里唯一带 flex-grow 的元素，
@@ -8,15 +8,16 @@
  */
 import SearchPanel from "./SearchPanel";
 import { PRIVACY_POSTURE } from "../lib/posture";
+import { ActionIcon, BrandWave, ChatIcon, EvolutionIcon, GearIcon, GrowthIcon, HomeIcon } from "./icons";
 
 export type MainView = "library" | "chat" | "growth" | "evolution" | "actions";
 
-const NAV_ITEMS: Array<{ id: MainView; label: string }> = [
-  { id: "library", label: "首页" },
-  { id: "chat", label: "问知识库" },
-  { id: "growth", label: "成长轨迹" },
-  { id: "evolution", label: "认知演化" },
-  { id: "actions", label: "行动" },
+const NAV_ITEMS: Array<{ id: MainView; label: string; icon: () => React.JSX.Element }> = [
+  { id: "library", label: "首页", icon: HomeIcon },
+  { id: "chat", label: "问知识库", icon: ChatIcon },
+  { id: "growth", label: "成长轨迹", icon: GrowthIcon },
+  { id: "evolution", label: "认知演化", icon: EvolutionIcon },
+  { id: "actions", label: "行动", icon: ActionIcon },
 ];
 
 export default function AppToolbar({
@@ -37,8 +38,13 @@ export default function AppToolbar({
   return (
     <header className="app-toolbar">
       <div className="brand-block">
-        <h1>回声记忆</h1>
-        <p>{PRIVACY_POSTURE.toolbar}</p>
+        <span className="brand-mark" aria-hidden="true">
+          <BrandWave />
+        </span>
+        <div className="brand-text">
+          <h1>回声记忆</h1>
+          <p>{PRIVACY_POSTURE.toolbar}</p>
+        </div>
       </div>
       <nav className="main-navigation" aria-label="主视图">
         {NAV_ITEMS.map((item) => (
@@ -49,13 +55,14 @@ export default function AppToolbar({
             aria-current={mainView === item.id ? "page" : undefined}
             onClick={() => onSelectView(item.id)}
           >
+            <item.icon />
             {item.label}
           </button>
         ))}
       </nav>
       <SearchPanel projectId={projectId} unfiledOnly={unfiledOnly} onOpen={onOpenSearchResult} />
-      <button type="button" className="toolbar-button" onClick={onOpenSettings}>
-        设置
+      <button type="button" className="toolbar-button" onClick={onOpenSettings} aria-label="设置">
+        <GearIcon />
       </button>
     </header>
   );

@@ -1,5 +1,6 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { PauseIcon, PlayIcon, SkipBackIcon, SkipForwardIcon } from "./icons";
 import { useEffect, useRef, useState } from "react";
 import type { RecordNavigation } from "../App";
 import type {
@@ -139,6 +140,10 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
   const [source, setSource] = useState("");
   const [audioLoadState, setAudioLoadState] = useState<AudioLoadState>("loading");
   const [audioError, setAudioError] = useState("");
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [playbackRate, setPlaybackRate] = useState(1);
+  const [volume, setVolume] = useState(1);
+  const [durationMs, setDurationMs] = useState<number | null>(null);
   const [segments, setSegments] = useState<TranscriptSegment[]>([]);
   const [blocks, setBlocks] = useState<TranscriptBlock[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -265,9 +270,8 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
   }, [record.id, currentRecord.status]);
 
   useEffect(() => {
-    if (!navigation || segments.length === 0) return;
-    setActiveTab("transcript");
-    setHighlightedSegmentId(navigation.targetSegmentId);
+    if (!navigation) return;
+    // 播放/定位不依赖逐字稿：没有 segments 的录音也要能从列表直接播放。
     if (!isDocument && navigation.startMs !== null && audio.current) {
       if (audio.current.readyState >= HTMLMediaElement.HAVE_METADATA) {
         audio.current.currentTime = navigation.startMs / 1000;
@@ -276,6 +280,20 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
       }
       setCurrentMs(navigation.startMs);
     }
+    // 工作区列表的播放钮走这里：切好起点后直接开播（音频未就绪时交给 pendingPlay）。
+    if (navigation.autoPlay && !isDocument && audio.current) {
+      if (audio.current.readyState >= HTMLMediaElement.HAVE_METADATA) {
+        void audio.current.play().catch((reason) => {
+          setAudioLoadState("error");
+          setAudioError(`无法播放音频：${String(reason)}`);
+        });
+      } else {
+        pendingPlay.current = true;
+      }
+    }
+    if (segments.length === 0) return;
+    setActiveTab("transcript");
+    setHighlightedSegmentId(navigation.targetSegmentId);
     window.setTimeout(() => {
       if (navigation.targetSegmentId) {
         const block = blocks.find((item) => item.segmentIds.includes(navigation.targetSegmentId!));
@@ -428,6 +446,7 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
   function audioReady(element: HTMLAudioElement) {
     setAudioLoadState("ready");
     setAudioError("");
+    if (Number.isFinite(element.duration)) setDurationMs(element.duration * 1000);
     if (pendingSeekMs.current !== null) {
       element.currentTime = pendingSeekMs.current / 1000;
       setCurrentMs(pendingSeekMs.current);
@@ -440,6 +459,36 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
         setAudioError(`无法播放音频：${String(reason)}`);
       });
     }
+  }
+
+  function togglePlay() {
+    const element = audio.current;
+    if (!element) return;
+    setAudioError("");
+    if (element.paused) {
+      if (element.readyState < HTMLMediaElement.HAVE_METADATA) {
+        setAudioLoadState("loading");
+        return;
+      }
+      void element.play().catch((reason) => {
+        setAudioLoadState("error");
+        setAudioError(`无法播放音频：${String(reason)}`);
+      });
+    } else {
+      element.pause();
+    }
+  }
+
+  function seekRelative(deltaMs: number) {
+    const total = durationMs ?? currentRecord.audioDurationMs;
+    seek(Math.min(Math.max(0, currentMs + deltaMs), total), isPlaying);
+  }
+
+  function cycleRate() {
+    const steps = [1, 1.25, 1.5, 2, 0.75];
+    const next = steps[(steps.indexOf(playbackRate) + 1) % steps.length];
+    setPlaybackRate(next);
+    if (audio.current) audio.current.playbackRate = next;
   }
 
   function audioFailed(element: HTMLAudioElement) {
@@ -530,17 +579,75 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
 
       {!isDocument && source && (
         <div className="audio-bar">
+          {/* 原生控件隐藏，播放/进度/倍速/音量由自定义播放条接管（外观对齐 Lovart 稿） */}
           <audio
             ref={audio}
-            controls
             preload="metadata"
             src={source}
-            onLoadStart={() => setAudioLoadState("loading")}
+            onLoadStart={() => {
+              setAudioLoadState("loading");
+              setDurationMs(null);
+              setIsPlaying(false);
+            }}
             onLoadedMetadata={(event) => audioReady(event.currentTarget)}
             onCanPlay={(event) => audioReady(event.currentTarget)}
             onError={(event) => audioFailed(event.currentTarget)}
             onTimeUpdate={(event) => setCurrentMs(event.currentTarget.currentTime * 1000)}
+            onPlay={() => setIsPlaying(true)}
+            onPause={() => setIsPlaying(false)}
+            onEnded={() => setIsPlaying(false)}
           />
+          <div className="player">
+            <div className="player-main">
+              <button
+                type="button"
+                className="player-play"
+                aria-label={isPlaying ? "暂停" : "播放"}
+                disabled={audioLoadState !== "ready"}
+                onClick={togglePlay}
+              >
+                {isPlaying ? <PauseIcon size={18} /> : <PlayIcon size={18} />}
+              </button>
+              <button type="button" className="player-skip" aria-label="后退 15 秒" disabled={audioLoadState !== "ready"} onClick={() => seekRelative(-15000)}>
+                <SkipBackIcon />
+              </button>
+              <button type="button" className="player-skip" aria-label="前进 15 秒" disabled={audioLoadState !== "ready"} onClick={() => seekRelative(15000)}>
+                <SkipForwardIcon />
+              </button>
+              <button type="button" className="player-rate" aria-label="播放速度" onClick={cycleRate}>
+                {playbackRate}×
+              </button>
+              <span className="player-time" role="status">
+                {formatTime(currentMs)} / {formatTime(durationMs ?? currentRecord.audioDurationMs)}
+              </span>
+              <span className="player-spacer" />
+              <input
+                type="range"
+                className="player-volume"
+                min={0}
+                max={1}
+                step={0.05}
+                value={volume}
+                aria-label="音量"
+                onChange={(event) => {
+                  const next = Number(event.target.value);
+                  setVolume(next);
+                  if (audio.current) audio.current.volume = next;
+                }}
+              />
+            </div>
+            <input
+              type="range"
+              className="player-seek"
+              min={0}
+              max={Math.max(1, durationMs ?? currentRecord.audioDurationMs)}
+              step={100}
+              value={Math.min(currentMs, durationMs ?? currentRecord.audioDurationMs)}
+              aria-label="播放进度"
+              disabled={audioLoadState !== "ready"}
+              onChange={(event) => seek(Number(event.target.value), isPlaying)}
+            />
+          </div>
           <div className={`audio-status audio-${audioLoadState}`} role="status">
             <span>{audioLoadState === "ready" ? "音频已就绪" : audioLoadState === "loading" ? "正在载入音频" : audioError}</span>
             <span>总时长 {formatTime(currentRecord.audioDurationMs)}</span>
