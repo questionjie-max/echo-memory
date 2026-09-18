@@ -42,6 +42,8 @@ The digital-twin direction is a product vision, not a claim that the current Alp
 - Assistant dock: chat with local (or optional external) models from any view — summarize the current record, create writing, or brainstorm.
 - AI template wizard: describe your needs in conversation; a local model generates the analysis template.
 - Output folder: analyses, transcripts, and AI drafts are written as standard Markdown into a folder of your choice (e.g. an Obsidian vault).
+- Speaker diarization: optionally run the whisperX engine to separate "Speaker 1, Speaker 2…"; the embedded engine stays the zero-dependency default.
+- Speaker renaming: turn "Speaker 1" into a real name in the record detail, optionally adding it to the hotword vocabulary; action items and decisions carry the attributed owner.
 - Imports `MP3`, `M4A`, and `WAV` audio with duplicate detection.
 - Imports `Markdown`, `TXT`, and `DOCX` documents into the same searchable library.
 - Transcribes audio locally with embedded Whisper or a local `whisper.cpp` command.
@@ -119,11 +121,12 @@ The longer-term direction is to expand from traceable conversation memory into a
 ## Requirements
 
 - macOS on Apple Silicon
-- Node.js 18+, Rust stable, Cargo, and Xcode Command Line Tools
+- Node.js 22+, Rust stable, Cargo, and Xcode Command Line Tools
 - CMake for the first embedded Whisper build
 - A local Whisper `ggml-*.bin` model for transcription
 - Optional local `whisper-cli` / `WHISPER_CPP_BIN`
 - Optional local Ollama service and model for analysis
+- Optional `pip install whisperx` and a HuggingFace token (after accepting the pyannote model terms) for speaker diarization
 
 ## Run locally
 
@@ -143,6 +146,7 @@ cd app
 npm run typecheck
 npm run build
 npm run test:growth
+npm run test:ui
 cd src-tauri
 cargo fmt --check
 cargo test --features mcp-bin
