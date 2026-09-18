@@ -1,0 +1,131 @@
+/* 设置面板的构件层。所有颜色与尺寸走 styles.css 里的 --em-* token。
+   设计规则：0.5px 发丝线、实底表面（不做毛玻璃）、999px 药丸、状态用「图标 + 文字 + 颜色」三重编码。 */
+
+/* ---------------- 面板骨架：左侧导航 + 右侧内容 ---------------- */
+.em-panel { position: relative; display: grid; grid-template-columns: 180px minmax(0, 1fr); width: min(840px, calc(100vw - 40px)); height: min(640px, calc(100vh - 40px)); overflow: hidden; border: 0.5px solid var(--em-hairline); border-radius: var(--em-r-lg); background: var(--em-panel); box-shadow: var(--em-shadow-lg); }
+.em-rail { display: flex; flex-direction: column; gap: 3px; padding: 16px 10px 12px; border-right: 0.5px solid var(--em-hairline-soft); background: var(--em-rail); }
+.em-rail-brand { padding: 0 10px 12px; }
+.em-rail-brand strong { display: block; font-size: var(--em-text-md); font-weight: 680; }
+.em-rail-brand span { display: block; margin-top: 2px; color: var(--em-ink-4); font-size: 10px; }
+.em-rail-group { display: grid; gap: 3px; }
+.em-nav-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 10px; border: 0; border-radius: var(--em-r-sm); background: transparent; color: var(--em-ink-2); cursor: pointer; font-size: var(--em-text-md); font-weight: 560; text-align: left; transition: background-color 140ms var(--em-motion), color 140ms var(--em-motion); }
+.em-nav-item:hover { background: rgba(60, 60, 67, 0.05); color: var(--em-ink); }
+.em-nav-item[aria-selected="true"] { background: var(--em-surface); color: var(--em-ink); font-weight: 660; box-shadow: var(--em-shadow-sm); }
+.em-nav-dot { width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: var(--em-ink-4); }
+.em-nav-item[aria-selected="true"] .em-nav-dot { background: var(--em-accent); }
+.em-rail-spacer { flex: 1 1 auto; }
+.em-rail-note { padding: 10px; color: var(--em-ink-4); font-size: 10px; line-height: 1.5; }
+
+.em-main { min-width: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); }
+.em-main-head { position: relative; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 18px 22px 12px; }
+.em-main-head h2 { margin: 0; font-size: var(--em-text-title); font-weight: 680; letter-spacing: -0.02em; }
+.em-main-head p { margin: 3px 0 0; color: var(--em-ink-3); font-size: var(--em-text-xs); line-height: 1.5; }
+.em-main-body { min-height: 0; overflow: auto; padding: 2px 22px 22px; }
+.em-close { position: absolute; top: 16px; right: 16px; display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: var(--em-r-pill); background: rgba(118, 118, 128, 0.12); color: var(--em-ink-2); cursor: pointer; font-size: 16px; line-height: 1; }
+
+/* ---------------- 卡片 ---------------- */
+.em-stack { display: grid; gap: 12px; }
+.em-card { display: grid; gap: 12px; padding: 16px; border: 0.5px solid var(--em-hairline); border-radius: var(--em-r-lg); background: var(--em-surface); box-shadow: var(--em-shadow-sm); }
+.em-card.accent { border-color: rgba(255, 159, 10, 0.32); background: rgba(255, 159, 10, 0.05); }
+.em-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.em-card-head h3 { margin: 0; font-size: var(--em-text-lg); font-weight: 660; letter-spacing: -0.01em; }
+.em-card-head p { margin: 4px 0 0; color: var(--em-ink-3); font-size: var(--em-text-xs); line-height: 1.55; }
+.em-card-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; }
+.em-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 12px; border-top: 0.5px solid var(--em-hairline-soft); }
+
+/* ---------------- 药丸 / 状态 ---------------- */
+.em-pill { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: var(--em-r-pill); background: rgba(118, 118, 128, 0.1); color: var(--em-ink-3); font-size: var(--em-text-xs); font-weight: 620; white-space: nowrap; }
+.em-pill.ok { background: var(--em-ok-soft); color: var(--em-ok-ink); }
+.em-pill.warn { background: var(--em-warn-soft); color: var(--em-warn-ink); }
+.em-pill.err { background: var(--em-err-soft); color: var(--em-err-ink); }
+.em-pill.accent { background: var(--em-accent-soft); color: var(--em-accent-ink); }
+.em-pill .em-pill-glyph { font-size: 10px; line-height: 1; }
+
+/* ---------------- 按钮 ---------------- */
+.em-btn { display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 7px 12px; border: 0.5px solid transparent; border-radius: var(--em-r-sm); background: transparent; cursor: pointer; font-size: var(--em-text-sm); font-weight: 620; white-space: nowrap; transition: background-color 160ms var(--em-motion), border-color 160ms var(--em-motion); }
+.em-btn.primary { background: var(--em-accent); color: #fff; box-shadow: 0 1px 3px rgba(0, 102, 204, 0.24); }
+.em-btn.primary:hover:not(:disabled) { background: #0a6fe0; }
+.em-btn.ghost { border-color: var(--em-hairline); background: var(--em-surface); color: var(--em-ink-2); }
+.em-btn.ghost:hover:not(:disabled) { border-color: var(--em-hairline-strong); background: var(--em-surface-2); }
+.em-btn.soft { background: var(--em-surface-3); color: var(--em-ink-2); }
+.em-btn.soft:hover:not(:disabled) { background: rgba(118, 118, 128, 0.16); }
+/* 危险操作默认安静：列表一长，一列常驻红字就是噪声，而且容易误点。
+   悬停时才变成红色，意图和风险都在那一刻说清楚。 */
+.em-btn.danger { color: var(--em-ink-3); }
+.em-btn.danger:hover:not(:disabled) { color: var(--em-err-ink); background: var(--em-err-soft); }
+.em-btn.quiet { padding: 5px 7px; color: var(--em-accent-ink); font-weight: 600; }
+.em-btn.quiet:hover:not(:disabled) { background: var(--em-accent-soft); }
+.em-btn.dashed { border: 0.5px dashed var(--em-hairline-strong); background: transparent; color: var(--em-ink-3); }
+.em-btn.dashed:hover:not(:disabled) { border-color: var(--em-accent); color: var(--em-accent-ink); }
+.em-btn:disabled { cursor: not-allowed; opacity: 0.5; }
+
+/* ---------------- 分段控件 ---------------- */
+.em-seg { display: inline-flex; gap: 3px; padding: 3px; border-radius: var(--em-r-md); background: rgba(118, 118, 128, 0.1); }
+.em-seg-item { padding: 6px 12px; border: 0; border-radius: var(--em-r-xs); background: transparent; color: var(--em-ink-3); cursor: pointer; font-size: var(--em-text-sm); font-weight: 620; transition: background-color 180ms var(--em-motion), color 180ms var(--em-motion); }
+.em-seg-item:hover:not(:disabled) { color: var(--em-ink); }
+.em-seg-item[aria-pressed="true"] { background: var(--em-surface); color: var(--em-ink); box-shadow: var(--em-shadow-sm); }
+.em-seg-item:disabled { cursor: not-allowed; opacity: 0.45; }
+
+/* ---------------- 列表行（也是选择器：点整行即生效） ---------------- */
+.em-list { display: grid; gap: 2px; }
+.em-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; width: 100%; padding: 10px 11px; border: 0.5px solid transparent; border-radius: var(--em-r-md); background: transparent; color: inherit; cursor: pointer; text-align: left; transition: background-color 160ms var(--em-motion), border-color 160ms var(--em-motion); }
+.em-row:hover:not(:disabled) { background: var(--em-surface-2); }
+.em-row[aria-pressed="true"] { border-color: rgba(0, 122, 255, 0.28); background: var(--em-accent-soft); }
+.em-row:disabled { cursor: default; }
+.em-row.static { cursor: default; }
+.em-row.static:hover { background: transparent; }
+.em-row-glyph { display: grid; place-items: center; width: 18px; height: 18px; flex: 0 0 18px; border-radius: 50%; color: var(--em-ink-4); font-size: var(--em-text-xs); }
+.em-row-glyph.done { background: var(--em-ok-soft); color: var(--em-ok-ink); }
+.em-row-glyph.working { border: 1.5px solid rgba(0, 122, 255, 0.28); border-top-color: var(--em-accent); animation: em-spin 0.8s linear infinite; }
+.em-row-glyph.error { background: var(--em-err-soft); color: var(--em-err-ink); }
+@keyframes em-spin { to { transform: rotate(360deg); } }
+.em-row-main { min-width: 0; display: grid; gap: 3px; }
+.em-row-title { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.em-row-title strong { overflow: hidden; font-size: var(--em-text-md); font-weight: 620; text-overflow: ellipsis; white-space: nowrap; }
+.em-row-meta { overflow: hidden; color: var(--em-ink-3); font-size: var(--em-text-xs); text-overflow: ellipsis; white-space: nowrap; }
+.em-row-trail { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; color: var(--em-ink-3); font-size: var(--em-text-xs); font-variant-numeric: tabular-nums; }
+
+/* ---------------- 进度 ---------------- */
+.em-progress { display: grid; gap: 5px; margin-top: 2px; }
+.em-progress-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--em-ink-3); font-size: var(--em-text-xs); font-variant-numeric: tabular-nums; }
+.em-progress-track { height: 6px; overflow: hidden; border-radius: var(--em-r-pill); background: rgba(118, 118, 128, 0.14); }
+.em-progress-fill { display: block; height: 100%; border-radius: inherit; background: var(--em-accent); transition: width 220ms var(--em-motion); }
+.em-progress.indeterminate .em-progress-fill { width: 32%; animation: em-slide 1.2s var(--em-motion) infinite; }
+@keyframes em-slide { 0% { transform: translateX(-110%); } 100% { transform: translateX(340%); } }
+.em-progress.failed .em-progress-fill { background: var(--em-err); }
+
+/* ---------------- 表单字段 ---------------- */
+.em-field { display: grid; gap: 6px; }
+.em-field-label { color: var(--em-ink-2); font-size: var(--em-text-sm); font-weight: 600; }
+.em-field-control { min-width: 0; }
+.em-field-hint { color: var(--em-ink-3); font-size: var(--em-text-xs); line-height: 1.55; }
+.em-field-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+.em-input, .em-select { min-width: 0; width: 100%; padding: 7px 10px; border: 0.5px solid var(--em-hairline-strong); border-radius: var(--em-r-sm); background: var(--em-surface); color: var(--em-ink); font-size: var(--em-text-sm); }
+/* background 简写会把箭头清掉，所以 .em-select 自己再声明一次（同一条规则内后者生效）。 */
+.em-select { max-width: 260px; padding-right: 26px; background-image: var(--em-chevron); background-repeat: no-repeat; background-position: right 9px center; }
+.em-input:read-only { background: var(--em-surface-2); color: var(--em-ink-2); }
+.em-toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 9px 0; }
+.em-toggle-row > span { color: var(--em-ink-2); font-size: var(--em-text-sm); line-height: 1.5; }
+.em-check-row { display: flex; align-items: flex-start; gap: 8px; color: var(--em-ink-2); font-size: var(--em-text-sm); line-height: 1.55; cursor: pointer; }
+
+/* ---------------- 折叠区 ---------------- */
+.em-collapsible { display: grid; gap: 10px; }
+.em-collapsible > summary { display: flex; align-items: center; gap: 7px; padding: 7px 0; color: var(--em-ink-3); cursor: pointer; font-size: var(--em-text-xs); list-style: none; }
+.em-collapsible > summary::-webkit-details-marker { display: none; }
+.em-collapsible > summary::before { content: "▸"; font-size: 9px; transition: transform 180ms var(--em-motion); }
+.em-collapsible[open] > summary::before { transform: rotate(90deg); }
+.em-collapsible-body { display: grid; gap: 12px; padding: 4px 0 2px; }
+
+/* ---------------- 行内提示 ---------------- */
+.em-hint { margin: 0; color: var(--em-ink-3); font-size: var(--em-text-xs); line-height: 1.55; }
+.em-note { margin: 0; padding: 9px 11px; border-radius: var(--em-r-md); background: var(--em-surface-2); color: var(--em-ink-3); font-size: var(--em-text-xs); line-height: 1.55; }
+.em-note.ok { background: var(--em-ok-soft); color: var(--em-ok-ink); }
+.em-note.err { background: var(--em-err-soft); color: var(--em-err-ink); }
+.em-note.warn { background: var(--em-warn-soft); color: var(--em-warn-ink); }
+.em-note code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; overflow-wrap: anywhere; }
+.em-empty { margin: 0; padding: 14px 2px; color: var(--em-ink-4); font-size: var(--em-text-xs); text-align: center; }
+
+/* ---------------- 保存提示 ---------------- */
+.em-saved { position: absolute; z-index: 20; top: 14px; right: 52px; display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: var(--em-r-pill); background: var(--em-ok-soft); color: var(--em-ok-ink); font-size: var(--em-text-xs); font-weight: 620; animation: em-saved-in 180ms var(--em-motion); }
+.em-saved.failed { background: var(--em-err-soft); color: var(--em-err-ink); }
+@keyframes em-saved-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }

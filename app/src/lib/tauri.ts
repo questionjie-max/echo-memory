@@ -151,6 +151,11 @@ export function downloadWhisperModel(modelId: string): Promise<void> {
   return invoke<void>("download_whisper_model", { modelId });
 }
 
+/** 取消正在进行的模型下载（Whisper 与 Ollama 通用）。已下好的部分会保留，可以接着下。 */
+export function cancelModelDownload(model: string): Promise<void> {
+  return invoke<void>("cancel_model_download", { model });
+}
+
 export function setMcpEnabled(enabled: boolean): Promise<McpStatus> {
   return invoke<McpStatus>("set_mcp_enabled", { enabled });
 }

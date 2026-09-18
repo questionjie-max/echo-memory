@@ -1,9 +1,31 @@
-//! Local Whisper adapter: embedded macOS Metal or `whisper.cpp` CLI. It never sends audio to a network service.
+//! Local Whisper adapter: embedded macOS Metal. It never sends audio to a network service.
+//!
+//! 模型只从本应用自己的模型目录和环境变量里找，不读其它软件的数据目录 —— 依赖别的 App
+//! 留下的模型文件，在没装那个 App 的机器上会让转写直接不可用。
 
 use crate::error::{AppError, AppResult};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+
+/// 应用内下载的推荐模型。尺寸与校验值只在这里定义一次，
+/// 前端和后端的其它位置都从这里读，避免多处字面量各自漂移。
+pub const RECOMMENDED_MODEL_ID: &str = "large-v3-turbo-q5_0";
+/// GGML 文件名前缀：正式文件是 `{stem}.bin`，下载临时文件是 `.{stem}.download`。
+pub const RECOMMENDED_MODEL_STEM: &str = "ggml-large-v3-turbo-q5_0";
+pub const RECOMMENDED_MODEL_BYTES: u64 = 574_041_195;
+pub const RECOMMENDED_MODEL_SHA256: &str =
+    "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2";
+pub const RECOMMENDED_MODEL_URL: &str =
+    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin";
+
+pub fn recommended_model_file() -> String {
+    format!("{RECOMMENDED_MODEL_STEM}.bin")
+}
+
+/// 下载临时文件与正式文件同目录，网络中断后靠它续传。
+pub fn recommended_model_partial() -> String {
+    format!(".{RECOMMENDED_MODEL_STEM}.download")
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WhisperSegment {
@@ -14,14 +36,31 @@ pub struct WhisperSegment {
 
 #[derive(Debug, Clone)]
 pub struct WhisperAdapter {
-    engine: Engine,
+    model: PathBuf,
 }
 
-#[derive(Debug, Clone)]
-enum Engine {
-    Cli(PathBuf),
-    #[cfg(target_os = "macos")]
-    Embedded(PathBuf),
+/// 模型目录里的有效模型文件：`.bin` 结尾，且不是下载中的临时文件。
+pub fn is_whisper_model_file(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    !name.starts_with('.')
+        && path.extension().and_then(|extension| extension.to_str()) == Some("bin")
+        && path.is_file()
+}
+
+/// 列出模型目录里可用的模型文件，文件名排序保证顺序稳定。
+pub fn library_model_files(models_dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(models_dir) else {
+        return Vec::new();
+    };
+    let mut files: Vec<PathBuf> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| is_whisper_model_file(path))
+        .collect();
+    files.sort();
+    files
 }
 
 impl WhisperAdapter {
@@ -30,7 +69,11 @@ impl WhisperAdapter {
     }
 
     pub fn detect_with_model_path(model_path: Option<&str>) -> AppResult<Self> {
-        #[cfg(target_os = "macos")]
+        if !cfg!(target_os = "macos") {
+            return Err(AppError::Import(
+                "当前平台不支持内嵌 Whisper 引擎".to_owned(),
+            ));
+        }
         if let Some(model) = model_path
             .map(str::trim)
             .filter(|path| !path.is_empty())
@@ -39,63 +82,26 @@ impl WhisperAdapter {
             if !model.is_file() {
                 return Err(AppError::Import("选择的 Whisper 模型文件不存在".to_owned()));
             }
-            return Ok(Self {
-                engine: Engine::Embedded(model),
-            });
+            return Ok(Self { model });
         }
-        #[cfg(target_os = "macos")]
         if let Some(model) = embedded_model() {
-            return Ok(Self {
-                engine: Engine::Embedded(model),
-            });
-        }
-        if let Some(executable) = std::env::var_os("WHISPER_CPP_BIN")
-            .map(PathBuf::from)
-            .or_else(find_on_path)
-        {
-            return Ok(Self {
-                engine: Engine::Cli(executable),
-            });
+            return Ok(Self { model });
         }
         Err(AppError::Import(
-            "未找到 whisper.cpp 或本机 Whisper 模型。设置 WHISPER_CPP_BIN 或 WHISPER_MODEL_PATH。"
-                .into(),
+            "尚未安装转写模型。请在设置里下载推荐模型，或选择本机已有的 GGML 模型文件。".into(),
         ))
     }
 
     pub fn model_path(&self) -> Option<&Path> {
-        match &self.engine {
-            Engine::Cli(_) => None,
-            #[cfg(target_os = "macos")]
-            Engine::Embedded(model) => Some(model),
-        }
-    }
-
-    pub fn transcribe(
-        &self,
-        audio_path: &Path,
-        language: &str,
-        output_prefix: &Path,
-    ) -> AppResult<Vec<WhisperSegment>> {
-        match &self.engine {
-            Engine::Cli(executable) => {
-                self.transcribe_cli(executable, audio_path, language, output_prefix)
-            }
-            #[cfg(target_os = "macos")]
-            Engine::Embedded(model) => embedded_transcribe(model, audio_path, language),
-        }
+        Some(&self.model)
     }
 
     pub fn model_name(&self) -> String {
-        match &self.engine {
-            Engine::Cli(_) => "whisper.cpp-cli".to_owned(),
-            #[cfg(target_os = "macos")]
-            Engine::Embedded(model) => model
-                .file_stem()
-                .and_then(|name| name.to_str())
-                .unwrap_or("whisper-rs")
-                .to_owned(),
-        }
+        self.model
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .unwrap_or("whisper-rs")
+            .to_owned()
     }
 
     pub fn transcribe_samples(
@@ -104,97 +110,40 @@ impl WhisperAdapter {
         language: &str,
         initial_prompt: Option<&str>,
     ) -> AppResult<Vec<WhisperSegment>> {
-        match &self.engine {
-            #[cfg(target_os = "macos")]
-            Engine::Embedded(model) => {
-                embedded_transcribe_samples(model, samples, language, initial_prompt)
-            }
-            Engine::Cli(_) => Err(AppError::Import(
-                "增强分块转写需要本地 Whisper 模型文件".to_owned(),
-            )),
+        #[cfg(target_os = "macos")]
+        {
+            embedded_transcribe_samples(&self.model, samples, language, initial_prompt)
         }
-    }
-
-    fn transcribe_cli(
-        &self,
-        executable: &Path,
-        audio_path: &Path,
-        language: &str,
-        output_prefix: &Path,
-    ) -> AppResult<Vec<WhisperSegment>> {
-        let output = Command::new(executable)
-            .args([
-                "-f",
-                &audio_path.to_string_lossy(),
-                "-l",
-                language,
-                "-oj",
-                "-of",
-                &output_prefix.to_string_lossy(),
-            ])
-            .output()
-            .map_err(|error| AppError::Import(format!("无法启动 whisper.cpp: {error}")))?;
-        if !output.status.success() {
-            return Err(AppError::Import(format!(
-                "whisper.cpp 转写失败: {}",
-                redact_message(&String::from_utf8_lossy(&output.stderr))
-            )));
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (samples, language, initial_prompt);
+            Err(AppError::Import(
+                "当前平台不支持内嵌 Whisper 引擎".to_owned(),
+            ))
         }
-        let json = std::fs::read_to_string(output_prefix.with_extension("json"))
-            .map_err(|error| AppError::Import(format!("whisper.cpp 未生成 JSON 输出: {error}")))?;
-        parse_whisper_json(&json)
     }
 }
 
-#[cfg(target_os = "macos")]
+/// 没有显式配置模型时的回退：先看 `WHISPER_MODEL_PATH`，再在应用自己的模型目录里挑一个。
 fn embedded_model() -> Option<PathBuf> {
-    std::env::var_os("WHISPER_MODEL_PATH")
-        .map(PathBuf::from)
-        .or_else(|| {
-            let home = std::env::var_os("HOME")?;
-            let path = PathBuf::from(home)
-                .join("Library/Application Support/com.meetily.ai/models/ggml-small.bin");
-            path.is_file().then_some(path)
-        })
+    if let Some(path) = std::env::var_os("WHISPER_MODEL_PATH").map(PathBuf::from) {
+        return Some(path);
+    }
+    pick_library_model(&crate::state::default_library_root().join("models"))
 }
 
-#[cfg(target_os = "macos")]
-fn embedded_transcribe(
-    model: &Path,
-    audio: &Path,
-    language: &str,
-) -> AppResult<Vec<WhisperSegment>> {
-    let wav = std::env::temp_dir().join(format!("echo-memory-{}.wav", uuid::Uuid::new_v4()));
-    let converted = Command::new("/usr/bin/afconvert")
-        .args([
-            "-f",
-            "WAVE",
-            "-d",
-            "LEI16@16000",
-            "-c",
-            "1",
-            &audio.to_string_lossy(),
-            &wav.to_string_lossy(),
-        ])
-        .output()
-        .map_err(|error| AppError::Import(format!("无法调用系统音频转换器: {error}")))?;
-    if !converted.status.success() {
-        return Err(AppError::Import(format!(
-            "音频转换失败: {}",
-            redact_message(&String::from_utf8_lossy(&converted.stderr))
-        )));
+/// 在应用自己的模型目录里挑当前模型：优先应用内下载的推荐模型，否则取体积最大的那个。
+fn pick_library_model(models_dir: &Path) -> Option<PathBuf> {
+    let recommended = models_dir.join(recommended_model_file());
+    if recommended.is_file() {
+        return Some(recommended);
     }
-    let samples = hound::WavReader::open(&wav)
-        .map_err(|error| AppError::Import(format!("无法读取转换后的音频: {error}")))?
-        .into_samples::<i16>()
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| AppError::Import(format!("音频样本无效: {error}")))?;
-    let _ = std::fs::remove_file(&wav);
-    let audio: Vec<f32> = samples
+    let mut candidates: Vec<(u64, PathBuf)> = library_model_files(models_dir)
         .into_iter()
-        .map(|sample| sample as f32 / i16::MAX as f32)
+        .filter_map(|path| Some((path.metadata().ok()?.len(), path)))
         .collect();
-    embedded_transcribe_samples(model, &audio, language, None)
+    candidates.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
+    candidates.into_iter().next().map(|(_, path)| path)
 }
 
 #[cfg(target_os = "macos")]
@@ -277,19 +226,6 @@ unsafe extern "C" fn discard_whisper_log(
 ) {
 }
 
-fn find_on_path() -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    for directory in std::env::split_paths(&path) {
-        for name in ["whisper-cli", "main"] {
-            let candidate = directory.join(name);
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-    }
-    None
-}
-
 pub fn parse_whisper_json(input: &str) -> AppResult<Vec<WhisperSegment>> {
     let value: Value = serde_json::from_str(input)
         .map_err(|error| AppError::Import(format!("whisper.cpp JSON 无法解析: {error}")))?;
@@ -357,16 +293,6 @@ fn parse_timestamp(value: &str) -> AppResult<i64> {
     Ok(((hours * 3_600 + minutes * 60) as f64 * 1_000.0 + seconds * 1_000.0).round() as i64)
 }
 
-fn redact_message(message: &str) -> String {
-    message
-        .lines()
-        .next()
-        .unwrap_or("未知错误")
-        .chars()
-        .take(240)
-        .collect()
-}
-
 /* --------------------- v0.5.0：whisperX 外置引擎（说话人分离） --------------------- */
 
 /// 探测 whisperX CLI：优先 ECHO_WHISPERX_BIN，其次 PATH。
@@ -420,6 +346,21 @@ pub fn parse_whisperx_json(input: &str) -> AppResult<Vec<WhisperxSegment>> {
     Ok(parsed)
 }
 
+/// whisperX 输出的是 `SPEAKER_00` 这类原始标签，转成用户能直接读的中文序号。
+/// 认不出来的标签原样保留 —— 用户自己重命名过的说话人不该被覆盖。
+pub fn localize_speaker_label(raw: Option<&str>) -> String {
+    let Some(raw) = raw.map(str::trim).filter(|label| !label.is_empty()) else {
+        return "未知".to_owned();
+    };
+    let Some(index) = raw.strip_prefix("SPEAKER_") else {
+        return raw.to_owned();
+    };
+    match index.parse::<u32>() {
+        Ok(number) => format!("说话人 {}", number + 1),
+        Err(_) => raw.to_owned(),
+    }
+}
+
 /// 运行 whisperX 转写（含说话人分离）。hf_token 用于 pyannote 模型授权。
 pub fn transcribe_whisperx(
     binary: &std::path::Path,
@@ -471,6 +412,14 @@ pub fn transcribe_whisperx(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn scratch_models_dir(label: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("echo-memory-{label}-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
     #[test]
     fn parses_offsets_from_whisper_json() {
         let segments = parse_whisper_json(r#"{"result":{"transcription":[{"offsets":{"from":1250,"to":2750},"text":"  你好  "}]}}"#).unwrap();
@@ -495,19 +444,61 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires a local Whisper model and ECHO_TEST_AUDIO"]
-    fn transcribes_local_audio() {
-        let audio = std::env::var("ECHO_TEST_AUDIO").expect("ECHO_TEST_AUDIO is required");
-        let output = std::env::temp_dir().join("echo-memory-whisper-smoke");
-        let segments = WhisperAdapter::detect()
-            .unwrap()
-            .transcribe(Path::new(&audio), "zh", &output)
-            .unwrap();
-        assert!(!segments.is_empty());
-        assert!(segments
-            .iter()
-            .all(|segment| segment.end_ms >= segment.start_ms));
+    fn picks_recommended_model_first() {
+        let dir = scratch_models_dir("recommended");
+        std::fs::write(dir.join("ggml-medium.bin"), vec![0_u8; 4096]).unwrap();
+        std::fs::write(dir.join(recommended_model_file()), b"lmgg").unwrap();
+        assert_eq!(
+            pick_library_model(&dir).unwrap(),
+            dir.join(recommended_model_file())
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
+
+    #[test]
+    fn falls_back_to_the_largest_model() {
+        let dir = scratch_models_dir("largest");
+        std::fs::write(dir.join("ggml-small.bin"), vec![0_u8; 1024]).unwrap();
+        std::fs::write(dir.join("ggml-medium.bin"), vec![0_u8; 4096]).unwrap();
+        assert_eq!(
+            pick_library_model(&dir).unwrap().file_name().unwrap(),
+            "ggml-medium.bin"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn ignores_partial_downloads_and_foreign_files() {
+        let dir = scratch_models_dir("ignore");
+        std::fs::write(dir.join(recommended_model_partial()), vec![0_u8; 4096]).unwrap();
+        std::fs::write(dir.join("notes.txt"), b"x").unwrap();
+        assert!(pick_library_model(&dir).is_none());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 干净机器回归：模型来源只能是我们自己的模型目录或环境变量。
+    /// 曾经这里会去读另一个 App（Meetily）的模型目录，在有那个 App 的机器上测着没问题，
+    /// 换台机器就让转写直接不可用。
+    #[test]
+    fn never_borrows_another_apps_model_directory() {
+        // 拆开拼接，否则断言自身就把要禁止的字符串写进了源码。
+        let foreign_bundle_id = ["com", "meetily", "ai"].join(".");
+        assert!(!include_str!("whisper.rs").contains(&foreign_bundle_id));
+        assert!(!include_str!("commands.rs").contains(&foreign_bundle_id));
+    }
+
+    #[test]
+    fn localizes_raw_speaker_labels() {
+        assert_eq!(localize_speaker_label(Some("SPEAKER_00")), "说话人 1");
+        assert_eq!(localize_speaker_label(Some("SPEAKER_01")), "说话人 2");
+        assert_eq!(localize_speaker_label(Some("SPEAKER_11")), "说话人 12");
+        // 用户改过的名字原样保留，认不出的标签也不乱改。
+        assert_eq!(localize_speaker_label(Some("张三")), "张三");
+        assert_eq!(localize_speaker_label(Some("SPEAKER_A")), "SPEAKER_A");
+        assert_eq!(localize_speaker_label(Some("  ")), "未知");
+        assert_eq!(localize_speaker_label(None), "未知");
+    }
+
     #[test]
     fn whisperx_json_parses_speaker_labels() {
         let fixture = r#"{"segments":[

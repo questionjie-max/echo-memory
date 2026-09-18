@@ -43,7 +43,7 @@ export default function MemoryViewControls(props: Props) {
   const estimatedHigh = props.sourceRecordCount * 12_000;
 
   return <div className="memory-view-controls">
-    <header className="memory-view-header">
+    <header className="memory-view-header view-header">
       <div>
         <p className="pane-eyebrow">{memoryScopeLabel(props.scope)} · {memoryRangeLabel(props.range)}</p>
         <h2>{props.title}</h2>
