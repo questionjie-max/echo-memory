@@ -42,7 +42,8 @@
       "icons/icon.icns"
     ],
     "resources": {
-      "resources/": ""
+      "resources/": "",
+      "migrations/": "migrations/"
     }
   }
 }

@@ -1,227 +1,154 @@
 import { open } from "@tauri-apps/plugin-dialog";
-import { listen } from "@tauri-apps/api/event";
-import { isTauri } from "@tauri-apps/api/core";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { open as openDirectory } from "@tauri-apps/plugin-dialog";
+import AiModelSettings from "./AiModelSettings";
 import TemplateWizard from "./TemplateWizard";
+import {
+  Button,
+  Card,
+  Field,
+  List,
+  ListRow,
+  PanelShell,
+  Pill,
+  SavedToast,
+  Stack,
+  StatusPill,
+  ToggleRow,
+  useSavedFlash,
+  type NavItem,
+} from "./SettingsKit";
+import { useModelDownloads } from "./useModelDownloads";
 import type {
   AnalysisTemplate,
   AppInfo,
   AudioPreprocessorStatus,
-  TranscriptionEngineStatus,
   ExternalAiSettings,
   Hotword,
   InboxStatus,
-  OutputStatus,
+  KnowledgeSettings,
   LocalAiStatus,
-  ModelDownloadProgress,
+  OutputStatus,
   TemplateSection,
+  TranscriptionEngineStatus,
 } from "../shared/types";
 import {
-  createAnalysisTemplate,
-  deleteAnalysisTemplate,
   addHotword,
   addInboxWatchFolder,
-  getAppInfo,
-  getTranscriptionEngineStatus,
-  setTranscriptionEngine,
-  setHfToken,
+  clearExternalAiApiKey,
   clearHfToken,
-  downloadWhisperModel,
+  createAnalysisTemplate,
+  deleteAnalysisTemplate,
+  getAppInfo,
   getAudioPreprocessorStatus,
+  getExternalAiSettings,
   getInboxStatus,
+  getLocalAiStatus,
+  getOutputStatus,
   getTranscriptCorrectionEnabled,
+  getTranscriptionEngineStatus,
+  listAnalysisTemplates,
   listHotwords,
   removeHotword,
   removeInboxWatchFolder,
   resetOnboarding,
   rescanInbox,
-  getOutputStatus,
   setAutoExportAnalysis,
-  setOutputFolder,
-  setInboxUsbDetection,
-  setTranscriptCorrectionEnabled,
-  getExternalAiSettings,
-  getLocalAiStatus,
-  listAnalysisTemplates,
-  pullOllamaModel,
-  clearExternalAiApiKey,
   setExternalAiApiKey,
+  setHfToken,
+  setInboxUsbDetection,
+  setOutputFolder,
+  setTranscriptCorrectionEnabled,
+  setTranscriptionEngine,
   testExternalAiConnection,
-  updateExternalAiSettings,
   updateAnalysisTemplate,
+  updateExternalAiSettings,
   updateKnowledgeSettings,
 } from "../lib/tauri";
 
 interface Props {
   open: boolean;
   onClose: () => void;
+  /** 「去重建索引」需要离开设置面板回到主界面，由外层决定去哪。 */
+  onOpenKnowledge?: () => void;
 }
 
-type SettingsTab = "ai" | "external" | "templates" | "inbox" | "hotwords" | "output" | "about";
+type SettingsTab = "models" | "templates" | "inbox" | "hotwords" | "output" | "about";
 
-const LANGUAGES = [
-  ["zh", "中文"],
-  ["auto", "自动检测"],
-  ["en", "英语"],
-  ["ja", "日语"],
-  ["ko", "韩语"],
-  ["fr", "法语"],
-  ["de", "德语"],
-  ["es", "西班牙语"],
+/**
+ * 六个分区按「用户带着什么问题来」划分：
+ * AI 模型（谁来转写和分析）/ 分析模板（怎么分析）/ 收件箱（音频从哪来）/
+ * 词汇库（怎么认对专有名词）/ 产出（结果写到哪）/ 关于（版本与数据）。
+ */
+const NAV: NavItem[] = [
+  { id: "models", label: "AI 模型" },
+  { id: "templates", label: "分析模板" },
+  { id: "inbox", label: "收件箱" },
+  { id: "hotwords", label: "词汇库" },
+  { id: "output", label: "产出" },
+  { id: "about", label: "关于" },
 ];
 
-export default function SettingsPanel({ open: visible, onClose }: Props) {
-  const [tab, setTab] = useState<SettingsTab>("ai");
+const TAB_TITLES: Record<SettingsTab, { title: string; subtitle: string }> = {
+  models: { title: "AI 模型", subtitle: "谁来把录音转成文字，谁来把文字变成结论。改动即时生效。" },
+  templates: { title: "分析模板", subtitle: "决定 AI 从逐字稿里抽出什么。" },
+  inbox: { title: "收件箱", subtitle: "监听文件夹，新音频一出现就自动导入并转写。" },
+  hotwords: { title: "词汇库", subtitle: "专有名词、人名、产品名，避免被写成同音字。" },
+  output: { title: "产出", subtitle: "分析、逐字稿和成稿以 Markdown 写到你的文件夹。" },
+  about: { title: "关于", subtitle: "版本、数据目录和首次启动引导。" },
+};
+
+export default function SettingsPanel({ open: visible, onClose, onOpenKnowledge }: Props) {
+  const [tab, setTab] = useState<SettingsTab>("models");
+  const [status, setStatus] = useState<LocalAiStatus | null>(null);
+  const [external, setExternal] = useState<ExternalAiSettings | null>(null);
+  const [preprocessor, setPreprocessor] = useState<AudioPreprocessorStatus | null>(null);
+  const [engineStatus, setEngineStatus] = useState<TranscriptionEngineStatus | null>(null);
+  const [templates, setTemplates] = useState<AnalysisTemplate[]>([]);
   const [inbox, setInbox] = useState<InboxStatus | null>(null);
   const [hotwords, setHotwords] = useState<Hotword[]>([]);
   const [hotwordInput, setHotwordInput] = useState("");
   const [correctionEnabled, setCorrectionEnabled] = useState(false);
-  const [inboxError, setInboxError] = useState<string | null>(null);
-  const [wizardOpen, setWizardOpen] = useState(false);
-  const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
-  const [engineStatus, setEngineStatus] = useState<TranscriptionEngineStatus | null>(null);
-  const [hfTokenDraft, setHfTokenDraft] = useState("");
   const [output, setOutput] = useState<OutputStatus | null>(null);
-
-  async function refreshInbox() {
-    try {
-      setInbox(await getInboxStatus());
-      setInboxError(null);
-    } catch (reason) {
-      setInboxError(String(reason));
-    }
-  }
-
-  async function refreshHotwords() {
-    try {
-      setHotwords(await listHotwords());
-    } catch (reason) {
-      setInboxError(String(reason));
-    }
-  }
-
-  async function chooseWatchFolder() {
-    try {
-      const selected = await openDirectory({ directory: true, multiple: false });
-      if (typeof selected !== "string") return;
-      await addInboxWatchFolder(selected);
-      await refreshInbox();
-    } catch (reason) {
-      setInboxError(String(reason));
-    }
-  }
-
-  async function submitHotword() {
-    const term = hotwordInput.trim();
-    if (!term) return;
-    try {
-      await addHotword(term);
-      setHotwordInput("");
-      await refreshHotwords();
-    } catch (reason) {
-      setInboxError(String(reason));
-    }
-  }
-
-  async function toggleCorrection(enabled: boolean) {
-    try {
-      await setTranscriptCorrectionEnabled(enabled);
-      setCorrectionEnabled(enabled);
-    } catch (reason) {
-      setInboxError(String(reason));
-    }
-  }
-
-  async function switchEngine(engine: "embedded" | "whisperx") {
-    try {
-      await setTranscriptionEngine(engine);
-      setEngineStatus(await getTranscriptionEngineStatus());
-      setInboxError(null);
-    } catch (reason) {
-      setInboxError(String(reason));
-    }
-  }
-
-  async function saveHfToken() {
-    if (!hfTokenDraft.trim()) return;
-    try {
-      await setHfToken(hfTokenDraft.trim());
-      setHfTokenDraft("");
-      setEngineStatus(await getTranscriptionEngineStatus());
-      setNotice("HuggingFace Token 已保存到钥匙串");
-    } catch (reason) {
-      setInboxError(String(reason));
-    }
-  }
-
-  async function removeHfToken() {
-    try {
-      await clearHfToken();
-      setEngineStatus(await getTranscriptionEngineStatus());
-    } catch (reason) {
-      setInboxError(String(reason));
-    }
-  }
-
-  async function chooseOutputFolder() {
-    try {
-      const selected = await openDirectory({ directory: true, multiple: false });
-      if (typeof selected !== "string") return;
-      setOutput(await setOutputFolder(selected));
-      setInboxError(null);
-    } catch (reason) {
-      setInboxError(String(reason));
-    }
-  }
-
-  async function clearOutputFolder() {
-    try {
-      setOutput(await setOutputFolder(null));
-    } catch (reason) {
-      setInboxError(String(reason));
-    }
-  }
-
-  async function toggleAutoExport(enabled: boolean) {
-    try {
-      setOutput(await setAutoExportAnalysis(enabled));
-    } catch (reason) {
-      setInboxError(String(reason));
-    }
-  }
-
-  async function rerunOnboarding() {
-    try {
-      await resetOnboarding();
-      onClose();
-    } catch (reason) {
-      setInboxError(String(reason));
-    }
-  }
-  const [status, setStatus] = useState<LocalAiStatus | null>(null);
-  const [external, setExternal] = useState<ExternalAiSettings | null>(null);
-  const [externalApiKey, setExternalApiKeyDraft] = useState("");
-  const [privacyAcknowledged, setPrivacyAcknowledged] = useState(false);
-  const [preprocessor, setPreprocessor] = useState<AudioPreprocessorStatus | null>(null);
-  const [templates, setTemplates] = useState<AnalysisTemplate[]>([]);
+  const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
+  const [editing, setEditing] = useState<AnalysisTemplate | null>(null);
+  const [wizardOpen, setWizardOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
-  const [download, setDownload] = useState<ModelDownloadProgress | null>(null);
-  const [whisperDownload, setWhisperDownload] = useState<ModelDownloadProgress | null>(null);
-  const [editing, setEditing] = useState<AnalysisTemplate | null>(null);
-  const currentWhisperPath = status?.settings.whisperModelPath || status?.whisperModelPath || "";
+  const [tabError, setTabError] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<string | null>(null);
+  const { flash, show } = useSavedFlash();
+  const { downloads, start, cancel } = useModelDownloads((settled) => {
+    if (settled.phase === "done") void refresh();
+  });
+  // 两次写入可能落在同一个 tick 里（例如先失焦再点开关）。用 ref 记录最新值，
+  // 每次都基于最新状态合并，否则后一次会用渲染闭包里的旧数据把前一次覆盖掉。
+  const settingsRef = useRef<KnowledgeSettings | null>(null);
+  const externalRef = useRef<ExternalAiSettings | null>(null);
+
+  function applyStatus(next: LocalAiStatus | null) {
+    settingsRef.current = next?.settings ?? null;
+    setStatus(next);
+  }
+
+  function applyExternal(next: ExternalAiSettings | null) {
+    externalRef.current = next;
+    setExternal(next);
+  }
 
   async function refresh() {
     setError("");
     try {
-      const [ai, audio, items, externalSettings] = await Promise.all([getLocalAiStatus(), getAudioPreprocessorStatus(), listAnalysisTemplates(), getExternalAiSettings()]);
-      setStatus(ai);
+      const [ai, audio, items, externalSettings] = await Promise.all([
+        getLocalAiStatus(),
+        getAudioPreprocessorStatus(),
+        listAnalysisTemplates(),
+        getExternalAiSettings(),
+      ]);
+      applyStatus(ai);
       setPreprocessor(audio);
       setTemplates(items);
-      setExternal(externalSettings);
-      setPrivacyAcknowledged(Boolean(externalSettings.privacyConsentAt));
+      applyExternal(externalSettings);
     } catch (reason) {
       setError(String(reason));
     }
@@ -238,169 +165,538 @@ export default function SettingsPanel({ open: visible, onClose }: Props) {
       void getOutputStatus().then(setOutput).catch(() => setOutput(null));
     }
     if (tab === "inbox" || tab === "hotwords") {
-      void refreshInbox();
-      void refreshHotwords();
+      void loadInbox();
+      void loadHotwords();
       void getOutputStatus().then(setOutput).catch(() => setOutput(null));
       void getTranscriptCorrectionEnabled().then(setCorrectionEnabled).catch(() => setCorrectionEnabled(false));
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, tab]);
 
-  useEffect(() => {
-    if (!isTauri()) return;
+  async function loadInbox() {
+    try {
+      setInbox(await getInboxStatus());
+      setTabError(null);
+    } catch (reason) {
+      setTabError(String(reason));
+    }
+  }
 
-    const unlisten = listen<ModelDownloadProgress>("model-download-progress", (event) => {
-      setDownload(event.payload);
-      if (event.payload.status === "completed") {
-        setNotice(`模型“${event.payload.model}”已安装，确认后可设为当前模型。`);
-        void refresh();
-      }
-      if (event.payload.status === "failed") setError(event.payload.error ?? "模型下载失败");
-    }).catch((reason) => {
-      setError(`无法监听模型下载进度：${String(reason)}`);
-      return () => undefined;
-    });
-    return () => { void unlisten.then((stop) => stop()); };
-  }, []);
+  async function loadHotwords() {
+    try {
+      setHotwords(await listHotwords());
+    } catch (reason) {
+      setTabError(String(reason));
+    }
+  }
 
-  useEffect(() => {
-    if (!isTauri()) return;
+  /** 改动即时生效：本地先乐观更新保证点下去有反馈，写库失败再退回并说明原因。 */
+  async function report<T>(action: () => Promise<T>, success: string, apply?: (value: T) => void) {
+    setError("");
+    try {
+      const value = await action();
+      apply?.(value);
+      show("saved", success);
+    } catch (reason) {
+      show("failed", String(reason));
+      setError(String(reason));
+      await refresh();
+    }
+  }
 
-    const unlisten = listen<ModelDownloadProgress>("whisper-model-download-progress", (event) => {
-      setWhisperDownload(event.payload);
-      if (event.payload.status === "completed") {
-        setNotice("Whisper large-v3-turbo-q5_0 已安装，确认后可设为当前模型。");
-        void refresh();
-      }
-      if (event.payload.status === "failed") setError(event.payload.error ?? "Whisper 模型下载失败");
-    }).catch((reason) => {
-      setError(`无法监听 Whisper 下载进度：${String(reason)}`);
-      return () => undefined;
-    });
-    return () => { void unlisten.then((stop) => stop()); };
-  }, []);
+  async function saveSettings(patch: Partial<KnowledgeSettings>) {
+    const previous = settingsRef.current;
+    if (!previous) return;
+    const next = { ...previous, ...patch };
+    settingsRef.current = next;
+    setStatus((current) => (current ? { ...current, settings: next } : current));
+    await report(
+      () => updateKnowledgeSettings(next),
+      "已保存",
+      (saved) => {
+        settingsRef.current = saved;
+        setStatus((current) => (current ? { ...current, settings: saved } : current));
+      },
+    );
+    await refresh();
+  }
 
-  if (!visible) return null;
+  async function switchEngine(next: "embedded" | "whisperx") {
+    await report(
+      () => setTranscriptionEngine(next).then(getTranscriptionEngineStatus),
+      "已切换引擎",
+      setEngineStatus,
+    );
+  }
+
+  async function saveHfToken(token: string) {
+    await report(
+      () => setHfToken(token).then(getTranscriptionEngineStatus),
+      "Token 已保存到钥匙串",
+      setEngineStatus,
+    );
+  }
+
+  async function removeHfToken() {
+    await report(
+      () => clearHfToken().then(getTranscriptionEngineStatus),
+      "Token 已清除",
+      setEngineStatus,
+    );
+  }
 
   async function chooseWhisperModel() {
-    const selected = await open({ multiple: false, directory: false, filters: [{ name: "Whisper 模型", extensions: ["bin"] }] });
-    if (typeof selected === "string" && status) {
-      setStatus({ ...status, settings: { ...status.settings, whisperModelPath: selected } });
-    }
+    const selected = await open({
+      multiple: false,
+      directory: false,
+      filters: [{ name: "Whisper 模型", extensions: ["bin"] }],
+    });
+    if (typeof selected === "string") await saveSettings({ whisperModelPath: selected });
   }
 
-  async function saveAi() {
-    if (!status) return;
-    setBusy(true);
-    setError("");
-    setNotice("");
+  async function saveExternal(patch: Partial<ExternalAiSettings>) {
+    const previous = externalRef.current;
+    if (!previous) return;
+    const next = { ...previous, ...patch };
+    externalRef.current = next;
+    setExternal(next);
     try {
-      const settings = await updateKnowledgeSettings(status.settings);
-      setStatus({ ...status, settings });
-      setNotice("本机 AI 设置已保存");
-      await refresh();
-    } catch (reason) {
-      setError(String(reason));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function installOllamaModel(model: string, size: string, purpose: string) {
-    if (!window.confirm(`下载“${model}”约需 ${size}，仅用于本机${purpose}。下载完成后不会自动切换，继续吗？`)) return;
-    setError("");
-    setNotice("");
-    setDownload({ model, status: "正在连接", completed: null, total: null, error: null });
-    try {
-      await pullOllamaModel(model);
-    } catch (reason) {
-      setDownload(null);
-      setError(String(reason));
-    }
-  }
-
-  async function saveExternal() {
-    if (!external) return;
-    if (external.enabled && !external.hasApiKey) {
-      setError("启用外部 AI 前请先配置 API Key。");
-      return;
-    }
-    if (external.enabled && !external.privacyConsentAt && !privacyAcknowledged) {
-      setError("请先确认外部发送范围说明。");
-      return;
-    }
-    setBusy(true);
-    setError("");
-    setNotice("");
-    try {
-      const saved = await updateExternalAiSettings({
-        ...external,
-        privacyConsentAt: external.privacyConsentAt || (privacyAcknowledged ? new Date().toISOString() : null),
-      });
+      const saved = await updateExternalAiSettings(next);
+      externalRef.current = saved;
       setExternal(saved);
-      setPrivacyAcknowledged(Boolean(saved.privacyConsentAt));
-      setNotice("外部 AI 设置已保存");
+      show("saved", "已保存");
+      setError("");
     } catch (reason) {
+      // 校验失败（例如没勾隐私说明就启用）时要退回，不能留下一个假的已启用状态。
+      externalRef.current = previous;
+      setExternal(previous);
+      show("failed", String(reason));
       setError(String(reason));
-    } finally {
-      setBusy(false);
     }
   }
 
-  async function saveExternalKey() {
-    if (!externalApiKey.trim()) return;
-    setBusy(true);
-    setError("");
-    try {
-      const saved = await setExternalAiApiKey(externalApiKey.trim());
-      setExternal(saved);
-      setExternalApiKeyDraft("");
-      setNotice("API Key 已安全保存到 macOS 钥匙串");
-    } catch (reason) {
-      setError(String(reason));
-    } finally {
-      setBusy(false);
-    }
+  async function saveExternalKey(key: string) {
+    await report(() => setExternalAiApiKey(key), "API Key 已保存到钥匙串", applyExternal);
   }
 
   async function removeExternalKey() {
     if (!window.confirm("清除外部 AI API Key？外部 AI 将无法生成记忆快照。")) return;
-    setBusy(true);
-    try {
-      setExternal(await clearExternalAiApiKey());
-      setNotice("API Key 已清除");
-    } catch (reason) {
-      setError(String(reason));
-    } finally {
-      setBusy(false);
-    }
+    await report(() => clearExternalAiApiKey(), "API Key 已清除", applyExternal);
   }
 
-  async function checkExternalConnection() {
+  async function checkExternal() {
     setBusy(true);
     setError("");
-    setNotice("");
     try {
+      const startedAt = Date.now();
       await testExternalAiConnection();
-      setNotice("连接测试成功");
+      setTestResult(`✓ ${Date.now() - startedAt}ms`);
+      await refresh();
     } catch (reason) {
+      setTestResult("✗ 失败");
       setError(String(reason));
     } finally {
       setBusy(false);
     }
   }
 
-  async function installWhisperModel() {
-    if (!window.confirm("下载 Whisper large-v3-turbo-q5_0 本地模型（574,041,195 字节，约 547.4MB；SHA-256 394221709cd5…）。完成后不会自动切换，继续吗？")) return;
-    setError("");
-    setNotice("");
-    setWhisperDownload({ model: "large-v3-turbo-q5_0", status: "正在连接", completed: null, total: null, error: null });
+  async function submitHotword() {
+    const term = hotwordInput.trim();
+    if (!term) return;
     try {
-      await downloadWhisperModel("large-v3-turbo-q5_0");
+      await addHotword(term);
+      setHotwordInput("");
+      await loadHotwords();
+      show("saved", "已添加");
+      setError("");
     } catch (reason) {
-      setWhisperDownload(null);
       setError(String(reason));
     }
   }
+
+  async function chooseWatchFolder() {
+    try {
+      const selected = await openDirectory({ directory: true, multiple: false });
+      if (typeof selected !== "string") return;
+      await addInboxWatchFolder(selected);
+      await loadInbox();
+      show("saved", "已添加");
+      setError("");
+    } catch (reason) {
+      setError(String(reason));
+    }
+  }
+
+  async function chooseOutputFolder() {
+    try {
+      const selected = await openDirectory({ directory: true, multiple: false });
+      if (typeof selected !== "string") return;
+      setOutput(await setOutputFolder(selected));
+      show("saved", "已保存");
+      setError("");
+    } catch (reason) {
+      setError(String(reason));
+    }
+  }
+
+  async function rerunOnboarding() {
+    try {
+      await resetOnboarding();
+      onClose();
+    } catch (reason) {
+      setError(String(reason));
+    }
+  }
+
+  if (!visible) return null;
+
+  const header = TAB_TITLES[tab];
+
+  return (
+    <div
+      className="settings-scrim"
+      role="presentation"
+      onMouseDown={(event) => event.target === event.currentTarget && onClose()}
+    >
+      <PanelShell
+        brand="回声记忆"
+        version={appInfo ? `v${appInfo.version}` : undefined}
+        nav={NAV}
+        active={tab}
+        onSelect={(id) => setTab(id as SettingsTab)}
+        title={header.title}
+        subtitle={header.subtitle}
+        onClose={onClose}
+      >
+        <SavedToast flash={flash} />
+
+        {tab === "models" ? (
+          status ? (
+            <AiModelSettings
+              status={status}
+              preprocessor={preprocessor}
+              engine={engineStatus}
+              external={external}
+              downloads={downloads}
+              busy={busy}
+              testResult={testResult}
+              error={error}
+              onSaveSettings={(patch) => void saveSettings(patch)}
+              onStartDownload={(kind, model) => void start(kind, model)}
+              onCancelDownload={(model) => void cancel(model)}
+              onSwitchEngine={(next) => void switchEngine(next)}
+              onSaveHfToken={(token) => void saveHfToken(token)}
+              onClearHfToken={() => void removeHfToken()}
+              onChooseWhisperFile={() => void chooseWhisperModel()}
+              onSaveExternal={(patch) => void saveExternal(patch)}
+              onSaveExternalKey={(key) => void saveExternalKey(key)}
+              onClearExternalKey={() => void removeExternalKey()}
+              onTestExternal={() => void checkExternal()}
+              onRefresh={() => void refresh()}
+              onOpenKnowledge={() => {
+                onClose();
+                onOpenKnowledge?.();
+              }}
+            />
+          ) : (
+            <p className="em-empty">正在读取本机状态…</p>
+          )
+        ) : tab === "templates" ? (
+          editing ? (
+            <TemplateEditor
+              template={editing}
+              busy={busy}
+              onCancel={() => setEditing(null)}
+              onSaved={async () => {
+                setEditing(null);
+                await refresh();
+                show("saved", "模板已保存");
+              }}
+              onError={setError}
+            />
+          ) : (
+            <Card
+              title={`${templates.length} 个模板`}
+              description="分析时选一个模板，AI 就按它的栏目抽取内容。"
+              actions={
+                <>
+                  <Button onClick={() => setWizardOpen(true)}>✨ AI 生成模板</Button>
+                  <Button variant="primary" onClick={() => setEditing(emptyTemplate())}>
+                    新建模板
+                  </Button>
+                </>
+              }
+            >
+              <List>
+                {templates.map((template) => (
+                  <ListRow
+                    key={template.id}
+                    state="done"
+                    title={template.name}
+                    badge={template.isBuiltin ? <Pill>内置</Pill> : undefined}
+                    meta={template.description || "自定义分析模板"}
+                    trail={
+                      <>
+                        <Button variant="quiet" disabled={busy} onClick={() => void duplicateTemplate(template)}>
+                          复制
+                        </Button>
+                        {!template.isBuiltin && (
+                          <Button variant="quiet" disabled={busy} onClick={() => setEditing(template)}>
+                            编辑
+                          </Button>
+                        )}
+                        {!template.isBuiltin && (
+                          <Button
+                            variant="danger"
+                            disabled={busy}
+                            ariaLabel={`删除模板 ${template.name}`}
+                            onClick={() => void removeTemplate(template)}
+                          >
+                            删除
+                          </Button>
+                        )}
+                      </>
+                    }
+                  />
+                ))}
+              </List>
+            </Card>
+          )
+        ) : tab === "inbox" ? (
+          inbox ? (
+            <Stack>
+              <Card
+                title="监听文件夹"
+                description="新音频一出现就自动导入并转写。添加监听时的已有文件会被跳过，只接住之后新出现的文件。"
+                status={<StatusPill ok={inbox.watchFolders.length > 0 || inbox.usbDetection} okText="已开启" badText="未开启" />}
+                actions={
+                  <>
+                    <Button onClick={() => void chooseWatchFolder()}>添加文件夹…</Button>
+                    <Button onClick={() => void rescanInbox().then(loadInbox)}>立即扫描</Button>
+                  </>
+                }
+                footer={
+                  <ToggleRow
+                    label="插入 USB 录音设备时自动扫描（设备上的录音属于你要导入的内容）"
+                    checked={inbox.usbDetection}
+                    onChange={(enabled) => {
+                      setInbox({ ...inbox, usbDetection: enabled });
+                      void setInboxUsbDetection(enabled).then(loadInbox).catch((reason) => setError(String(reason)));
+                    }}
+                  />
+                }
+              >
+                {inbox.watchFolders.length === 0 ? (
+                  <p className="em-empty">还没有监听任何文件夹。点上面的「添加文件夹…」开始。</p>
+                ) : (
+                  <List>
+                    {inbox.watchFolders.map((folder) => (
+                      <ListRow
+                        key={folder.id}
+                        state="done"
+                        title={folder.label}
+                        meta={folder.path}
+                        trail={
+                          <Button
+                            variant="danger"
+                            ariaLabel={`移除监听文件夹 ${folder.label}`}
+                            onClick={() => void removeInboxWatchFolder(folder.id).then(loadInbox)}
+                          >
+                            移除
+                          </Button>
+                        }
+                      />
+                    ))}
+                  </List>
+                )}
+              </Card>
+              <Card
+                title="最近自动导入"
+                description={`待处理 ${inbox.counts.pending} · 已导入 ${inbox.counts.imported} · 失败 ${inbox.counts.failed}`}
+              >
+                {inbox.recentFiles.length === 0 ? (
+                  <p className="em-empty">还没有文件进入收件箱。</p>
+                ) : (
+                  <List>
+                    {inbox.recentFiles.map((file) => (
+                      <ListRow
+                        key={file.id}
+                        state={file.status === "failed" ? "error" : file.status === "imported" ? "done" : "working"}
+                        title={file.fileName}
+                        meta={file.errorMessage ?? inboxStatusLabel(file.status)}
+                      />
+                    ))}
+                  </List>
+                )}
+              </Card>
+            </Stack>
+          ) : (
+            <p className="em-empty">正在读取收件箱状态…</p>
+          )
+        ) : tab === "hotwords" ? (
+          <Stack>
+            <Card
+              title="个人词汇库"
+              description="热词会注入转写提示与 AI 校对，明显改善专有名词、人名、产品名的中文识别。"
+              status={<Pill>{hotwords.length} 个</Pill>}
+            >
+              <div className="em-field-row">
+                <input
+                  className="em-input"
+                  value={hotwordInput}
+                  placeholder="输入热词后回车"
+                  onChange={(event) => setHotwordInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.nativeEvent.isComposing) void submitHotword();
+                  }}
+                />
+                <Button variant="primary" disabled={!hotwordInput.trim()} onClick={() => void submitHotword()}>
+                  添加
+                </Button>
+              </div>
+              {hotwords.length === 0 ? (
+                <p className="em-empty">还没有热词。</p>
+              ) : (
+                <List>
+                  {hotwords.map((hotword) => (
+                    <ListRow
+                      key={hotword.id}
+                      state="done"
+                      title={hotword.term}
+                      meta={hotword.note ?? undefined}
+                      trail={
+                        <Button
+                          variant="danger"
+                          ariaLabel={`删除热词 ${hotword.term}`}
+                          onClick={() => void removeHotword(hotword.id).then(loadHotwords)}
+                        >
+                          删除
+                        </Button>
+                      }
+                    />
+                  ))}
+                </List>
+              )}
+            </Card>
+            <Card title="转写 AI 校对" description="校对结果写入独立文本层，原始逐字稿永不覆盖，可随时对比。">
+              <ToggleRow
+                label="转写完成后自动用本机模型校对（断句、标点、热词纠正）"
+                checked={correctionEnabled}
+                onChange={(enabled) => {
+                  setCorrectionEnabled(enabled);
+                  void setTranscriptCorrectionEnabled(enabled).catch((reason) => setError(String(reason)));
+                }}
+              />
+            </Card>
+          </Stack>
+        ) : tab === "output" ? (
+          output ? (
+            <Stack>
+              <Card
+                title="产出文件夹"
+                description="所有生成内容以标准 Markdown + YAML frontmatter 写入这里。可以指向 Obsidian 等笔记工具的目录——回声记忆只负责写出，不感知任何外部工具。"
+                status={<StatusPill ok={Boolean(output.folder)} okText="自定义" badText="默认位置" />}
+              >
+                <Field label="当前目录">
+                  <div className="em-field-row">
+                    <input
+                      className="em-input"
+                      readOnly
+                      value={output.folder ?? "~/Documents/回声记忆产出"}
+                    />
+                    <div className="em-card-actions">
+                      <Button onClick={() => void chooseOutputFolder()}>选择</Button>
+                      {output.folder && (
+                        <Button
+                          onClick={() =>
+                            void setOutputFolder(null).then(setOutput).catch((reason) => setError(String(reason)))
+                          }
+                        >
+                          恢复默认
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </Field>
+              </Card>
+              <Card title="自动导出" description="默认关闭。开启后每条录音分析完成即落盘一个 md 文件；也可随时在记录详情里手动导出。">
+                <ToggleRow
+                  label="分析完成后自动导出 Markdown"
+                  checked={output.autoExportAnalysis}
+                  onChange={(enabled) =>
+                    void setAutoExportAnalysis(enabled).then(setOutput).catch((reason) => setError(String(reason)))
+                  }
+                />
+              </Card>
+              <Card title="最近产出">
+                {output.recentFiles.length === 0 ? (
+                  <p className="em-empty">还没有产出文件。</p>
+                ) : (
+                  <List>
+                    {output.recentFiles.map((file) => (
+                      <ListRow
+                        key={file.path}
+                        state="done"
+                        title={file.fileName}
+                        meta={file.path}
+                        trail={`${(file.size / 1024).toFixed(1)}KB`}
+                      />
+                    ))}
+                  </List>
+                )}
+              </Card>
+            </Stack>
+          ) : (
+            <p className="em-empty">正在读取产出设置…</p>
+          )
+        ) : (
+          <Stack>
+            <Card title="版本" status={<Pill tone="accent">{appInfo ? `v${appInfo.version}` : "…"}</Pill>}>
+              <List>
+                <ListRow static state="done" title="回声记忆（Echo Memory）" meta="本地优先的个人智能记忆系统" />
+                <ListRow static title="许可" meta="Apache-2.0 开源 · 内置 Whisper（MIT）与 ffmpeg（LGPL）" />
+                <ListRow static title="源码与反馈" meta="github.com/questionjie-max/echo-memory" />
+              </List>
+            </Card>
+            <Card
+              title="数据目录"
+              description="备份或迁移时复制整个目录即可；删除该目录等于清空全部本地数据。"
+            >
+              <div className="em-field-row">
+                <input className="em-input" readOnly value={appInfo?.libraryPath ?? "…"} />
+                <Button
+                  onClick={() => {
+                    if (!appInfo) return;
+                    void navigator.clipboard
+                      ?.writeText(appInfo.libraryPath)
+                      .then(() => show("saved", "目录已复制"))
+                      .catch((reason) => setError(String(reason)));
+                  }}
+                >
+                  复制
+                </Button>
+              </div>
+            </Card>
+            <Card title="首次启动引导" description="重新走一遍模型与收件箱配置流程。关闭设置后会自动弹出。">
+              <Button onClick={() => void rerunOnboarding()}>重新运行引导向导</Button>
+            </Card>
+          </Stack>
+        )}
+
+        {tabError && <p className="em-note err" role="alert">{tabError}</p>}
+      </PanelShell>
+
+      {wizardOpen && (
+        <TemplateWizard
+          onClose={() => setWizardOpen(false)}
+          onCreated={async () => {
+            setWizardOpen(false);
+            await refresh();
+          }}
+        />
+      )}
+    </div>
+  );
 
   async function duplicateTemplate(template: AnalysisTemplate) {
     setBusy(true);
@@ -427,247 +723,13 @@ export default function SettingsPanel({ open: visible, onClose }: Props) {
       await deleteAnalysisTemplate(template.id);
       if (editing?.id === template.id) setEditing(null);
       await refresh();
+      show("saved", "模板已删除");
     } catch (reason) {
       setError(String(reason));
     } finally {
       setBusy(false);
     }
   }
-
-  return (
-    <div className="settings-scrim" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section className="settings-panel material" role="dialog" aria-modal="true" aria-label="设置">
-        <header className="settings-header">
-          <div><p className="pane-eyebrow">回声记忆{appInfo ? ` · v${appInfo.version}` : ""}</p><h2>设置</h2></div>
-          <button type="button" className="close-button" onClick={onClose} aria-label="关闭设置" title="关闭">×</button>
-        </header>
-        <div className="settings-tabs" role="tablist">
-          <button type="button" className={tab === "ai" ? "selected" : ""} onClick={() => setTab("ai")}>本机 AI</button>
-          <button type="button" className={tab === "external" ? "selected" : ""} onClick={() => setTab("external")}>外部 AI</button>
-          <button type="button" className={tab === "templates" ? "selected" : ""} onClick={() => setTab("templates")}>分析模板</button>
-          <button type="button" className={tab === "inbox" ? "selected" : ""} onClick={() => setTab("inbox")}>收件箱</button>
-          <button type="button" className={tab === "hotwords" ? "selected" : ""} onClick={() => setTab("hotwords")}>词汇库</button>
-          <button type="button" className={tab === "output" ? "selected" : ""} onClick={() => setTab("output")}>产出</button>
-          <button type="button" className={tab === "about" ? "selected" : ""} onClick={() => setTab("about")}>关于</button>
-        </div>
-        <div className="settings-content">
-          {tab === "ai" ? (
-            status ? (
-              <div className="settings-form">
-                <section className="settings-section">
-                  <div className="settings-section-title"><h3>Whisper</h3><StatusLabel ok={status.whisperAvailable} /></div>
-                  <label><span>转写语言</span><select value={status.settings.transcriptionLanguage} onChange={(event) => setStatus({ ...status, settings: { ...status.settings, transcriptionLanguage: event.target.value } })}>{LANGUAGES.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
-                  <label><span>模型文件</span><div className="path-control"><input readOnly value={status.settings.whisperModelPath || status.whisperModelPath || ""} placeholder="尚未选择" /><button type="button" onClick={() => void chooseWhisperModel()}>选择</button></div></label>
-                  {status.whisperModelSource && <p className="settings-meta">{status.whisperModelSource}</p>}
-                  {status.whisperModels.length > 0 && <div className="installed-models">{status.whisperModels.map((model) => (
-                    <div className="model-row" key={model.path}>
-                      <span>{model.id} · {formatBytes(model.size)}</span>
-                      <button type="button" className="secondary-button" disabled={currentWhisperPath === model.path} onClick={() => setStatus({ ...status, settings: { ...status.settings, whisperModelPath: model.path } })}>{currentWhisperPath === model.path ? "当前模型" : "设为当前"}</button>
-                    </div>
-                  ))}</div>}
-                  <div className="model-row"><span>large-v3-turbo-q5_0 · 547.4MB · SHA-256 394221709cd5…</span><button type="button" className="secondary-button" disabled={whisperDownload?.status === "downloading" || status.whisperModels.some((model) => model.id === "ggml-large-v3-turbo-q5_0")} onClick={() => void installWhisperModel()}>{status.whisperModels.some((model) => model.id === "ggml-large-v3-turbo-q5_0") ? "已安装" : "下载"}</button></div>
-                  {whisperDownload && <DownloadProgress progress={whisperDownload} />}
-                  <div className="settings-subsection">
-                    <div className="settings-section-title"><h4>转写引擎</h4></div>
-                    <label className="settings-switch-row"><input type="radio" name="engine" checked={(engineStatus?.engine ?? "embedded") === "embedded"} onChange={() => void switchEngine("embedded")} /><span>内嵌引擎（默认，零依赖）</span></label>
-                    <label className="settings-switch-row"><input type="radio" name="engine" disabled={!engineStatus?.whisperxAvailable} checked={engineStatus?.engine === "whisperx"} onChange={() => void switchEngine("whisperx")} /><span>whisperX（说话人分离{engineStatus?.whisperxAvailable ? "" : " · 未检测到"}）</span></label>
-                    {engineStatus?.whisperxAvailable ? (
-                      <p className="settings-meta">已找到：{engineStatus.whisperxPath}。whisperX 转写会自动区分说话人，行动项可归属到人。</p>
-                    ) : (
-                      <p className="settings-meta">安装方法：pip install whisperx；说话人分离还需在 huggingface.co 接受 pyannote 模型协议并配置下方 Token（首次使用会下载模型，建议独显/大内存）。</p>
-                    )}
-                    <div className="model-row">
-                      <span>{engineStatus?.hfTokenSet ? "HuggingFace Token 已配置（钥匙串）" : "HuggingFace Token 未配置（说话人分离需要）"}</span>
-                      <span className={`settings-status ${engineStatus?.hfTokenSet ? "ready" : "missing"}`}>{engineStatus?.hfTokenSet ? "已配置" : "缺失"}</span>
-                    </div>
-                    <label><span>设置 HuggingFace Token</span><input type="password" value={hfTokenDraft} autoComplete="new-password" placeholder="hf_xxx（仅保存，不回显）" onChange={(event) => setHfTokenDraft(event.target.value)} /></label>
-                    <div className="settings-actions">
-                      <button type="button" className="secondary-button" disabled={!hfTokenDraft.trim()} onClick={() => void saveHfToken()}>保存 Token</button>
-                      <button type="button" className="secondary-button" disabled={!engineStatus?.hfTokenSet} onClick={() => void removeHfToken()}>清除 Token</button>
-                    </div>
-                  </div>
-                </section>
-                <section className="settings-section">
-                  <div className="settings-section-title"><h3>音频预处理</h3><StatusLabel ok={Boolean(preprocessor?.enhancedAvailable)} /></div>
-                  <p className="settings-meta">{preprocessor?.enhancedAvailable ? `增强预处理 · ${preprocessor.engine}${preprocessor.version ? ` · ${preprocessor.version}` : ""}` : "FFmpeg 不可用，将明确使用兼容预处理。"}</p>
-                  {preprocessor?.executablePath && <p className="settings-meta">{preprocessor.executablePath}</p>}
-                </section>
-                <section className="settings-section">
-                  <div className="settings-section-title"><h3>Ollama</h3><StatusLabel ok={status.ollamaAvailable} /></div>
-                  <label><span>分析模型</span><input value={status.settings.analysisModel} onChange={(event) => setStatus({ ...status, settings: { ...status.settings, analysisModel: event.target.value } })} /></label>
-                  <div className="model-row"><span>qwen3.5:4b · 可选分析模型</span>{status.ollamaModels.some((model) => model.name === "qwen3.5:4b") ? <button type="button" className="secondary-button" disabled={status.settings.analysisModel === "qwen3.5:4b"} onClick={() => setStatus({ ...status, settings: { ...status.settings, analysisModel: "qwen3.5:4b" } })}>{status.settings.analysisModel === "qwen3.5:4b" ? "当前模型" : "设为当前"}</button> : <button type="button" className="secondary-button" disabled={!status.ollamaAvailable || download !== null && download.status !== "completed" && download.status !== "failed"} onClick={() => void installOllamaModel("qwen3.5:4b", "约 3GB", "文稿分析")}>下载</button>}</div>
-                  <label><span>嵌入模型</span><input value={status.settings.embeddingModel} onChange={(event) => setStatus({ ...status, settings: { ...status.settings, embeddingModel: event.target.value } })} /></label>
-                  <div className="model-row"><span>{status.ollamaModels.some((model) => model.name === status.settings.embeddingModel) ? "嵌入模型已安装" : "嵌入模型未安装"}</span><button type="button" className="secondary-button" disabled={!status.ollamaAvailable || status.ollamaModels.some((model) => model.name === status.settings.embeddingModel) || download !== null && download.status !== "completed" && download.status !== "failed"} onClick={() => void installOllamaModel(status.settings.embeddingModel, "639MB", "知识索引")}>{status.ollamaModels.some((model) => model.name === status.settings.embeddingModel) ? "已安装" : "下载模型"}</button></div>
-                  {download && <DownloadProgress progress={download} />}
-                  {status.ollamaModels.length > 0 && <p className="settings-meta">已安装：{status.ollamaModels.map((model) => model.name).join("、")}</p>}
-                </section>
-                <button type="button" className="primary-button settings-save" disabled={busy} onClick={() => void saveAi()}>{busy ? "保存中…" : "保存设置"}</button>
-              </div>
-            ) : <p className="settings-empty">正在读取本机状态…</p>
-          ) : tab === "external" ? (
-            external ? (
-              <div className="settings-form">
-                <section className="settings-section external-ai-warning">
-                  <div className="settings-section-title"><h3>跨记录记忆生成</h3><StatusLabel ok={external.enabled && external.hasApiKey} /></div>
-                  <p className="settings-meta">默认关闭。启用后，所选范围内的结构化分析和逐字稿全文会发送给你配置的 OpenAI-compatible 服务商；原始音频永不上传。本机 Whisper、单条分析、知识库问答和 MCP 仍保持本地。</p>
-                </section>
-                <section className="settings-section">
-                  <label className="settings-switch-row"><span>启用外部 AI</span><input type="checkbox" checked={external.enabled} onChange={(event) => setExternal({ ...external, enabled: event.target.checked })} /></label>
-                  <label><span>Base URL</span><input value={external.baseUrl} placeholder="https://api.openai.com/v1" onChange={(event) => setExternal({ ...external, baseUrl: event.target.value })} /></label>
-                  <label><span>模型名称</span><input value={external.model} placeholder="gpt-4o-mini" onChange={(event) => setExternal({ ...external, model: event.target.value })} /></label>
-                  <div className="model-row"><span>{external.hasApiKey ? "API Key 已配置（不会显示或回填）" : "尚未配置 API Key"}</span><span className={`settings-status ${external.hasApiKey ? "ready" : "missing"}`}>{external.hasApiKey ? "已配置" : "缺失"}</span></div>
-                  <label><span>设置新的 API Key</span><input type="password" value={externalApiKey} autoComplete="new-password" placeholder="仅用于保存，不会回显" onChange={(event) => setExternalApiKeyDraft(event.target.value)} /></label>
-                  <div className="settings-actions"><button type="button" className="secondary-button" disabled={busy || !externalApiKey.trim()} onClick={() => void saveExternalKey()}>保存 Key</button><button type="button" className="secondary-button" disabled={busy || !external.hasApiKey} onClick={() => void removeExternalKey()}>清除 Key</button><button type="button" className="secondary-button" disabled={busy || !external.hasApiKey} onClick={() => void checkExternalConnection()}>测试连接</button></div>
-                </section>
-                <section className="settings-section">
-                  <label className="settings-check-row"><input type="checkbox" checked={privacyAcknowledged} onChange={(event) => setPrivacyAcknowledged(event.target.checked)} /><span>我已了解：启用后会发送选定记录的逐字稿全文和现有结构化分析，但不会发送音频。</span></label>
-                  <p className="settings-meta">云端语音转写预留字段：{external.transcriptionProvider || "未启用 / 本轮不支持"}</p>
-                </section>
-                <button type="button" className="primary-button settings-save" disabled={busy} onClick={() => void saveExternal()}>{busy ? "保存中…" : "保存外部 AI 设置"}</button>
-              </div>
-            ) : <p className="settings-empty">正在读取外部 AI 设置…</p>
-          ) : tab === "inbox" ? (
-            inbox ? (
-              <div className="settings-form">
-                <section className="settings-section">
-                  <div className="settings-section-title"><h3>音频收件箱</h3><StatusLabel ok={inbox.watchFolders.length > 0 || inbox.usbDetection} /></div>
-                  <p className="settings-meta">监听下面的文件夹：新音频文件出现后自动导入并转写分析。添加监听时的已有文件会被跳过（只接住之后新出现的文件）；U 盘录音设备例外——插入后设备上的录音属于你要导入的内容。</p>
-                  <label className="settings-switch-row"><span>插入 USB 录音设备时自动扫描</span><input type="checkbox" checked={inbox.usbDetection} onChange={(event) => { void setInboxUsbDetection(event.target.checked).then(refreshInbox); setInbox({ ...inbox, usbDetection: event.target.checked }); }} /></label>
-                  <div className="settings-actions">
-                    <button type="button" className="secondary-button" onClick={() => void chooseWatchFolder()}>添加监听文件夹…</button>
-                    <button type="button" className="secondary-button" onClick={() => { void rescanInbox().then(refreshInbox); }}>立即扫描</button>
-                  </div>
-                  {inbox.watchFolders.length > 0 ? (
-                    <div className="installed-models">{inbox.watchFolders.map((folder) => (
-                      <div className="model-row" key={folder.id}>
-                        <span>{folder.label} · {folder.path}</span>
-                        <button type="button" className="danger-text" onClick={() => { void removeInboxWatchFolder(folder.id).then(refreshInbox); }}>移除</button>
-                      </div>
-                    ))}</div>
-                  ) : <p className="settings-empty">尚未监听任何文件夹。</p>}
-                </section>
-                <section className="settings-section">
-                  <div className="settings-section-title"><h3>最近自动导入</h3></div>
-                  {inbox.recentFiles.length === 0 && <p className="settings-empty">还没有文件进入收件箱。</p>}
-                  {inbox.recentFiles.length > 0 && (
-                    <div className="installed-models">{inbox.recentFiles.map((file) => (
-                      <div className="model-row" key={file.id}>
-                        <span>{file.fileName} · {inboxStatusLabel(file.status)}{file.errorMessage ? ` · ${file.errorMessage}` : ""}</span>
-                      </div>
-                    ))}</div>
-                  )}
-                  <p className="settings-meta">待处理 {inbox.counts.pending} · 已导入 {inbox.counts.imported} · 失败 {inbox.counts.failed}</p>
-                </section>
-              </div>
-            ) : <p className="settings-empty">正在读取收件箱状态…</p>
-          ) : tab === "hotwords" ? (
-            <div className="settings-form">
-              <section className="settings-section">
-                <div className="settings-section-title"><h3>个人词汇库</h3><StatusLabel ok={hotwords.length > 0} /></div>
-                <p className="settings-meta">热词会注入转写提示与 AI 校对，显著改善专有名词、人名、产品名的中文识别（如「回声记忆」「小能熊」不会被写成同音字）。</p>
-                <div className="settings-actions hotword-input-row">
-                  <input value={hotwordInput} placeholder="输入热词后回车" onChange={(event) => setHotwordInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing) void submitHotword(); }} />
-                  <button type="button" className="secondary-button" disabled={!hotwordInput.trim()} onClick={() => void submitHotword()}>添加</button>
-                </div>
-                {hotwords.length > 0 ? (
-                  <div className="installed-models">{hotwords.map((hotword) => (
-                    <div className="model-row" key={hotword.id}>
-                      <span>{hotword.term}{hotword.note ? ` · ${hotword.note}` : ""}</span>
-                      <button type="button" className="danger-text" onClick={() => { void removeHotword(hotword.id).then(refreshHotwords); }}>删除</button>
-                    </div>
-                  ))}</div>
-                ) : <p className="settings-empty">还没有热词。</p>}
-              </section>
-              <section className="settings-section">
-                <div className="settings-section-title"><h3>转写 AI 校对</h3></div>
-                <label className="settings-switch-row"><span>转写完成后自动用本机模型校对（断句、标点、热词纠正）</span><input type="checkbox" checked={correctionEnabled} onChange={(event) => void toggleCorrection(event.target.checked)} /></label>
-                <p className="settings-meta">校对结果写入独立文本层，原始逐字稿永不覆盖，可随时对比。也可以在记录详情页手动触发。</p>
-              </section>
-            </div>
-          ) : tab === "output" ? (
-            output ? (
-              <div className="settings-form">
-                <section className="settings-section">
-                  <div className="settings-section-title"><h3>产出文件夹</h3><StatusLabel ok={Boolean(output.folder)} /></div>
-                  <p className="settings-meta">所有生成内容（分析、逐字稿、AI 对话成稿）以标准 Markdown + YAML frontmatter 写入这个文件夹。可以指向 Obsidian 等笔记工具的目录，用你自己的体系二次管理——回声记忆只负责写出，不感知任何外部工具。</p>
-                  <label><span>当前目录</span><div className="path-control"><input readOnly value={output.folder ?? "未设置（默认：~/Documents/回声记忆产出）"} /><button type="button" onClick={() => void chooseOutputFolder()}>选择</button></div></label>
-                  <div className="settings-actions">
-                    {output.folder && <button type="button" className="secondary-button" onClick={() => void clearOutputFolder()}>恢复默认目录</button>}
-                  </div>
-                </section>
-                <section className="settings-section">
-                  <div className="settings-section-title"><h3>自动导出</h3></div>
-                  <label className="settings-switch-row"><span>分析完成后自动导出 Markdown 到产出文件夹</span><input type="checkbox" checked={output.autoExportAnalysis} onChange={(event) => void toggleAutoExport(event.target.checked)} /></label>
-                  <p className="settings-meta">默认关闭。开启后每条录音分析完成即落盘一个 md 文件；也可随时在记录详情里手动导出。</p>
-                </section>
-                <section className="settings-section">
-                  <div className="settings-section-title"><h3>最近产出</h3></div>
-                  {output.recentFiles.length === 0 && <p className="settings-empty">还没有产出文件。</p>}
-                  {output.recentFiles.length > 0 && (
-                    <div className="installed-models">{output.recentFiles.map((file) => (
-                      <div className="model-row" key={file.path}>
-                        <span>{file.fileName} · {(file.size / 1024).toFixed(1)}KB</span>
-                      </div>
-                    ))}</div>
-                  )}
-                </section>
-              </div>
-            ) : <p className="settings-empty">正在读取产出设置…</p>
-          ) : tab === "about" ? (
-            <div className="settings-form">
-              <section className="settings-section">
-                <div className="settings-section-title"><h3>版本信息</h3></div>
-                <div className="model-row"><span>回声记忆（Echo Memory）</span><span className="settings-status ready">{appInfo ? `v${appInfo.version}` : "…"}</span></div>
-                <p className="settings-meta">Alpha 阶段 · 本地优先的个人智能记忆系统。音频、逐字稿与分析全部保存在本机。</p>
-              </section>
-              <section className="settings-section">
-                <div className="settings-section-title"><h3>数据目录</h3></div>
-                <label><span>资料库位置</span><div className="path-control"><input readOnly value={appInfo?.libraryPath ?? "…"} /><button type="button" onClick={() => { if (appInfo) void navigator.clipboard?.writeText(appInfo.libraryPath).then(() => setNotice("数据目录已复制")); }}>复制</button></div></label>
-                <p className="settings-meta">备份或迁移时复制整个目录即可；删除该目录等于清空全部本地数据。</p>
-              </section>
-              <section className="settings-section">
-                <div className="settings-section-title"><h3>开源与许可</h3></div>
-                <p className="settings-meta">Apache-2.0 开源 · 内置 Whisper（MIT）与 ffmpeg（LGPL，随包附带许可文件）。问题反馈与源码：github.com/questionjie-max/echo-memory</p>
-              </section>
-              <section className="settings-section">
-                <div className="settings-section-title"><h3>首次启动引导</h3></div>
-                <div className="settings-actions"><button type="button" className="secondary-button" onClick={() => void rerunOnboarding()}>重新运行引导向导</button></div>
-                <p className="settings-meta">重新走一遍模型与收件箱配置流程。关闭设置后会自动弹出。</p>
-              </section>
-            </div>
-          ) : (
-            editing ? <TemplateEditor template={editing} busy={busy} onCancel={() => setEditing(null)} onSaved={async () => { setEditing(null); await refresh(); }} onError={setError} /> : (
-              <div className="template-list">
-                <div className="template-list-heading"><span>{templates.length} 个模板</span><div className="template-heading-actions"><button type="button" className="secondary-button" onClick={() => setWizardOpen(true)}>✨ AI 生成模板</button><button type="button" className="primary-button" onClick={() => setEditing(emptyTemplate())}>新建模板</button></div></div>
-                {templates.map((template) => (
-                  <div className="template-row" key={template.id}>
-                    <div><strong>{template.name}</strong><span>{template.description || "自定义分析模板"}</span></div>
-                    <div className="template-actions">
-                      <button type="button" disabled={busy} onClick={() => void duplicateTemplate(template)}>复制</button>
-                      {!template.isBuiltin && <button type="button" disabled={busy} onClick={() => setEditing(template)}>编辑</button>}
-                      {!template.isBuiltin && <button type="button" className="danger-text" disabled={busy} onClick={() => void removeTemplate(template)}>删除</button>}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )
-          )}
-          {notice && <p className="inline-notice">{notice}</p>}
-          {inboxError && <p className="inline-error" role="alert">{inboxError}</p>}
-          {error && <p className="inline-error">{error}</p>}
-        </div>
-      </section>
-      {wizardOpen && (
-        <TemplateWizard
-          onClose={() => setWizardOpen(false)}
-          onCreated={async () => {
-            setWizardOpen(false);
-            await refresh();
-          }}
-        />
-      )}
-    </div>
-  );
 }
 
 function inboxStatusLabel(status: string) {
@@ -679,21 +741,13 @@ function inboxStatusLabel(status: string) {
   return status;
 }
 
-function StatusLabel({ ok }: { ok: boolean }) {
-  return <span className={`settings-status ${ok ? "ready" : "missing"}`}>{ok ? "已就绪" : "未就绪"}</span>;
-}
-
-function DownloadProgress({ progress }: { progress: ModelDownloadProgress }) {
-  const percent = progress.total && progress.completed !== null ? Math.min(100, Math.round(progress.completed / progress.total * 100)) : null;
-  return <div className="download-progress" role="status"><div><span>{progress.status}</span><span>{percent !== null ? `${percent}%` : ""}</span></div><div className="progress-track"><span style={{ width: percent !== null ? `${percent}%` : "12%" }} /></div></div>;
-}
-
-function formatBytes(bytes: number) {
-  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))}KB`;
-  return `${(bytes / 1024 / 1024).toFixed(bytes >= 1024 * 1024 * 1024 ? 0 : 1)}MB`;
-}
-
-function TemplateEditor({ template, busy, onCancel, onSaved, onError }: {
+function TemplateEditor({
+  template,
+  busy,
+  onCancel,
+  onSaved,
+  onError,
+}: {
   template: AnalysisTemplate;
   busy: boolean;
   onCancel: () => void;
@@ -702,11 +756,17 @@ function TemplateEditor({ template, busy, onCancel, onSaved, onError }: {
 }) {
   const [draft, setDraft] = useState(template);
   const [saving, setSaving] = useState(false);
+
   async function save() {
     setSaving(true);
     onError("");
     try {
-      const input = { name: draft.name, description: draft.description, focusInstructions: draft.focusInstructions, customSections: draft.customSections };
+      const input = {
+        name: draft.name,
+        description: draft.description,
+        focusInstructions: draft.focusInstructions,
+        customSections: draft.customSections,
+      };
       if (template.id.startsWith("new-")) await createAnalysisTemplate(input);
       else await updateAnalysisTemplate(template.id, input);
       await onSaved();
@@ -716,28 +776,144 @@ function TemplateEditor({ template, busy, onCancel, onSaved, onError }: {
       setSaving(false);
     }
   }
+
   function updateSection(index: number, patch: Partial<TemplateSection>) {
-    setDraft({ ...draft, customSections: draft.customSections.map((section, current) => current === index ? { ...section, ...patch } : section) });
+    setDraft({
+      ...draft,
+      customSections: draft.customSections.map((section, current) =>
+        current === index ? { ...section, ...patch } : section,
+      ),
+    });
   }
-  return <form className="template-editor" onSubmit={(event) => { event.preventDefault(); void save(); }}>
-    <div className="editor-heading"><h3>{template.id.startsWith("new-") ? "新建模板" : "编辑模板"}</h3><button type="button" onClick={onCancel}>返回</button></div>
-    <label><span>名称</span><input required maxLength={40} value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label>
-    <label><span>说明</span><input maxLength={120} value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })} /></label>
-    <label><span>分析重点</span><textarea required maxLength={800} value={draft.focusInstructions} onChange={(event) => setDraft({ ...draft, focusInstructions: event.target.value })} /></label>
-    <div className="custom-section-heading"><strong>自定义栏目</strong><button type="button" disabled={draft.customSections.length >= 10} onClick={() => setDraft({ ...draft, customSections: [...draft.customSections, newSection(draft.customSections.length)] })}>添加栏目</button></div>
-    {draft.customSections.map((section, index) => <div className="custom-section-row" key={`${section.key}-${index}`}>
-      <input aria-label="栏目标题" placeholder="栏目标题" value={section.title} onChange={(event) => updateSection(index, { title: event.target.value, key: slugKey(event.target.value, index) })} />
-      <select aria-label="栏目格式" value={section.format} onChange={(event) => updateSection(index, { format: event.target.value as "paragraph" | "list" })}><option value="list">列表</option><option value="paragraph">段落</option></select>
-      <input aria-label="栏目要求" placeholder="提取要求" value={section.instruction} onChange={(event) => updateSection(index, { instruction: event.target.value })} />
-      <button type="button" aria-label="删除栏目" title="删除栏目" onClick={() => setDraft({ ...draft, customSections: draft.customSections.filter((_, current) => current !== index) })}>×</button>
-    </div>)}
-    <div className="editor-actions"><button type="button" className="secondary-button" onClick={onCancel}>取消</button><button type="submit" className="primary-button" disabled={busy || saving || !draft.name.trim() || !draft.focusInstructions.trim()}>{saving ? "保存中…" : "保存模板"}</button></div>
-  </form>;
+
+  return (
+    <form
+      className="em-stack"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void save();
+      }}
+    >
+      <Card
+        title={template.id.startsWith("new-") ? "新建模板" : "编辑模板"}
+        actions={<Button onClick={onCancel}>返回</Button>}
+      >
+        <Field label="名称">
+          <input
+            className="em-input"
+            required
+            maxLength={40}
+            value={draft.name}
+            onChange={(event) => setDraft({ ...draft, name: event.target.value })}
+          />
+        </Field>
+        <Field label="说明">
+          <input
+            className="em-input"
+            maxLength={120}
+            value={draft.description}
+            onChange={(event) => setDraft({ ...draft, description: event.target.value })}
+          />
+        </Field>
+        <Field label="分析重点" hint="用一句话说清这个模板关心什么。">
+          <textarea
+            className="em-input"
+            required
+            maxLength={800}
+            rows={4}
+            value={draft.focusInstructions}
+            onChange={(event) => setDraft({ ...draft, focusInstructions: event.target.value })}
+          />
+        </Field>
+      </Card>
+
+      <Card
+        title="自定义栏目"
+        description="每个栏目会在分析结果里单独成段。"
+        actions={
+          <Button
+            disabled={draft.customSections.length >= 10}
+            onClick={() =>
+              setDraft({
+                ...draft,
+                customSections: [...draft.customSections, newSection(draft.customSections.length)],
+              })
+            }
+          >
+            添加栏目
+          </Button>
+        }
+      >
+        {draft.customSections.length === 0 && <p className="em-empty">还没有自定义栏目。</p>}
+        {draft.customSections.map((section, index) => (
+          <div className="em-field-row" key={`${section.key}-${index}`}>
+            <input
+              className="em-input"
+              aria-label="栏目标题"
+              placeholder="栏目标题"
+              value={section.title}
+              onChange={(event) =>
+                updateSection(index, { title: event.target.value, key: slugKey(event.target.value, index) })
+              }
+            />
+            <select
+              className="em-select"
+              aria-label="栏目格式"
+              value={section.format}
+              onChange={(event) => updateSection(index, { format: event.target.value as "paragraph" | "list" })}
+            >
+              <option value="list">列表</option>
+              <option value="paragraph">段落</option>
+            </select>
+            <input
+              className="em-input"
+              aria-label="栏目要求"
+              placeholder="提取要求"
+              value={section.instruction}
+              onChange={(event) => updateSection(index, { instruction: event.target.value })}
+            />
+            <Button
+              variant="danger"
+              title="删除栏目"
+              onClick={() =>
+                setDraft({
+                  ...draft,
+                  customSections: draft.customSections.filter((_, current) => current !== index),
+                })
+              }
+            >
+              ×
+            </Button>
+          </div>
+        ))}
+      </Card>
+
+      <div className="em-card-actions">
+        <Button onClick={onCancel}>取消</Button>
+        <Button
+          variant="primary"
+          disabled={busy || saving || !draft.name.trim() || !draft.focusInstructions.trim()}
+          onClick={() => void save()}
+        >
+          {saving ? "保存中…" : "保存模板"}
+        </Button>
+      </div>
+    </form>
+  );
 }
 
 function emptyTemplate(): AnalysisTemplate {
   const now = new Date().toISOString();
-  return { id: `new-${Date.now()}`, name: "", description: "", focusInstructions: "", customSections: [], isBuiltin: false, createdAt: now, updatedAt: now };
+  return {
+    id: `new-${Date.now()}`,
+    name: "",
+    description: "",
+    focusInstructions: "",
+    customSections: [],
+    isBuiltin: false,
+    createdAt: now,
+    updatedAt: now,
+  };
 }
 
 function newSection(index: number): TemplateSection {
@@ -745,6 +921,10 @@ function newSection(index: number): TemplateSection {
 }
 
 function slugKey(title: string, index: number) {
-  const key = title.trim().toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/g, "_").replace(/^_+|_+$/g, "");
+  const key = title
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fff]+/g, "_")
+    .replace(/^_+|_+$/g, "");
   return key || `section_${index + 1}`;
 }

@@ -15,22 +15,25 @@ use crate::types::{
     KnowledgeIndexStatus, KnowledgeOverview, KnowledgeSettings, LocalAiStatus, LocalModelInfo,
     LocalWhisperModel, McpStatus, MemoryFeedback, MemoryGenerationJob, MemoryGenerationRequest,
     MemoryScope, MemorySnapshot, MemoryViewKind, ModelDownloadProgress, OnboardingStatus,
-    OutputStatus, ProcessingJob, Project, RecordBrief, RelatedRecord, SearchResult, SpeakerSummary,
-    SuggestedWatchFolder, TemplateDraft, TemplateSection, TimelineItem, TranscriptBlock,
-    TranscriptSegment, TranscriptSegmentInput, TranscriptionEngineStatus,
+    OutputStatus, PendingModelDownload, ProcessingJob, Project, RecommendedModel, RecordBrief,
+    RelatedRecord, SearchResult, SpeakerSummary, SuggestedWatchFolder, TemplateDraft,
+    TemplateSection, TimelineItem, TranscriptBlock, TranscriptSegment, TranscriptSegmentInput,
+    TranscriptionEngineStatus,
 };
-use crate::whisper::WhisperAdapter;
+use crate::whisper::{
+    library_model_files, localize_speaker_label, WhisperAdapter, RECOMMENDED_MODEL_BYTES,
+    RECOMMENDED_MODEL_ID, RECOMMENDED_MODEL_SHA256, RECOMMENDED_MODEL_URL,
+};
 use chrono::{Duration as ChronoDuration, Local, SecondsFormat, TimeZone, Utc};
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
 
-const LARGE_V3_TURBO_Q5_SIZE: u64 = 574_041_195;
 const AUTO_MEMORY_UPDATE_DELAY: Duration = Duration::from_secs(120);
-const LARGE_V3_TURBO_Q5_SHA256: &str =
-    "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2";
 
 #[tauri::command]
 pub async fn get_local_ai_status(state: State<'_, AppState>) -> Result<LocalAiStatus, String> {
@@ -48,25 +51,16 @@ fn get_local_ai_status_blocking(state: &AppState) -> Result<LocalAiStatus, Strin
         .repository()
         .knowledge_settings()
         .map_err(|error| error.to_frontend())?;
+    let models_dir = state.library.root().join("models");
     let whisper = WhisperAdapter::detect_with_model_path(Some(&settings.whisper_model_path)).ok();
     let whisper_model_path = whisper
         .as_ref()
         .and_then(WhisperAdapter::model_path)
         .map(|path| path.to_string_lossy().to_string());
-    let whisper_model_source = whisper.as_ref().map(|adapter| {
-        adapter.model_path().map_or_else(
-            || "whisper.cpp CLI".to_owned(),
-            |path| {
-                if path
-                    .to_string_lossy()
-                    .contains("Application Support/com.meetily.ai")
-                {
-                    "Meetily 外部模型".to_owned()
-                } else {
-                    "用户选择的本地模型".to_owned()
-                }
-            },
-        )
+    let whisper_model_source = whisper.as_ref().and_then(|adapter| {
+        adapter
+            .model_path()
+            .map(|path| whisper_model_source_label(path, &settings.whisper_model_path, &models_dir))
     });
     let (ollama_available, ollama_models) = match ollama_models() {
         Ok(models) => (true, models),
@@ -76,26 +70,57 @@ fn get_local_ai_status_blocking(state: &AppState) -> Result<LocalAiStatus, Strin
         whisper_available: whisper.is_some(),
         whisper_model_path,
         whisper_model_source,
-        whisper_models: discover_whisper_models(&state.library, &settings.whisper_model_path),
+        whisper_models: discover_whisper_models(&models_dir, &settings.whisper_model_path),
+        recommended_whisper_model: RecommendedModel {
+            id: RECOMMENDED_MODEL_ID.to_owned(),
+            label: "large-v3-turbo（q5_0）".to_owned(),
+            file_name: crate::whisper::recommended_model_file(),
+            bytes: RECOMMENDED_MODEL_BYTES,
+        },
+        pending_whisper_download: pending_whisper_download(&models_dir),
         ollama_available,
         ollama_models,
         settings,
     })
 }
 
-fn discover_whisper_models(library: &ManagedLibrary, configured: &str) -> Vec<LocalWhisperModel> {
+/// 当前这个模型是哪来的，用大白话说清楚，用户才知道能不能换掉它。
+fn whisper_model_source_label(
+    path: &std::path::Path,
+    configured: &str,
+    models_dir: &std::path::Path,
+) -> String {
+    if !configured.trim().is_empty() && std::path::Path::new(configured.trim()) == path {
+        return "手动选择".to_owned();
+    }
+    if path.starts_with(models_dir) {
+        return "应用内下载".to_owned();
+    }
+    "环境变量指定".to_owned()
+}
+
+/// 中断留下的半成品，用来显示「继续下载」而不是从零开始。
+fn pending_whisper_download(models_dir: &std::path::Path) -> Option<PendingModelDownload> {
+    let bytes = std::fs::metadata(models_dir.join(crate::whisper::recommended_model_partial()))
+        .ok()?
+        .len();
+    (bytes > 0).then(|| PendingModelDownload {
+        model: RECOMMENDED_MODEL_ID.to_owned(),
+        bytes,
+    })
+}
+
+/// 可选模型 = 显式配置的那个（如果有）+ 应用模型目录里的全部模型文件。
+fn discover_whisper_models(
+    models_dir: &std::path::Path,
+    configured: &str,
+) -> Vec<LocalWhisperModel> {
     let mut paths = Vec::new();
     if !configured.trim().is_empty() {
-        paths.push(PathBuf::from(configured));
+        paths.push(PathBuf::from(configured.trim()));
     }
-    if let Some(home) = std::env::var_os("HOME") {
-        paths.push(
-            PathBuf::from(home)
-                .join("Library/Application Support/com.meetily.ai/models/ggml-small.bin"),
-        );
-    }
-    paths.push(library.root().join("models/ggml-large-v3-turbo-q5_0.bin"));
-    let mut seen = std::collections::HashSet::new();
+    paths.extend(library_model_files(models_dir));
+    let mut seen = HashSet::new();
     paths
         .into_iter()
         .filter(|path| path.is_file() && seen.insert(path.clone()))
@@ -109,7 +134,43 @@ fn discover_whisper_models(library: &ManagedLibrary, configured: &str) -> Vec<Lo
         .collect()
 }
 
-/// 断点续传下载：临时文件保留进度，网络失败后重试从上次位置继续；
+/// 已请求取消的模型下载。Whisper 与 Ollama 共用一套：下载循环按模型名查这张表。
+fn download_cancellations() -> &'static Mutex<HashSet<String>> {
+    static CANCELLATIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    CANCELLATIONS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn request_cancellation(model: &str) {
+    if let Ok(mut cancelled) = download_cancellations().lock() {
+        cancelled.insert(model.to_owned());
+    }
+}
+
+fn clear_cancellation(model: &str) {
+    if let Ok(mut cancelled) = download_cancellations().lock() {
+        cancelled.remove(model);
+    }
+}
+
+fn is_cancelled(model: &str) -> bool {
+    download_cancellations()
+        .lock()
+        .map(|cancelled| cancelled.contains(model))
+        .unwrap_or(false)
+}
+
+/// 取消正在进行的模型下载。已经下好的部分会保留，下次可以接着下。
+#[tauri::command]
+pub fn cancel_model_download(model: String) -> Result<(), String> {
+    let model = model.trim();
+    if model.is_empty() {
+        return Err("模型名称无效".to_owned());
+    }
+    request_cancellation(model);
+    Ok(())
+}
+
+/// 断点续传下载：临时文件保留进度，网络中断或用户取消后重试都从上次位置继续；
 /// 校验失败（数据损坏）才删除临时文件重新来过。
 #[tauri::command]
 pub fn download_whisper_model(
@@ -117,29 +178,50 @@ pub fn download_whisper_model(
     state: State<AppState>,
     model_id: String,
 ) -> Result<(), String> {
-    if model_id != "large-v3-turbo-q5_0" {
+    if model_id != RECOMMENDED_MODEL_ID {
         return Err("不支持的 Whisper 模型".to_owned());
     }
     if !claim_whisper_download() {
         return Err("模型正在下载中".to_owned());
     }
+    clear_cancellation(&model_id);
     let models_dir = state.library.root().join("models");
+    let library = state.library.clone();
     std::thread::spawn(move || {
-        let temporary = models_dir.join(".ggml-large-v3-turbo-q5_0.download");
+        let temporary = models_dir.join(crate::whisper::recommended_model_partial());
         let result = download_whisper_model_resumable(&app, &models_dir, &temporary, &model_id);
-        // 网络中断保留临时文件以便续传；校验失败说明内容损坏，删除重来。
+        // 网络中断与用户取消都保留临时文件以便续传；校验失败说明内容损坏，删除重来。
         if matches!(result, Err(WhisperDownloadError::Corrupted(_))) {
             let _ = std::fs::remove_file(&temporary);
         }
-        let progress = match result {
-            Ok(()) => ModelDownloadProgress {
+        // 下载完立刻登记为当前模型。少了这一步，用户在引导里下完 574MB 之后
+        // 第一次转写仍然会报「尚未安装转写模型」。
+        let registration = result
+            .is_ok()
+            .then(|| register_downloaded_whisper_model(&library, &models_dir));
+        let progress = match (result, registration) {
+            (Ok(()), Some(Err(error))) => ModelDownloadProgress {
+                model: model_id.clone(),
+                status: "failed".to_owned(),
+                completed: None,
+                total: None,
+                error: Some(error),
+            },
+            (Ok(()), _) => ModelDownloadProgress {
                 model: model_id.clone(),
                 status: "completed".to_owned(),
                 completed: None,
                 total: None,
                 error: None,
             },
-            Err(error) => ModelDownloadProgress {
+            (Err(WhisperDownloadError::Cancelled), _) => ModelDownloadProgress {
+                model: model_id.clone(),
+                status: "cancelled".to_owned(),
+                completed: None,
+                total: None,
+                error: None,
+            },
+            (Err(error), _) => ModelDownloadProgress {
                 model: model_id.clone(),
                 status: "failed".to_owned(),
                 completed: None,
@@ -148,14 +230,36 @@ pub fn download_whisper_model(
             },
         };
         let _ = app.emit("whisper-model-download-progress", progress);
+        clear_cancellation(&model_id);
         release_whisper_download();
     });
+    Ok(())
+}
+
+/// 把刚下载好的模型写成当前模型，让「下载完就能用」成立。
+fn register_downloaded_whisper_model(
+    library: &ManagedLibrary,
+    models_dir: &std::path::Path,
+) -> Result<(), String> {
+    let model_path = models_dir.join(crate::whisper::recommended_model_file());
+    if !model_path.is_file() {
+        return Err("模型下载完成但文件不存在".to_owned());
+    }
+    let repository = library.repository();
+    let mut settings = repository
+        .knowledge_settings()
+        .map_err(|error| error.to_frontend())?;
+    settings.whisper_model_path = model_path.to_string_lossy().to_string();
+    repository
+        .update_knowledge_settings(&settings)
+        .map_err(|error| error.to_frontend())?;
     Ok(())
 }
 
 enum WhisperDownloadError {
     Network(String),
     Corrupted(String),
+    Cancelled,
 }
 
 impl std::fmt::Display for WhisperDownloadError {
@@ -163,6 +267,7 @@ impl std::fmt::Display for WhisperDownloadError {
         match self {
             WhisperDownloadError::Network(message) => write!(formatter, "{message}"),
             WhisperDownloadError::Corrupted(message) => write!(formatter, "{message}"),
+            WhisperDownloadError::Cancelled => write!(formatter, "已取消下载"),
         }
     }
 }
@@ -198,21 +303,22 @@ fn download_whisper_model_resumable(
     let network = |message: String| WhisperDownloadError::Network(message);
     let corrupted = |message: String| WhisperDownloadError::Corrupted(message);
     std::fs::create_dir_all(models_dir).map_err(|error| network(error.to_string()))?;
-    let destination = models_dir.join("ggml-large-v3-turbo-q5_0.bin");
+    let destination = models_dir.join(crate::whisper::recommended_model_file());
     if destination.is_file() {
         return Ok(());
+    }
+    if is_cancelled(model_id) {
+        return Err(WhisperDownloadError::Cancelled);
     }
 
     // 从上次的临时文件继续：发 Range 请求；服务器不支持时回退到完整下载。
     let resume_from = std::fs::metadata(temporary)
         .map(|meta| meta.len())
         .unwrap_or(0);
-    let mut request = ureq::get(
-        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin",
-    );
-    if resume_from > 0 && resume_from < LARGE_V3_TURBO_Q5_SIZE {
+    let mut request = ureq::get(RECOMMENDED_MODEL_URL);
+    if resume_from > 0 && resume_from < RECOMMENDED_MODEL_BYTES {
         request = request.set("Range", &format!("bytes={resume_from}-"));
-    } else if resume_from >= LARGE_V3_TURBO_Q5_SIZE {
+    } else if resume_from >= RECOMMENDED_MODEL_BYTES {
         // 临时文件异常偏大，作废重下。
         let _ = std::fs::remove_file(temporary);
     }
@@ -244,6 +350,11 @@ fn download_whisper_model_resumable(
     let mut buffer = [0_u8; 64 * 1024];
     let mut completed = offset;
     loop {
+        // 取消只在下完当前这一块之后生效；已经落到磁盘的部分会保留，下次接着下。
+        if is_cancelled(model_id) {
+            let _ = file.sync_all();
+            return Err(WhisperDownloadError::Cancelled);
+        }
         let count = reader
             .read(&mut buffer)
             .map_err(|error| network(format!("下载中断：{error}")))?;
@@ -259,15 +370,15 @@ fn download_whisper_model_resumable(
                 model: model_id.to_owned(),
                 status: "downloading".to_owned(),
                 completed: Some(completed),
-                total: Some(LARGE_V3_TURBO_Q5_SIZE),
+                total: Some(RECOMMENDED_MODEL_BYTES),
                 error: None,
             },
         );
     }
     file.sync_all()
         .map_err(|error| network(format!("落盘失败：{error}")))?;
-    if completed != LARGE_V3_TURBO_Q5_SIZE
-        || expected_total != 0 && expected_total != LARGE_V3_TURBO_Q5_SIZE
+    if completed != RECOMMENDED_MODEL_BYTES
+        || expected_total != 0 && expected_total != RECOMMENDED_MODEL_BYTES
     {
         return Err(network(
             "下载的 Whisper 模型文件不完整，已保留进度供续传".to_owned(),
@@ -301,7 +412,7 @@ fn download_whisper_model_resumable(
         ));
     }
     let checksum = format!("{:x}", hasher.finalize());
-    if checksum != LARGE_V3_TURBO_Q5_SHA256 {
+    if checksum != RECOMMENDED_MODEL_SHA256 {
         return Err(corrupted(
             "Whisper 模型 SHA-256 校验失败，临时文件已重置".to_owned(),
         ));
@@ -337,23 +448,34 @@ pub fn update_knowledge_settings(
         .map_err(|error| error.to_frontend())
 }
 
+enum PullError {
+    Failed(String),
+    Cancelled,
+}
+
 #[tauri::command]
 pub fn pull_ollama_model(app: AppHandle, model: String) -> Result<(), String> {
     let model = model.trim().to_owned();
     if model.is_empty() || model.len() > 120 {
         return Err("模型名称无效".to_owned());
     }
+    clear_cancellation(&model);
     std::thread::spawn(move || {
-        let result = (|| -> Result<(), String> {
+        let result = (|| -> Result<(), PullError> {
+            let failed = |message: String| PullError::Failed(message);
             let response = ureq::post(&format!("{}/api/pull", crate::analysis::ollama_base_url()))
                 .send_json(serde_json::json!({ "model": model, "stream": true }))
-                .map_err(|error| format!("无法启动模型下载：{error}"))?;
+                .map_err(|error| failed(format!("无法启动模型下载：{error}")))?;
             for line in BufReader::new(response.into_reader()).lines() {
-                let line = line.map_err(|error| format!("读取下载进度失败：{error}"))?;
+                // 取消就断开连接：Ollama 自己会保留已下好的分块，下次 pull 能接着下。
+                if is_cancelled(&model) {
+                    return Err(PullError::Cancelled);
+                }
+                let line = line.map_err(|error| failed(format!("读取下载进度失败：{error}")))?;
                 let value: serde_json::Value = serde_json::from_str(&line)
-                    .map_err(|error| format!("下载进度格式无效：{error}"))?;
+                    .map_err(|error| failed(format!("下载进度格式无效：{error}")))?;
                 if let Some(error) = value.get("error").and_then(serde_json::Value::as_str) {
-                    return Err(error.to_owned());
+                    return Err(failed(error.to_owned()));
                 }
                 let progress = ModelDownloadProgress {
                     model: model.clone(),
@@ -378,7 +500,14 @@ pub fn pull_ollama_model(app: AppHandle, model: String) -> Result<(), String> {
                 total: None,
                 error: None,
             },
-            Err(error) => ModelDownloadProgress {
+            Err(PullError::Cancelled) => ModelDownloadProgress {
+                model: model.clone(),
+                status: "cancelled".to_owned(),
+                completed: None,
+                total: None,
+                error: None,
+            },
+            Err(PullError::Failed(error)) => ModelDownloadProgress {
                 model: model.clone(),
                 status: "failed".to_owned(),
                 completed: None,
@@ -387,6 +516,7 @@ pub fn pull_ollama_model(app: AppHandle, model: String) -> Result<(), String> {
             },
         };
         let _ = app.emit("model-download-progress", progress);
+        clear_cancellation(&model);
     });
     Ok(())
 }
@@ -1089,7 +1219,7 @@ fn run_whisperx_transcription(
         .map(|segment| TranscriptSegmentInput {
             start_ms: (segment.start * 1000.0) as i64,
             end_ms: (segment.end * 1000.0) as i64,
-            speaker_label: Some(segment.speaker.clone().unwrap_or_else(|| "未知".to_owned())),
+            speaker_label: Some(localize_speaker_label(segment.speaker.as_deref())),
             original_text: segment.text.trim().to_owned(),
         })
         .collect::<Vec<_>>();
@@ -2458,4 +2588,122 @@ pub fn rename_record_speaker(
         let _ = repository.add_hotword(&to_label, "说话人名称");
     }
     Ok(changed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn scratch_library(name: &str) -> ManagedLibrary {
+        let root = std::env::temp_dir()
+            .join("echo_memory_commands_tests")
+            .join(format!("{name}_{}", COUNTER.fetch_add(1, Ordering::SeqCst)));
+        let _ = std::fs::remove_dir_all(&root);
+        ManagedLibrary::open(root).unwrap()
+    }
+
+    /// 下载完成必须顺手登记为当前模型。少了这一步，用户在引导里下完 574MB 之后
+    /// 第一次转写仍然会报「尚未安装转写模型」——引导里的下载按钮等于白点。
+    #[test]
+    fn downloading_a_model_registers_it_as_current() {
+        let library = scratch_library("register");
+        let models_dir = library.root().join("models");
+        std::fs::create_dir_all(&models_dir).unwrap();
+        let model = models_dir.join(crate::whisper::recommended_model_file());
+        std::fs::write(&model, b"lmgg").unwrap();
+
+        assert_eq!(
+            library
+                .repository()
+                .knowledge_settings()
+                .unwrap()
+                .whisper_model_path,
+            ""
+        );
+
+        register_downloaded_whisper_model(&library, &models_dir).unwrap();
+
+        let settings = library.repository().knowledge_settings().unwrap();
+        assert_eq!(settings.whisper_model_path, model.to_string_lossy());
+        // 登记完就得真的能被用上，用户回设置页看到的必须是同一个模型。
+        assert!(WhisperAdapter::detect_with_model_path(Some(&settings.whisper_model_path)).is_ok());
+        let _ = std::fs::remove_dir_all(library.root());
+    }
+
+    /// 模型文件不在时不许谎报成功，否则用户以为装好了却用不了。
+    #[test]
+    fn registering_a_missing_model_fails_loudly() {
+        let library = scratch_library("missing");
+        let models_dir = library.root().join("models");
+        std::fs::create_dir_all(&models_dir).unwrap();
+        assert!(register_downloaded_whisper_model(&library, &models_dir).is_err());
+        let _ = std::fs::remove_dir_all(library.root());
+    }
+
+    #[test]
+    fn pending_download_reports_the_resume_point() {
+        let library = scratch_library("pending");
+        let models_dir = library.root().join("models");
+        std::fs::create_dir_all(&models_dir).unwrap();
+        assert!(pending_whisper_download(&models_dir).is_none());
+
+        let partial = models_dir.join(crate::whisper::recommended_model_partial());
+        std::fs::write(&partial, vec![0_u8; 2048]).unwrap();
+        let pending = pending_whisper_download(&models_dir).expect("半成品应被识别");
+        assert_eq!(pending.model, RECOMMENDED_MODEL_ID);
+        assert_eq!(pending.bytes, 2048);
+        // 半成品不能出现在可选模型列表里，否则用户会以为已经下好了。
+        assert!(discover_whisper_models(&models_dir, "").is_empty());
+        let _ = std::fs::remove_dir_all(library.root());
+    }
+
+    #[test]
+    fn model_list_covers_every_file_in_the_models_directory() {
+        let library = scratch_library("discover");
+        let models_dir = library.root().join("models");
+        std::fs::create_dir_all(&models_dir).unwrap();
+        std::fs::write(models_dir.join("ggml-small.bin"), vec![0_u8; 64]).unwrap();
+        std::fs::write(
+            models_dir.join(crate::whisper::recommended_model_file()),
+            vec![0_u8; 128],
+        )
+        .unwrap();
+        std::fs::write(models_dir.join("notes.md"), b"x").unwrap();
+
+        let models = discover_whisper_models(&models_dir, "");
+        let ids: Vec<&str> = models.iter().map(|model| model.id.as_str()).collect();
+        assert_eq!(ids, vec!["ggml-large-v3-turbo-q5_0", "ggml-small"]);
+        let _ = std::fs::remove_dir_all(library.root());
+    }
+
+    #[test]
+    fn model_source_label_tells_the_truth() {
+        let models_dir = PathBuf::from("/tmp/echo-memory-models");
+        let downloaded = models_dir.join(crate::whisper::recommended_model_file());
+        assert_eq!(
+            whisper_model_source_label(&downloaded, "", &models_dir),
+            "应用内下载"
+        );
+        assert_eq!(
+            whisper_model_source_label(&downloaded, &downloaded.to_string_lossy(), &models_dir),
+            "手动选择"
+        );
+        assert_eq!(
+            whisper_model_source_label(&PathBuf::from("/opt/models/mine.bin"), "", &models_dir),
+            "环境变量指定"
+        );
+    }
+
+    #[test]
+    fn cancellation_requests_are_per_model() {
+        request_cancellation("qwen2.5:7b");
+        assert!(is_cancelled("qwen2.5:7b"));
+        assert!(!is_cancelled("qwen3-embedding:0.6b"));
+        clear_cancellation("qwen2.5:7b");
+        assert!(!is_cancelled("qwen2.5:7b"));
+        assert!(cancel_model_download("   ".to_owned()).is_err());
+    }
 }

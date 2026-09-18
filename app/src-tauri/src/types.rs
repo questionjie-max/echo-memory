@@ -155,9 +155,31 @@ pub struct LocalAiStatus {
     pub whisper_model_path: Option<String>,
     pub whisper_model_source: Option<String>,
     pub whisper_models: Vec<LocalWhisperModel>,
+    pub recommended_whisper_model: RecommendedModel,
+    pub pending_whisper_download: Option<PendingModelDownload>,
     pub ollama_available: bool,
     pub ollama_models: Vec<LocalModelInfo>,
     pub settings: KnowledgeSettings,
+}
+
+/// 应用内可下载的推荐模型：尺寸由后端提供，前端不再自己硬编码一遍。
+/// `file_name` 用来判断这个模型是不是已经在磁盘上了 —— 已安装模型的 id 是文件名去掉后缀，
+/// 拿 id 直接比对会永远对不上，界面上就会出现「明明装好了还让我下载」。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecommendedModel {
+    pub id: String,
+    pub label: String,
+    pub file_name: String,
+    pub bytes: u64,
+}
+
+/// 中断后留在磁盘上的半成品，用来显示「继续下载」而不是从零开始。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingModelDownload {
+    pub model: String,
+    pub bytes: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
