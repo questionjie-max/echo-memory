@@ -8,9 +8,37 @@ use std::path::{Path, PathBuf};
 
 pub mod repository;
 
-/// 迁移文件目录：`<crate>/migrations`。
+/// 迁移文件目录：优先用随包分发的 `Resources/migrations`，
+/// 开发期回退到源码目录。发布包里的二进制不能依赖编译机上的源码路径 ——
+/// 换台机器那个路径不存在，资料库初始化会直接失败。
 fn migrations_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("migrations")
+    bundled_migrations_dir()
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("migrations"))
+}
+
+/// 可执行文件在 `Contents/MacOS/`，迁移文件随 resources 落在 `Contents/Resources/`。
+/// 这里接受几种可能的落点，以「目录里真的有 .sql 文件」为准，避免依赖打包器的映射细节。
+fn bundled_migrations_dir() -> Option<PathBuf> {
+    let executable = std::env::current_exe().ok()?;
+    let resources = executable.parent()?.parent()?.join("Resources");
+    [
+        "migrations",
+        "resources/migrations",
+        "migrations/migrations",
+    ]
+    .into_iter()
+    .map(|candidate| resources.join(candidate))
+    .find(|path| contains_sql_migrations(path))
+}
+
+fn contains_sql_migrations(dir: &Path) -> bool {
+    std::fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .any(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("sql"))
+        })
+        .unwrap_or(false)
 }
 
 /// 对给定数据库路径执行所有未应用的迁移，可重复调用（幂等）。
@@ -106,6 +134,17 @@ mod tests {
             )
             .unwrap();
         assert_eq!(memory_tables, 2);
+    }
+
+    /// 发布包里的迁移文件必须随 resources 一起分发：只靠编译机的源码路径，
+    /// 换台机器资料库初始化会直接失败。
+    #[test]
+    fn migrations_are_declared_as_bundle_resources() {
+        let config = include_str!("../../tauri.conf.json");
+        assert!(
+            config.contains("\"migrations/\""),
+            "tauri.conf.json 的 bundle.resources 必须声明 migrations/，否则发布包里没有迁移文件"
+        );
     }
 
     #[test]

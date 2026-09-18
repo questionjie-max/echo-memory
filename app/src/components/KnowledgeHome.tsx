@@ -1,14 +1,12 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState } from "react";
 import type {
-  KnowledgeAnswer,
   KnowledgeAnswerCitation,
   KnowledgeIndexStatus,
   KnowledgeOverview,
   KnowledgeReference,
 } from "../shared/types";
 import {
-  askKnowledgeBase,
   exportKnowledgeBase,
   getKnowledgeIndexStatus,
   getKnowledgeOverview,
@@ -23,28 +21,19 @@ interface Props {
   unfiledOnly: boolean;
   refreshKey: number;
   onOpenCitation: (citation: KnowledgeAnswerCitation) => void;
+  /** 提问入口收敛到「问知识库」视图一处：主页只留一个跳转，不再各做一套问答界面。 */
+  onOpenKnowledgeChat: () => void;
 }
 
-type HomeTab = "overview" | "ask";
-
-interface ConversationItem {
-  question: string;
-  answer: KnowledgeAnswer;
-}
-
-export default function KnowledgeHome({ scope, projectId, unfiledOnly, refreshKey, onOpenCitation }: Props) {
+export default function KnowledgeHome({ scope, projectId, unfiledOnly, refreshKey, onOpenCitation, onOpenKnowledgeChat }: Props) {
   const [name, setName] = useState(scope === "all" ? "全部记录" : scope === "unfiled" ? "未归档" : "知识库");
   const [overview, setOverview] = useState<KnowledgeOverview | null>(null);
   const [index, setIndex] = useState<KnowledgeIndexStatus | null>(null);
-  const [tab, setTab] = useState<HomeTab>("overview");
-  const [question, setQuestion] = useState("");
-  const [conversation, setConversation] = useState<ConversationItem[]>([]);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const requestId = useRef(0);
-  const answerRequestId = useRef(0);
   const refreshKeyRef = useRef(refreshKey);
   const currentScopeKey = `${scope}:${projectId ?? ""}:${unfiledOnly ? "unfiled" : "all"}`;
   const activeScopeRef = useRef(currentScopeKey);
@@ -73,11 +62,6 @@ export default function KnowledgeHome({ scope, projectId, unfiledOnly, refreshKe
   }
 
   useEffect(() => {
-    answerRequestId.current += 1;
-    setConversation([]);
-    setQuestion("");
-    setBusy(false);
-    setTab("overview");
     setOverview(null);
     setIndex(null);
     setLoading(true);
@@ -139,26 +123,6 @@ export default function KnowledgeHome({ scope, projectId, unfiledOnly, refreshKe
     }
   }
 
-  async function ask() {
-    const trimmed = question.trim();
-    if (!trimmed) return;
-    const askId = ++answerRequestId.current;
-    const askScopeKey = currentScopeKey;
-    setBusy(true);
-    setError("");
-    try {
-      const answer = await askKnowledgeBase(trimmed, projectId, unfiledOnly);
-      if (askId !== answerRequestId.current || askScopeKey !== activeScopeRef.current) return;
-      setConversation((items) => [...items, { question: trimmed, answer }]);
-      setQuestion("");
-    } catch (reason) {
-      if (askId !== answerRequestId.current || askScopeKey !== activeScopeRef.current) return;
-      setError(String(reason));
-    } finally {
-      if (askId === answerRequestId.current && askScopeKey === activeScopeRef.current) setBusy(false);
-    }
-  }
-
   async function exportAll(format: "md" | "txt") {
     const destination = await open({ directory: true, multiple: false, title: `导出${name}` });
     if (typeof destination !== "string") return;
@@ -176,42 +140,33 @@ export default function KnowledgeHome({ scope, projectId, unfiledOnly, refreshKe
 
   const ready = index?.status === "completed";
   return <section className="knowledge-home" aria-label={`${name}主页`}>
-    <header className="knowledge-home-header material">
+    <header className="knowledge-home-header view-header">
       <div><p className="pane-eyebrow">知识库主页</p><h2>{name}</h2></div>
-      <details className="export-menu">
-        <summary>导出</summary>
-        <div className="export-popover material"><button type="button" onClick={() => void exportAll("md")}>Markdown 文件夹</button><button type="button" onClick={() => void exportAll("txt")}>TXT 文件夹</button></div>
-      </details>
+      <div className="knowledge-home-actions">
+        <button type="button" className="primary-button" onClick={onOpenKnowledgeChat}>问知识库 →</button>
+        <details className="export-menu">
+          <summary>导出</summary>
+          <div className="export-popover material"><button type="button" onClick={() => void exportAll("md")}>Markdown 文件夹</button><button type="button" onClick={() => void exportAll("txt")}>TXT 文件夹</button></div>
+        </details>
+      </div>
     </header>
-    <div className="knowledge-home-tabs" role="tablist" aria-label="知识库视图">
-      <button id="knowledge-overview-tab" type="button" role="tab" aria-selected={tab === "overview"} aria-controls="knowledge-overview-panel" className={tab === "overview" ? "selected" : ""} onClick={() => setTab("overview")}>概览</button>
-      <button id="knowledge-ask-tab" type="button" role="tab" aria-selected={tab === "ask"} aria-controls="knowledge-ask-panel" className={tab === "ask" ? "selected" : ""} onClick={() => setTab("ask")}>问知识库</button>
-    </div>
-    {error && <p className="detail-error" role="alert">{error}</p>}
-    {notice && <p className="inline-notice knowledge-notice" role="status">{notice}</p>}
     <div className="knowledge-home-content">
-      {tab === "overview" ? <div id="knowledge-overview-panel" role="tabpanel" aria-labelledby="knowledge-overview-tab">
-        {loading ? <p className="knowledge-loading" role="status">正在加载知识库概览…</p> : <div className="knowledge-metrics">
-          <Metric label="录音" value={overview?.recordCount ?? 0} />
-          <Metric label="逐字稿" value={overview?.transcriptCount ?? 0} />
-          <Metric label="已分析" value={overview?.analyzedCount ?? 0} />
-        </div>}
-        {!loading && <section className="index-section">
-          <div><h3>知识索引</h3><p>{indexStatusText(index)}</p></div>
-          <button type="button" className={ready ? "secondary-button" : "primary-button"} disabled={busy || index?.status === "indexing"} onClick={() => void rebuild()}>{index?.status === "indexing" ? "建立中…" : ready ? "更新索引" : "建立索引"}</button>
-          {index?.status === "indexing" && <div className="index-progress"><span style={{ width: `${index.totalRecords ? Math.round(index.processedRecords / index.totalRecords * 100) : 5}%` }} /></div>}
-        </section>}
-        {!loading && <>
-          <ReferenceSection title="最近决策" empty="还没有可验证的决策。" items={overview?.decisions ?? []} onOpen={(item) => item.segmentId && onOpenCitation({ chunkId: "overview", recordId: item.recordId, recordTitle: item.recordTitle, quoteText: item.quoteText, segmentId: item.segmentId, startMs: item.startMs ?? 0, endMs: item.endMs ?? item.startMs ?? 0 })} />
-          <ReferenceSection title="最近待办" empty="还没有明确待办。" items={overview?.actionItems ?? []} onOpen={(item) => item.segmentId && onOpenCitation({ chunkId: "overview", recordId: item.recordId, recordTitle: item.recordTitle, quoteText: item.quoteText, segmentId: item.segmentId, startMs: item.startMs ?? 0, endMs: item.endMs ?? item.startMs ?? 0 })} />
-        </>}
-      </div> : <div id="knowledge-ask-panel" role="tabpanel" aria-labelledby="knowledge-ask-tab" className="knowledge-chat">
-        <div className="conversation">
-          {conversation.length === 0 && <div className="chat-empty"><h3>问{name}</h3><p>{ready ? "" : "建立知识索引后即可提问。"}</p></div>}
-          {conversation.map((item, index) => <article className="conversation-item" key={`${item.question}-${index}`}><p className="question-bubble">{item.question}</p><div className="answer-block"><p>{item.answer.answer}</p>{item.answer.citations.map((citation) => <button type="button" key={citation.chunkId} onClick={() => onOpenCitation(citation)}><strong>{citation.recordTitle} · {formatTime(citation.startMs)}</strong><span>{citation.quoteText}</span></button>)}</div></article>)}
-        </div>
-        <form className="ask-form" onSubmit={(event) => { event.preventDefault(); void ask(); }}><textarea value={question} maxLength={500} disabled={!ready || busy} placeholder={ready ? "输入问题" : "知识索引尚未就绪"} aria-label="向知识库提问" onChange={(event) => setQuestion(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void ask(); } }} /><button type="submit" className="primary-button" disabled={!ready || busy || !question.trim()}>{busy ? "查找中…" : "提问"}</button></form>
+      {error && <p className="detail-error" role="alert">{error}</p>}
+      {notice && <p className="inline-notice knowledge-notice" role="status">{notice}</p>}
+      {loading ? <p className="knowledge-loading" role="status">正在加载知识库概览…</p> : <div className="knowledge-metrics">
+        <Metric label="录音" value={overview?.recordCount ?? 0} />
+        <Metric label="逐字稿" value={overview?.transcriptCount ?? 0} />
+        <Metric label="已分析" value={overview?.analyzedCount ?? 0} />
       </div>}
+      {!loading && <section className="index-section">
+        <div><h3>知识索引</h3><p>{indexStatusText(index)}{!ready && " · 建好后就能在「问知识库」里提问"}</p></div>
+        <button type="button" className={ready ? "secondary-button" : "primary-button"} disabled={busy || index?.status === "indexing"} onClick={() => void rebuild()}>{index?.status === "indexing" ? "建立中…" : ready ? "更新索引" : "建立索引"}</button>
+        {index?.status === "indexing" && <div className="index-progress"><span style={{ width: `${index.totalRecords ? Math.round(index.processedRecords / index.totalRecords * 100) : 5}%` }} /></div>}
+      </section>}
+      {!loading && <>
+        <ReferenceSection title="最近决策" empty="还没有可验证的决策。" items={overview?.decisions ?? []} onOpen={(item) => item.segmentId && onOpenCitation({ chunkId: "overview", recordId: item.recordId, recordTitle: item.recordTitle, quoteText: item.quoteText, segmentId: item.segmentId, startMs: item.startMs ?? 0, endMs: item.endMs ?? item.startMs ?? 0 })} />
+        <ReferenceSection title="最近待办" empty="还没有明确待办。" items={overview?.actionItems ?? []} onOpen={(item) => item.segmentId && onOpenCitation({ chunkId: "overview", recordId: item.recordId, recordTitle: item.recordTitle, quoteText: item.quoteText, segmentId: item.segmentId, startMs: item.startMs ?? 0, endMs: item.endMs ?? item.startMs ?? 0 })} />
+      </>}
     </div>
   </section>;
 }
@@ -229,4 +184,3 @@ function indexStatusText(status: KnowledgeIndexStatus | null) {
 function ReferenceSection({ title, empty, items, onOpen }: { title: string; empty: string; items: KnowledgeReference[]; onOpen: (item: KnowledgeReference) => void }) {
   return <section className="overview-section"><h3>{title}</h3>{items.length ? <div className="overview-reference-list">{items.map((item, index) => <button type="button" disabled={!item.segmentId} key={`${item.recordId}-${index}`} onClick={() => onOpen(item)}><strong>{item.text}</strong><span>{item.recordTitle}{item.startMs !== null ? ` · ${formatTime(item.startMs)}` : ""}</span></button>)}</div> : <p>{empty}</p>}</section>;
 }
-

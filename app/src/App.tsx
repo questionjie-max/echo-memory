@@ -2,10 +2,10 @@ import { useEffect, useState } from "react";
 import ProjectPanel from "./components/ProjectPanel";
 import ActionDashboard from "./components/ActionDashboard";
 import OnboardingWizard from "./components/OnboardingWizard";
+import AppToolbar, { type MainView } from "./components/AppToolbar";
 import AssistantDock from "./components/AssistantDock";
 import RecordPanel from "./components/RecordPanel";
 import RecordDetail from "./components/RecordDetail";
-import SearchPanel from "./components/SearchPanel";
 import KnowledgeHome from "./components/KnowledgeHome";
 import KnowledgeChatView from "./components/KnowledgeChatView";
 import GrowthView from "./components/GrowthView";
@@ -13,8 +13,6 @@ import EvolutionView from "./components/EvolutionView";
 import SettingsPanel from "./components/SettingsPanel";
 import type { KnowledgeAnswerCitation, MemoryScope, MemorySourceReference, RecordBrief, SearchResult } from "./shared/types";
 import { getOnboardingStatus, getRecord } from "./lib/tauri";
-
-type MainView = "library" | "chat" | "growth" | "evolution" | "actions";
 
 export interface RecordNavigation {
   token: number;
@@ -53,6 +51,7 @@ export default function App() {
     try {
       const record = await getRecord(result.recordId);
       setSelectedRecord(record);
+      setMainView("library");
       setNavigation({
         token: Date.now(),
         startMs: result.startMs,
@@ -119,25 +118,14 @@ export default function App() {
 
   return (
     <main className="app-shell">
-      <header className="app-toolbar material">
-        <div className="brand-block">
-          <h1>回声记忆</h1>
-          <p>默认本地处理；启用外部 AI 后仅发送所选文本，永不上传音频</p>
-        </div>
-        <nav className="main-navigation" aria-label="主视图">
-          <NavButton label="资料库" selected={mainView === "library"} onClick={() => setMainView("library")} />
-          <NavButton label="AI 对话" selected={mainView === "chat"} onClick={() => setMainView("chat")} />
-          <NavButton label="成长轨迹" selected={mainView === "growth"} onClick={() => setMainView("growth")} />
-          <NavButton label="认知演化" selected={mainView === "evolution"} onClick={() => setMainView("evolution")} />
-          <NavButton label="行动" selected={mainView === "actions"} onClick={() => setMainView("actions")} />
-        </nav>
-        {mainView === "library" && <SearchPanel
-          projectId={projectId}
-          unfiledOnly={unfiledOnly}
-          onOpen={(result) => void openSearchResult(result)}
-        />}
-        <button type="button" className="toolbar-button" onClick={() => setSettingsOpen(true)}>设置</button>
-      </header>
+      <AppToolbar
+        mainView={mainView}
+        onSelectView={setMainView}
+        projectId={projectId}
+        unfiledOnly={unfiledOnly}
+        onOpenSearchResult={(result) => void openSearchResult(result)}
+        onOpenSettings={() => setSettingsOpen(true)}
+      />
 
       <AssistantDock
         selectedRecordId={selectedRecord?.id ?? null}
@@ -158,7 +146,7 @@ export default function App() {
           {selectedRecord ? (
             <RecordDetail record={selectedRecord} navigation={navigation} onChanged={changed} />
           ) : (
-            <KnowledgeHome scope={scope} projectId={projectId} unfiledOnly={unfiledOnly} refreshKey={refreshKey} onOpenCitation={(citation) => void openCitation(citation)} />
+            <KnowledgeHome scope={scope} projectId={projectId} unfiledOnly={unfiledOnly} refreshKey={refreshKey} onOpenCitation={(citation) => void openCitation(citation)} onOpenKnowledgeChat={() => setMainView("chat")} />
           )}
         </> : <div className="memory-main-content">
           {mainView === "chat" && <KnowledgeChatView scope={scope} projectId={projectId} unfiledOnly={unfiledOnly} refreshKey={refreshKey} onOpenCitation={(citation) => void openCitation(citation)} onOpenSettings={() => setSettingsOpen(true)} />}
@@ -167,7 +155,11 @@ export default function App() {
           {mainView === "actions" && <ActionDashboard onOpenRecord={openActionRecord} />}
         </div>}
       </div>
-      <SettingsPanel open={settingsOpen} onClose={() => { setSettingsOpen(false); changed(); }} />
+      <SettingsPanel
+        open={settingsOpen}
+        onClose={() => { setSettingsOpen(false); changed(); }}
+        onOpenKnowledge={() => setMainView("library")}
+      />
       {onboardingNeeded && (
         <OnboardingWizard
           onFinished={() => {
@@ -178,8 +170,4 @@ export default function App() {
       )}
     </main>
   );
-}
-
-function NavButton({ label, selected, onClick }: { label: string; selected: boolean; onClick: () => void }) {
-  return <button type="button" className={`main-navigation-button${selected ? " selected" : ""}`} aria-current={selected ? "page" : undefined} onClick={onClick}>{label}</button>;
 }

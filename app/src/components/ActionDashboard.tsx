@@ -63,11 +63,12 @@ export default function ActionDashboard({ onOpenRecord }: Props) {
 
   return (
     <div className="action-dashboard-shell">
-      <header className="action-dashboard-header">
+      <header className="action-dashboard-header view-header">
         <h2>行动</h2>
         <p>{dashboard.openCount} 项待办 · {dashboard.doneCount} 项已完成 · {dashboard.openQuestions.length} 个未解决问题</p>
       </header>
 
+      <div className="action-dashboard-body">
       <section className="action-dashboard-section">
         <h3>行动项</h3>
         {openItems.length === 0 && doneItems.length === 0 && <p className="overview-empty">暂无行动项。</p>}
@@ -150,6 +151,7 @@ export default function ActionDashboard({ onOpenRecord }: Props) {
           </ul>
         </section>
       )}
+      </div>
     </div>
   );
 }

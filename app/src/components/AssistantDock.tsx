@@ -11,7 +11,8 @@ const MODES: Array<{ id: DockMode; label: string; hint: string }> = [
   { id: "summary", label: "总结当前记录", hint: "基于当前选中记录的逐字稿与分析" },
   { id: "creation", label: "文字创作", hint: "扩写、改写、风格化成稿" },
   { id: "inspire", label: "启发对话", hint: "费曼式追问，推动思考" },
-  { id: "free", label: "自由聊天", hint: "无预设助手" },
+  // 名字要说清它不检索资料库 —— 跨记录、带引用的问答在「问知识库」视图里。
+  { id: "free", label: "随手问", hint: "直接问，不读你的资料库" },
 ];
 
 const DOCK_STORAGE_KEY = "echo-memory-dock-state";
@@ -32,8 +33,9 @@ function loadPersisted(): PersistedDockState {
 }
 
 /**
- * AI 伙伴停靠栏：所有主视图共享的顶部对话条。
- * 默认本地 Ollama 引擎；外部引擎需已配置并主动选择，选中时展示醒目提示。
+ * 随行助手停靠栏：所有主视图共享的对话条，跟着你正在看的东西走。
+ * 与「问知识库」的分工：这里聊当前选中记录、写东西、随手问（不检索）；
+ * 跨记录、带原文引用的问答在「问知识库」视图。
  */
 export default function AssistantDock({ selectedRecordId, selectedRecordTitle }: Props) {
   const [collapsed, setCollapsed] = useState(loadPersisted().collapsed);
@@ -139,7 +141,7 @@ export default function AssistantDock({ selectedRecordId, selectedRecordTitle }:
   const activeMode = MODES.find((item) => item.id === mode);
 
   return (
-    <section className={`assistant-dock material${collapsed ? " collapsed" : ""}`} aria-label="AI 伙伴">
+    <section className={`assistant-dock${collapsed ? " collapsed" : ""}`} aria-label="随行助手">
       <header className="dock-header">
         <button
           type="button"
@@ -147,7 +149,7 @@ export default function AssistantDock({ selectedRecordId, selectedRecordTitle }:
           aria-expanded={!collapsed}
           onClick={() => setCollapsed((value) => !value)}
         >
-          🤖 AI 伙伴{collapsed ? "（收起）" : ""}
+          🤖 随行助手{collapsed ? "（收起）" : ""}
         </button>
         {!collapsed && (
           <>
@@ -155,16 +157,10 @@ export default function AssistantDock({ selectedRecordId, selectedRecordTitle }:
               className="dock-engine"
               value={engine}
               aria-label="对话引擎"
-              onChange={(event) => {
-                const next = event.target.value as "local" | "external";
-                if (next === "external" && !externalAvailable) return;
-                setEngine(next);
-              }}
+              onChange={(event) => setEngine(event.target.value as "local" | "external")}
             >
               <option value="local">本地模型</option>
-              <option value="external" disabled={!externalAvailable}>
-                外部模型{externalAvailable ? "" : "（未配置）"}
-              </option>
+              <option value="external">外部模型{externalAvailable ? "" : "（未配置）"}</option>
             </select>
             <div className="dock-modes" role="tablist" aria-label="对话模式">
               {MODES.map((item) => (
@@ -198,13 +194,16 @@ export default function AssistantDock({ selectedRecordId, selectedRecordTitle }:
         <>
           {engine === "external" && (
             <p className="dock-external-warning" role="alert">
-              当前对话将发送到你配置的外部 AI 服务（仅文本，不含音频）。
+              {externalAvailable
+                ? "当前对话将发送到你配置的外部 AI 服务（仅文本，不含音频）。"
+                : "外部 AI 还没有配置好，现在发送会失败。请到 设置 → AI 模型 里填接口地址和 API Key。"}
             </p>
           )}
           <div className="dock-messages" ref={scrollRef} aria-live="polite">
             {messages.length === 0 && (
               <p className="dock-empty">
-                随时对话：总结当前录音、把想法写成成稿、或让 AI 反问你推动思考。
+                跟着手头的活走：总结当前录音、把想法写成成稿、让 AI 反问你推动思考，或随手问点什么。
+                跨全部录音、带原文引用的提问在「问知识库」视图。
                 {activeMode ? `当前模式：${activeMode.label} —— ${activeMode.hint}。` : ""}
               </p>
             )}
