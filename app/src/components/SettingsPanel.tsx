@@ -12,12 +12,14 @@ import {
   PanelShell,
   Pill,
   SavedToast,
+  Segmented,
   Stack,
   StatusPill,
   ToggleRow,
   useSavedFlash,
   type NavItem,
 } from "./SettingsKit";
+import { getStoredTheme, setTheme, type Theme } from "../lib/theme";
 import { useModelDownloads } from "./useModelDownloads";
 import type {
   AnalysisTemplate,
@@ -651,6 +653,7 @@ export default function SettingsPanel({ open: visible, onClose, onOpenKnowledge 
           )
         ) : (
           <Stack>
+            <ThemeCard />
             <Card title="版本" status={<Pill tone="accent">{appInfo ? `v${appInfo.version}` : "…"}</Pill>}>
               <List>
                 <ListRow static state="done" title="回声记忆（Echo Memory）" meta="本地优先的个人智能记忆系统" />
@@ -730,6 +733,30 @@ export default function SettingsPanel({ open: visible, onClose, onOpenKnowledge 
       setBusy(false);
     }
   }
+}
+
+/** 外观设置：深色（Lovart 方案，默认）/ 浅色，改动即时生效并持久化到 localStorage。 */
+function ThemeCard() {
+  const [theme, setThemeState] = useState<Theme>(() => getStoredTheme());
+  return (
+    <Card
+      title="外观"
+      description="深色是 Lovart 方案的默认外观；浅色保留原有配色。改动立即生效，下次启动保持所选主题。"
+    >
+      <Segmented<Theme>
+        label="界面主题"
+        value={theme}
+        onChange={(next) => {
+          setThemeState(next);
+          setTheme(next);
+        }}
+        options={[
+          { value: "dark", label: "深色" },
+          { value: "light", label: "浅色" },
+        ]}
+      />
+    </Card>
+  );
 }
 
 function inboxStatusLabel(status: string) {
