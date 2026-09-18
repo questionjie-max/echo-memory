@@ -8,6 +8,7 @@ import { importAudio, listRecords, transcribeRecord } from "../lib/tauri";
 import { formatMinutesSeconds as formatDuration, isProcessingStatus as isProcessing } from "../lib/format";
 import { getInboxStatus } from "../lib/tauri";
 import DocumentImportDialog from "./DocumentImportDialog";
+import { PlayIcon } from "./icons";
 
 interface Props {
   projectId: string | null;
@@ -15,6 +16,8 @@ interface Props {
   onImported: () => void;
   selectedId: string | null;
   onSelect: (record: RecordBrief | null) => void;
+  /** 播放钮：选中该记录并立即开始播放（仅音频记录显示播放钮）。 */
+  onPlay: (record: RecordBrief) => void;
 }
 
 type WorkspaceView = "pending" | "recent";
@@ -28,7 +31,7 @@ const STATUS_LABEL: Record<RecordStatus, string> = {
   failed: "转写失败",
 };
 
-export default function RecordPanel({ projectId, unfiledOnly, onImported, selectedId, onSelect }: Props) {
+export default function RecordPanel({ projectId, unfiledOnly, onImported, selectedId, onSelect, onPlay }: Props) {
   const [records, setRecords] = useState<RecordBrief[]>([]);
   const [view, setView] = useState<WorkspaceView>("pending");
   const [inbox, setInbox] = useState<InboxStatus | null>(null);
@@ -178,6 +181,17 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
           const label = statusLabel(record);
           return (
             <li key={record.id} className={selectedId === record.id ? "selected" : ""}>
+              {record.sourceType !== "document" && (
+                <button
+                  type="button"
+                  className="record-play"
+                  aria-label={`播放 ${record.title}`}
+                  title={`播放 ${record.title}`}
+                  onClick={() => onPlay(record)}
+                >
+                  <PlayIcon size={13} />
+                </button>
+              )}
               <button type="button" className="record-main" onClick={() => onSelect(record)}>
                 <strong>{record.title}</strong>
                 <span>{new Date(record.importedAt).toLocaleString()} · {record.sourceType === "document" ? "文字文档" : formatDuration(record.audioDurationMs, true)}</span>

@@ -40,7 +40,8 @@ describe("顶栏版式契约", () => {
     );
     expect(screen.getByRole("navigation", { name: "主视图" })).toBeTruthy();
     expect(document.querySelector(".search-panel")).toBeTruthy();
-    expect(screen.getByText("设置")).toBeTruthy();
+    // 设置按钮按 Lovart 稿改成齿轮图标，但可访问名仍是「设置」。
+    expect(screen.getByRole("button", { name: "设置" })).toBeTruthy();
     unmount();
   });
 
