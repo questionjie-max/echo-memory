@@ -42,6 +42,8 @@
 - AI 伙伴停靠栏：任意视图顶部随时对话（本地模型默认，可选外部模型），支持总结当前记录、文字创作、启发对话。
 - AI 模板向导：对话描述需求，本地模型生成分析模板并入库。
 - 产出文件夹：分析、逐字稿、AI 对话成稿统一以标准 Markdown 写入你指定的目录（可指向 Obsidian 等笔记库）。
+- 说话人分离：可选启用 whisperX 引擎区分"说话人 1、说话人 2…"，内嵌引擎保持默认、零依赖可用不受影响。
+- 说话人重命名：在录音详情把"说话人 1"改成真实姓名，可同时将姓名加入词汇库；行动项与决策自动标注归属人。
 - 导入 `MP3`、`M4A`、`WAV` 音频，并进行重复文件检测。
 - 导入 `Markdown`、`TXT`、`DOCX` 文档，进入同一个可搜索资料库。
 - 使用内嵌 Whisper 或本机 `whisper.cpp` 进行本地转写。
@@ -119,11 +121,12 @@ Alpha 聚焦单用户、单设备的本地工作流。目前不提供实时录�
 ## 环境要求
 
 - Apple Silicon Mac
-- Node.js 18+、Rust stable、Cargo 和 Xcode Command Line Tools
+- Node.js 22+、Rust stable、Cargo 和 Xcode Command Line Tools
 - 首次构建内嵌 Whisper 时需要 CMake
 - 本机可读的 Whisper `ggml-*.bin` 模型
 - 可选：本机 `whisper-cli` / `WHISPER_CPP_BIN`
 - 可选：本机 Ollama 服务和模型，用于分析
+- 可选：`pip install whisperx` 与 HuggingFace Token（接受 pyannote 模型协议），用于说话人分离
 
 ## 本地运行
 
@@ -143,6 +146,7 @@ cd app
 npm run typecheck
 npm run build
 npm run test:growth
+npm run test:ui
 cd src-tauri
 cargo fmt --check
 cargo test --features mcp-bin

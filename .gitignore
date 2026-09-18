@@ -47,3 +47,8 @@ logo-concepts/
 *.dmg
 *.app/
 /app/src-tauri/resources/echo-memory-mcp
+
+# Local agent/tool state — never publish
+.mimosa/
+.v2c/
+out/
