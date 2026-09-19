@@ -1,0 +1,66 @@
+{
+  "model_path": "/Users/yoursmac/Library/Application Support/回声记忆/models/ggml-large-v3-turbo-q5_0.bin",
+  "model_sha256_prefix": "394221709cd5ad1f",
+  "results": [
+    {
+      "cer": 0.010101010101010102,
+      "duration_ms": 24660,
+      "elapsed_ms": 4475,
+      "hypothesis": "今天是2026年9月19日,星期六,我们把第三季度的产品复盘安排在下周三下午2点,地点是三层会议室,李明负责整理用户反馈,王芳对接设计团队,这次复盘的重点是转写准确率和模型下载流程,请大家提前准备上个月的数据报表。",
+      "id": "01-short",
+      "language": "zh",
+      "model": "ggml-large-v3-turbo-q5_0.bin",
+      "reference": "今天是2026年9月19日，星期六。我们把第三季度的产品复盘安排在下周三下午两点，地点是三层会议室。李明负责整理用户反馈，王芳对接设计团队，这次复盘的重点是转写准确率和模型下载流程。请大家提前准备上个月的数据报表。",
+      "segment_count": 1,
+      "timeline_monotonic": true
+    },
+    {
+      "cer": 0.05956112852664577,
+      "duration_ms": 82660,
+      "elapsed_ms": 12173,
+      "hypothesis": "这次产品评审会主要讨论三件事。第一,转写引擎的质量评估。我们准备了一套基准音频,包括普通话、带噪声和双人对话的场景。用字错误率来量化效果。刘比歇夫时间统计法给了我们启发,不靠感觉,靠记录。第二,模型下载的链路。推荐模型有574兆,下载后需要作杀256教验。教验失败要自动清理缓存,避免用户装到损坏的文件。另外提醒大家,截止日期是10月1日,不是10月10日,两个时间不要搞混。第三,9月18号的修复有一处遗留,外部接口地址在失去焦点时才写库。如果用户敲到一半切走,数据就丢了,这个交互要重新考虑。陈公还提出一个问题很关键,如果用户第一次启动就遇到下载失败,我们的引导文案能不能说人话?别让他们以为软件坏了,会后再讨论。散会前确认一下,下周三的演示由王方主讲,李明准备数据,我最后把关。今天的会议到此结束,谢谢大家。",
+      "id": "02-medium",
+      "language": "zh",
+      "model": "ggml-large-v3-turbo-q5_0.bin",
+      "reference": "这次产品评审会主要讨论三件事。第一，转写引擎的质量评估。我们准备了一套基准音频，包括普通话、带噪声和双人对话的场景，用字错误率来量化效果。柳比歇夫时间统计法给了我们启发：不靠感觉，靠记录。第二，模型下载的链路。推荐模型有574兆，下载后需要做SHA256校验，校验失败要自动清理缓存，避免用户装到损坏的文件。另外提醒大家，截止日期是十月一日，不是十月十日，两个时间不要搞混。第三，九月十八号的修复有一处遗留：外部接口地址在失去焦点时才写库，如果用户敲到一半切走，数据就丢了，这个交互要重新考虑。陈工还提出一个问题很关键：如果用户第一次启动就遇到下载失败，我们的引导文案能不能说人话，别让他们以为软件坏了。会后再讨论。散会前确认一下：下周三的演示由王芳主讲，李明准备数据，我最后把关。今天的会议到此结束，谢谢大家。",
+      "segment_count": 15,
+      "timeline_monotonic": true
+    },
+    {
+      "cer": 0.14150943396226415,
+      "duration_ms": 50290,
+      "elapsed_ms": 6878,
+      "hypothesis": "陈公,这次说话人分离的验证方案你看了吗?看了。我建议先做双人对话,两个人交替发言,轮渍清楚,容易对真直。好,那我们约定,从现在开始我说的话都算说话人一,你说的算说话人二。没问题。技术上我担心的是两个人声音太接近,系统分不开。所以我有意选了音色差异大的测试员,你那边呢?转写本身有把握吗?普通话短句问题不大,专流名词可能会错几个,比如偏论者这种词。可以接受,我们要求的不是零错误,而是轮次不乱,时间轴不飘。同意。那就开始录吧,我数三个数。",
+      "id": "03-dialogue",
+      "language": "zh",
+      "model": "ggml-large-v3-turbo-q5_0.bin",
+      "reference": "林悦：陈工，这次说话人分离的验证方案你看了吗？\n陈工：看了。我建议先做双人对话，两个人交替发言，轮次清楚，容易对真值。\n林悦：好。那我们约定，从现在开始我说的话都算说话人一，你说的算说话人二。\n陈工：没问题。技术上我担心的是两个人声音太接近，系统分不开。\n林悦：所以我有意选了音色差异大的测试源。你那边呢，转写本身有把握吗？\n陈工：普通话短句问题不大，专有名词可能会错几个，比如pyannote这种词。\n林悦：可以接受。我们要求的不是零错误，而是轮次不乱、时间轴不漂。\n陈工：同意。那就开始录吧，我数三个数。",
+      "segment_count": 8,
+      "timeline_monotonic": true
+    },
+    {
+      "cer": 0.05642633228840126,
+      "duration_ms": 82660,
+      "elapsed_ms": 11015,
+      "hypothesis": "这次产品评审会主要讨论三件事第一,转写引擎的质量评估我们准备了一套基准音频包括普通话、带噪声和双人对话的场景用字错误率来量化效果刘比歇夫时间统计法给了我们启发不靠感觉,靠记录第二,模型下载的链路推荐模型有574兆下载后需要作杀256教验教验失败要自动清理缓存避免用户装到损坏的文件另外提醒大家截止日期是10月1日不是10月10日两个时间不要搞混第三,9月18号的修复有一处遗留外部接口地址在失去焦点时才写库如果用户敲到一半切走数据就丢了这个交互要重新考虑陈公还提出一个问题很关键如果用户第一次启动就遇到下载失败我们的引导文案能不能说人话别让他们以为软件坏了会后再讨论散会前确认一下下周三的演示由王芳主讲李明准备数据我最后把关今天的会议到此结束谢谢大家",
+      "id": "04-noisy",
+      "language": "zh",
+      "model": "ggml-large-v3-turbo-q5_0.bin",
+      "reference": "这次产品评审会主要讨论三件事。第一，转写引擎的质量评估。我们准备了一套基准音频，包括普通话、带噪声和双人对话的场景，用字错误率来量化效果。柳比歇夫时间统计法给了我们启发：不靠感觉，靠记录。第二，模型下载的链路。推荐模型有574兆，下载后需要做SHA256校验，校验失败要自动清理缓存，避免用户装到损坏的文件。另外提醒大家，截止日期是十月一日，不是十月十日，两个时间不要搞混。第三，九月十八号的修复有一处遗留：外部接口地址在失去焦点时才写库，如果用户敲到一半切走，数据就丢了，这个交互要重新考虑。陈工还提出一个问题很关键：如果用户第一次启动就遇到下载失败，我们的引导文案能不能说人话，别让他们以为软件坏了。会后再讨论。散会前确认一下：下周三的演示由王芳主讲，李明准备数据，我最后把关。今天的会议到此结束，谢谢大家。",
+      "segment_count": 32,
+      "timeline_monotonic": true
+    },
+    {
+      "cer": 0.03941908713692946,
+      "duration_ms": 35770,
+      "elapsed_ms": 5163,
+      "hypothesis": "Welcome to the Echo Memory product review.Today we will evaluate the transcription pipeline from end to end.The benchmark includes 5 audio clips covering different conditions.We measure character error rate and check timestamp alignment for every segment.The recommended model is large V3 turbo, quantized to Q50, and it downloads 574MB.Before installation, the file must pass a checksum, otherwise it will be deleted automatically.Speaker diarization remains the hardest part of this project.Our goal is simple, make local transcription reliable for everyone.",
+      "id": "05-english",
+      "language": "en",
+      "model": "ggml-large-v3-turbo-q5_0.bin",
+      "reference": "Welcome to the Echo Memory product review. Today we will evaluate the transcription pipeline from end to end. The benchmark includes five audio clips covering different conditions. We measure character error rate and check timestamp alignment for every segment. The recommended model is large v3 turbo, quantized to q5 zero, and it downloads 574 megabytes. Before installation, the file must pass a checksum, otherwise it will be deleted automatically. Speaker diarization remains the hardest part of this project. Our goal is simple: make local transcription reliable for everyone.",
+      "segment_count": 8,
+      "timeline_monotonic": true
+    }
+  ]
+}

@@ -375,8 +375,6 @@ pub fn transcribe_whisperx(
     let mut command = std::process::Command::new(binary);
     command
         .arg(wav_path)
-        .arg("--language")
-        .arg(if language == "auto" { "en" } else { language })
         .arg("--diarize")
         .arg("--output_format")
         .arg("json")
@@ -384,6 +382,11 @@ pub fn transcribe_whisperx(
         .arg(&output_dir)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped());
+    if language != "auto" {
+        // 语言为「auto」时不传 --language，由 whisperX 自行检测；
+        // 此前会把 auto 静默改写成 en，中文音频会被按英语转写。
+        command.arg("--language").arg(language);
+    }
     if let Some(token) = hf_token {
         command.arg("--hf_token").arg(token);
     }
