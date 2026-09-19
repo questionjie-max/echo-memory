@@ -295,7 +295,9 @@ fn parse_timestamp(value: &str) -> AppResult<i64> {
 
 /* --------------------- v0.5.0：whisperX 外置引擎（说话人分离） --------------------- */
 
-/// 探测 whisperX CLI：优先 ECHO_WHISPERX_BIN，其次 PATH。
+/// 探测 whisperX CLI：优先 ECHO_WHISPERX_BIN，其次 PATH，最后常见用户级安装位置。
+/// 最后一步是必需的：GUI 启动的应用 PATH 只有 /usr/bin:/bin:/usr/sbin:/sbin，
+/// 而 pip/uv 默认把 whisperx 装到 ~/.local/bin——只扫 PATH 时普通用户永远检测不到。
 pub fn whisperx_path() -> Option<std::path::PathBuf> {
     if let Ok(path) = std::env::var("ECHO_WHISPERX_BIN") {
         let candidate = std::path::PathBuf::from(path.trim());
@@ -303,14 +305,30 @@ pub fn whisperx_path() -> Option<std::path::PathBuf> {
             return Some(candidate);
         }
     }
-    let path = std::env::var_os("PATH")?;
-    for directory in std::env::split_paths(&path) {
-        let candidate = directory.join("whisperx");
-        if candidate.is_file() {
-            return Some(candidate);
+    if let Some(path) = std::env::var_os("PATH") {
+        for directory in std::env::split_paths(&path) {
+            let candidate = directory.join("whisperx");
+            if candidate.is_file() {
+                return Some(candidate);
+            }
         }
     }
-    None
+    let mut known: Vec<std::path::PathBuf> = vec![
+        std::path::PathBuf::from("/opt/homebrew/bin/whisperx"),
+        std::path::PathBuf::from("/usr/local/bin/whisperx"),
+    ];
+    if let Some(home) = std::env::var_os("HOME") {
+        let home = std::path::PathBuf::from(home);
+        known.insert(0, home.join(".local/bin/whisperx"));
+        // pip --user 在 macOS 上还会装到 ~/Library/Python/3.x/bin。
+        let python_dir = home.join("Library/Python");
+        if let Ok(entries) = std::fs::read_dir(&python_dir) {
+            for entry in entries.flatten() {
+                known.push(entry.path().join("bin/whisperx"));
+            }
+        }
+    }
+    known.into_iter().find(|candidate| candidate.is_file())
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
