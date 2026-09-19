@@ -56,3 +56,7 @@ out/
 
 # Personal writing drafts — not product content, never publish
 content/
+
+# 转写质量基准：合成音频与真值一起版本化，保证结果可复现
+!benchmarks/**/*.m4a
+!benchmarks/**/*.wav

@@ -185,6 +185,13 @@ export default function AiModelSettings(props: AiModelSettingsProps) {
         description="把逐字稿变成摘要、决策和待办。可以完全跑在本机，也可以交给外部 API。"
         status={<StatusPill ok={analysisReady(status, channel, external)} okText="可用" badText={channel === "local" ? "未运行" : "未配置"} />}
       >
+        {/* 已知边界：当前版本录音分析固定跑在本机 Ollama（run_analysis 只接 OllamaAdapter），
+            这里的「外部 API」选择只影响下方展示的外部配置表单。接线前如实告知用户。 */}
+        {channel === "external" && (
+          <p className="em-note warn" role="note">
+            注意：外部 API 目标前只用于记忆与随行助手对话；录音分析仍会在本机 Ollama 上执行。
+          </p>
+        )}
         <Segmented
           label="分析由谁来做"
           value={channel}
