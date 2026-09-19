@@ -127,7 +127,7 @@ export default function ProjectPanel({ selectedScope, refreshKey, onSelect }: Pr
   );
 
   return (
-    <aside className="sidebar material" aria-label="知识库">
+    <aside className="sidebar" aria-label="知识库">
       <div className="pane-heading">
         <div>
           <p className="pane-eyebrow">资料组织</p>
@@ -244,7 +244,7 @@ function KnowledgeRow({ project, selected, busy, onSelect, onRename, onArchive, 
       {selected && (
         <details className="row-menu">
           <summary aria-label={`${project.name}操作`} title="知识库操作">•••</summary>
-          <div className="row-menu-popover material">
+          <div className="row-menu-popover">
             <button type="button" disabled={busy} onClick={onRename}>重命名</button>
             <button type="button" disabled={busy} onClick={onArchive}>归档</button>
             <button type="button" className="danger-text" disabled={busy} onClick={onDelete}>删除</button>

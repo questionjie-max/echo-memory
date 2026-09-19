@@ -146,7 +146,7 @@ export default function KnowledgeHome({ scope, projectId, unfiledOnly, refreshKe
         <button type="button" className="primary-button" onClick={onOpenKnowledgeChat}>问知识库 →</button>
         <details className="export-menu">
           <summary>导出</summary>
-          <div className="export-popover material"><button type="button" onClick={() => void exportAll("md")}>Markdown 文件夹</button><button type="button" onClick={() => void exportAll("txt")}>TXT 文件夹</button></div>
+          <div className="export-popover"><button type="button" onClick={() => void exportAll("md")}>Markdown 文件夹</button><button type="button" onClick={() => void exportAll("txt")}>TXT 文件夹</button></div>
         </details>
       </div>
     </header>

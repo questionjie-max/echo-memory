@@ -519,7 +519,7 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
 
   return (
     <section className="detail-pane" aria-label={isDocument ? "文档详情" : "录音详情"}>
-      <header className="detail-header material">
+      <header className="detail-header">
         <div className="detail-title">
           <span className={`status-dot status-${statusTone(currentRecord.status)}`} aria-hidden="true" />
           <div>
@@ -565,7 +565,7 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
           </label>
           <details className="detail-menu" ref={detailMenu}>
             <summary>操作</summary>
-            <div className="detail-menu-popover material">
+            <div className="detail-menu-popover">
               {!isDocument && <button type="button" disabled={busy || correcting || !currentRecord.hasTranscript} onClick={() => { if (detailMenu.current) detailMenu.current.open = false; void startCorrection(); }}>{correcting ? "AI 校对中…" : "AI 校对逐字稿"}</button>}
               {!isDocument && <button type="button" disabled={busy || isProcessing(currentRecord.status)} onClick={() => { if (detailMenu.current) detailMenu.current.open = false; setRetranscribeOpen(true); }}>增强重新转写…</button>}
               <button type="button" disabled={busy || !currentRecord.hasTranscript} onClick={() => void exportOne("md")}>导出 Markdown</button>
