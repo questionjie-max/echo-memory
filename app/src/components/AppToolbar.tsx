@@ -1,14 +1,17 @@
 /**
- * 顶栏：品牌徽标 + 主导航（图标 + 文字）+ 搜索 + 设置。
+ * 顶栏：品牌 + 主导航（图标 + 文字）+ 搜索 + 设置。
  *
  * 版式契约是「四个固定角色」：品牌可压缩、导航不收缩、搜索吃剩余宽度、设置不收缩。
  * 关键约束是搜索框必须**常驻** —— 它是顶栏里唯一带 flex-grow 的元素，
  * 一旦按视图增减，justify-content: space-between 会把剩余宽度重新分配，
  * 导航就会横着挪（这正是此前「导航来回跳」的成因）。
+ *
+ * 导航选中态走两套通道：aria-current 给读屏和测试，selected 类给视觉 ——
+ * 缺一不可（此前只挂 aria-current，选中页在界面上毫无反馈）。
  */
 import SearchPanel from "./SearchPanel";
 import { PRIVACY_POSTURE } from "../lib/posture";
-import { ActionIcon, BrandWave, ChatIcon, EvolutionIcon, GearIcon, GrowthIcon, HomeIcon } from "./icons";
+import { ActionIcon, ChatIcon, EvolutionIcon, GearIcon, GrowthIcon, HomeIcon } from "./icons";
 
 export type MainView = "library" | "chat" | "growth" | "evolution" | "actions";
 
@@ -38,20 +41,15 @@ export default function AppToolbar({
   return (
     <header className="app-toolbar">
       <div className="brand-block">
-        <span className="brand-mark" aria-hidden="true">
-          <BrandWave />
-        </span>
-        <div className="brand-text">
-          <h1>回声记忆</h1>
-          <p>{PRIVACY_POSTURE.toolbar}</p>
-        </div>
+        <h1>回声记忆</h1>
+        <p>{PRIVACY_POSTURE.toolbar}</p>
       </div>
       <nav className="main-navigation" aria-label="主视图">
         {NAV_ITEMS.map((item) => (
           <button
             key={item.id}
             type="button"
-            className="main-navigation-button"
+            className={`main-navigation-button${mainView === item.id ? " selected" : ""}`}
             aria-current={mainView === item.id ? "page" : undefined}
             onClick={() => onSelectView(item.id)}
           >

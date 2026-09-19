@@ -76,6 +76,25 @@ export function ActionIcon() {
   );
 }
 
+export function CheckCircleIcon() {
+  return (
+    <Icon>
+      <circle cx="12" cy="12" r="9" />
+      <path d="m8.5 12.2 2.4 2.4 4.6-5" />
+    </Icon>
+  );
+}
+
+export function HelpCircleIcon() {
+  return (
+    <Icon>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M9.6 9.2a2.6 2.6 0 0 1 5 .9c0 1.7-2.4 2.1-2.4 3.6" />
+      <path d="M12 17h.01" />
+    </Icon>
+  );
+}
+
 export function SearchIcon({ size = 15 }: { size?: number }) {
   return (
     <Icon size={size}>
@@ -129,15 +148,3 @@ export function SkipForwardIcon() {
   );
 }
 
-/** 品牌徽标里的白色波形（brand-mark 的内容） */
-export function BrandWave() {
-  return (
-    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" aria-hidden="true">
-      <path d="M4 10v4" />
-      <path d="M8 7v10" />
-      <path d="M12 4.5v15" />
-      <path d="M16 8v8" />
-      <path d="M20 10.5v3" />
-    </svg>
-  );
-}
