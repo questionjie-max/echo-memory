@@ -38,7 +38,7 @@ fn full_pipeline_from_real_speech_to_output_folder() {
         .expect("导入失败");
     assert!(!ingest.duplicate);
 
-    // 2) 真实 Whisper 转写（Meetily small 模型，默认探测路径）。
+    // 2) 真实 Whisper 转写（本地模型，默认探测路径）。
     transcribe_with_library(&library, &ingest.record_id).expect("转写失败");
     let segments = library
         .repository()
