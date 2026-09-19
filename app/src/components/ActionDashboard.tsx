@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ActionDashboard as ActionDashboardData } from "../shared/types";
 import { getActionDashboard, setActionItemStatus } from "../lib/tauri";
+import { ActionIcon, CheckCircleIcon, HelpCircleIcon } from "./icons";
 
 interface Props {
   onOpenRecord: (recordId: string, segmentId: string | null) => void;
@@ -8,6 +9,7 @@ interface Props {
 
 /**
  * 行动仪表盘：跨记录聚合行动项与未解决问题，可标记完成并跳回原始证据。
+ * 顶部三张统计卡全部来自后端真实计数，不引入任何估算或虚构指标。
  */
 export default function ActionDashboard({ onOpenRecord }: Props) {
   const [dashboard, setDashboard] = useState<ActionDashboardData | null>(null);
@@ -65,7 +67,29 @@ export default function ActionDashboard({ onOpenRecord }: Props) {
     <div className="action-dashboard-shell">
       <header className="action-dashboard-header view-header">
         <h2>行动</h2>
-        <p>{dashboard.openCount} 项待办 · {dashboard.doneCount} 项已完成 · {dashboard.openQuestions.length} 个未解决问题</p>
+        <div className="action-stats" role="list" aria-label="行动统计">
+          <div role="listitem">
+            <span className="action-stat-icon accent" aria-hidden="true"><ActionIcon /></span>
+            <div>
+              <strong>{dashboard.openCount}</strong>
+              <span>项待办</span>
+            </div>
+          </div>
+          <div role="listitem">
+            <span className="action-stat-icon ok" aria-hidden="true"><CheckCircleIcon /></span>
+            <div>
+              <strong>{dashboard.doneCount}</strong>
+              <span>项已完成</span>
+            </div>
+          </div>
+          <div role="listitem">
+            <span className="action-stat-icon warn" aria-hidden="true"><HelpCircleIcon /></span>
+            <div>
+              <strong>{dashboard.openQuestions.length}</strong>
+              <span>个未解决问题</span>
+            </div>
+          </div>
+        </div>
       </header>
 
       <div className="action-dashboard-body">

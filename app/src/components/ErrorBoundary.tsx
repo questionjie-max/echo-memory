@@ -27,7 +27,7 @@ export default class ErrorBoundary extends Component<Props, State> {
     if (!this.state.error) return this.props.children;
     return (
       <main className="app-shell" role="alert">
-        <div className="error-boundary material">
+        <div className="error-boundary">
           <h1>界面出现了一点问题</h1>
           <p>
             你的录音、逐字稿和分析都安全保存在本机资料库中，没有丢失。

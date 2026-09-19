@@ -141,8 +141,9 @@ export default function App() {
         selectedRecordTitle={selectedRecord?.title ?? null}
       />
 
-      <div className={mainView === "library" ? "workspace-grid" : "memory-workspace-grid"}>
-        <ProjectPanel selectedScope={scope} refreshKey={refreshKey} onSelect={selectScope} />
+      <div className={mainView === "library" ? "workspace-grid" : `memory-workspace-grid${mainView === "actions" ? " solo" : ""}`}>
+        {/* 行动页不消费知识库范围，是唯一不放侧栏的视图；其余四个视图侧栏都接了真实数据 */}
+        {mainView !== "actions" && <ProjectPanel selectedScope={scope} refreshKey={refreshKey} onSelect={selectScope} />}
         {mainView === "library" ? <>
           <RecordPanel
             key={`${scope}-${refreshKey}`}
