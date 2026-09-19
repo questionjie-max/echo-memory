@@ -28,7 +28,11 @@ fn default_model_path() -> Option<PathBuf> {
         .filter_map(|entry| entry.ok())
         .map(|entry| entry.path())
         .filter(|path| {
-            let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+            let name = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
             name.ends_with(".bin") && !name.starts_with('.')
         })
         .max_by_key(|path| path.metadata().ok().map(|m| m.len()).unwrap_or(0))
@@ -44,9 +48,10 @@ fn analyzes_benchmark_clip_and_reports_quality() {
         panic!("分析基准需要 ECHO_BENCH_ANALYSIS=1 显式开启（会调用本机 Ollama 数分钟）");
     }
     let benchmarks_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../benchmarks");
-    let manifest: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(benchmarks_dir.join("manifest.json")).unwrap())
-            .unwrap();
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(benchmarks_dir.join("manifest.json")).unwrap(),
+    )
+    .unwrap();
     // 02-medium 是按「会议内容」写的：含已确认安排、待办、开放问题，最适合评模板。
     let clip = manifest["clips"]
         .as_array()
@@ -135,7 +140,10 @@ fn analyzes_benchmark_clip_and_reports_quality() {
         draft.key_points.len()
     );
     assert!(
-        draft.key_points.iter().all(|item| !item.citation_segment_ids.is_empty()),
+        draft
+            .key_points
+            .iter()
+            .all(|item| !item.citation_segment_ids.is_empty()),
         "存在没有引用的要点"
     );
 
