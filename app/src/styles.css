@@ -199,21 +199,6 @@ input::placeholder, textarea::placeholder { color: var(--em-ink-4); }
    关键约束：搜索框必须常驻 —— 它是唯一带 flex-grow 的元素，一旦按视图增减，
    space-between 会把剩余宽度重新分配，导航就会横着挪（此前「导航来回跳」的成因）。
    另外副标题已收紧为一行隐私口径（见 lib/posture.ts），品牌区因此可以窄一些。 */
-.brand-block { flex: 0 1 200px; min-width: 120px; display: flex; align-items: center; gap: 9px; }
-/* 品牌徽标：琥珀渐变方块 + 波形，双主题保持品牌色不变 */
-.brand-mark {
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  flex: 0 0 30px;
-  border-radius: 9px;
-  background: linear-gradient(135deg, #f59e0b, #d97706);
-  color: #fff;
-  box-shadow: 0 2px 8px rgba(245, 158, 11, 0.3);
-}
-.brand-mark svg { width: 17px; height: 17px; }
-.brand-text { min-width: 0; }
 .brand-block h1 { margin: 0; font-size: 18px; line-height: 1.2; font-weight: 720; letter-spacing: 0; }
 .brand-block p { margin: 4px 0 0; color: var(--em-ink-3); font-size: 11px; line-height: 1.35; }
 .workspace-grid {
@@ -423,7 +408,18 @@ input::placeholder, textarea::placeholder { color: var(--em-ink-4); }
 .record-main { flex: 1; min-width: 0; display: grid; gap: 3px; padding: 0; border: 0; background: transparent; cursor: pointer; text-align: left; }
 .record-main strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .record-main > span { color: var(--em-ink-4); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.record-main .record-library { color: var(--em-ink-3); }
+.record-main .record-library {
+  justify-self: start;
+  max-width: 160px;
+  padding: 1px 7px;
+  overflow: hidden;
+  border-radius: var(--em-r-pill);
+  background: var(--em-soft-fill);
+  color: var(--em-ink-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.record-list li.selected .record-main .record-library { background: var(--em-accent-soft); color: var(--em-accent-ink); }
 .status-pill { flex: 0 0 auto; max-width: 72px; padding: 3px 6px; border-radius: var(--em-r-xs); font-size: 10px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status-progress { background: var(--em-accent-soft); color: var(--em-accent-ink); }
 .status-attention { background: var(--em-warn-soft); color: var(--em-warn-ink); }
@@ -719,8 +715,10 @@ input::placeholder, textarea::placeholder { color: var(--em-ink-4); }
 .main-navigation { display: flex; flex: 0 0 auto; align-items: center; gap: 3px; min-width: 0; padding: 3px; border: 1px solid var(--em-hairline-soft); border-radius: 9px; background: var(--em-soft-fill); }
 .main-navigation-button { display: inline-flex; align-items: center; gap: 6px; padding: 7px 11px; border: 0; border-radius: 7px; background: transparent; color: var(--em-ink-3); cursor: pointer; font-size: 12px; font-weight: 650; white-space: nowrap; }
 .main-navigation-button svg { width: 15px; height: 15px; flex: 0 0 15px; }
-.main-navigation-button.selected { background: var(--em-accent-soft); color: var(--em-accent-ink); }
+.main-navigation-button.selected { background: var(--em-accent-soft); color: var(--em-accent-ink); font-weight: 720; }
 .memory-workspace-grid { min-height: 0; display: grid; grid-template-columns: minmax(180px, 0.55fr) minmax(0, 2.45fr); overflow: hidden; }
+/* 行动页不消费知识库侧栏（无范围参数），单独通栏铺满 */
+.memory-workspace-grid.solo { grid-template-columns: minmax(0, 1fr); }
 .memory-main-content { min-width: 0; min-height: 0; overflow: hidden; background: var(--em-pane); }
 .memory-view { min-width: 0; min-height: 0; height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; background: var(--em-pane); }
 .memory-view-controls { display: grid; }
@@ -900,6 +898,16 @@ input::placeholder, textarea::placeholder { color: var(--em-ink-4); }
 .action-dashboard-shell { min-height: 0; overflow: auto; }
 
 .action-dashboard-header p { margin: 4px 0 0; color: var(--em-ink-3); font-size: 11px; }
+/* 行动页统计卡（Lovart 稿样式）：三张等宽卡，图标 + 大数字 + 说明，全部真实计数 */
+.action-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.action-stats > div { display: flex; align-items: center; gap: 12px; padding: 13px 15px; border: 1px solid var(--em-hairline-soft); border-radius: var(--em-r-md); background: var(--em-panel); }
+.action-stats .action-stat-icon { display: grid; place-items: center; width: 36px; height: 36px; flex: 0 0 36px; border-radius: 50%; }
+.action-stats .action-stat-icon svg { width: 17px; height: 17px; }
+.action-stats .action-stat-icon.accent { background: var(--em-accent-soft); color: var(--em-accent-ink); }
+.action-stats .action-stat-icon.ok { background: var(--em-ok-soft); color: var(--em-ok-ink); }
+.action-stats .action-stat-icon.warn { background: var(--em-warn-soft); color: var(--em-warn-ink); }
+.action-stats strong { display: block; font-size: 21px; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.action-stats span { display: block; margin-top: 1px; color: var(--em-ink-3); font-size: 10px; }
 .action-dashboard-body { padding: 20px 26px 30px; }
 .action-dashboard-section { margin-top: 18px; }
 .action-dashboard-section h3 { margin: 0 0 9px; color: var(--em-ink); font-size: 13px; }
