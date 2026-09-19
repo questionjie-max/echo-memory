@@ -110,7 +110,7 @@ export default function AiModelSettings(props: AiModelSettingsProps) {
               label: engine?.whisperxAvailable ? "whisperX" : "whisperX（未检测到）",
               hint: engine?.whisperxAvailable
                 ? "说话人分离：自动区分谁在说话"
-                : "需要先安装：pip install whisperx",
+                : "需要先安装，见下方安装说明",
             },
           ]}
         />
@@ -127,8 +127,11 @@ export default function AiModelSettings(props: AiModelSettingsProps) {
         {whisperxDetailVisible && !engine?.whisperxAvailable && (
           <div className="em-note warn">
             <p style={{ margin: 0 }}>
-              没有找到 whisperx 命令，选它转写会直接失败。安装方法：<code>pip install whisperx</code>，
-              装好后回到这里点「重新检测」。
+              没有找到 whisperx 命令，选它转写会直接失败。推荐用隔离环境安装（不污染系统
+              Python，且会自动装到应用能找到的位置）：
+              <code>uv tool install --python 3.11 whisperx</code>。
+              没有 uv 时先装 uv（docs.astral.sh/uv），或用一个 3.11/3.12 的虚拟环境
+              <code>pip install whisperx</code>。装好后回到这里点「重新检测」。
             </p>
             <div className="em-card-actions" style={{ marginTop: 8 }}>
               {whisperxActive && (
