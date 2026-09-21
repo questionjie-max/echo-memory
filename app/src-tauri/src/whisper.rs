@@ -331,6 +331,20 @@ pub fn whisperx_path() -> Option<std::path::PathBuf> {
     known.into_iter().find(|candidate| candidate.is_file())
 }
 
+/// 随应用分发的 NLTK 数据目录（whisperX 对齐步骤依赖 punkt_tab）。
+/// 解析顺序与 ffmpeg 一致：打包后 Resources → 开发期源码目录。
+pub fn nltk_data_dir() -> Option<std::path::PathBuf> {
+    let mut candidates = Vec::new();
+    if let Ok(executable) = std::env::current_exe() {
+        if let Some(macos) = executable.parent() {
+            candidates.push(macos.join("../Resources/nltk_data"));
+        }
+    }
+    candidates
+        .push(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/nltk_data"));
+    candidates.into_iter().find(|path| path.is_dir())
+}
+
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct WhisperxSegment {
     pub start: f64,
@@ -407,6 +421,12 @@ pub fn transcribe_whisperx(
     }
     if let Some(token) = hf_token {
         command.arg("--hf_token").arg(token);
+    }
+    // whisperX 的对齐步骤要用 NLTK 的 punkt_tab。NLTK 自己经代理下载该数据会被它的
+    // SSRF 防护拦下（CWE-918），干净机器上整条链路会静默中止；所以数据随应用分发，
+    // 这里显式指过去，不依赖 NLTK 的默认搜索路径。
+    if let Some(data_dir) = nltk_data_dir() {
+        command.env("NLTK_DATA", data_dir);
     }
     let output = command
         .output()
