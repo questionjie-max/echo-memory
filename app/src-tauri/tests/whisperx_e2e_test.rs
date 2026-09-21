@@ -11,8 +11,8 @@
 //! ```
 //! 前置：
 //! - 本机 PATH 或常见安装位有 whisperx（`uv tool install --python 3.11 whisperx`）；
-//! - NLTK 数据已预置（`~/nltk_data/tokenizers/punkt_tab`）——否则 NLTK 的代理
-//!   SSRF 防护会在 alignment 步骤中止（见 docs/quality-review.md L9）；
+//! - NLTK 的 punkt_tab 数据随应用分发（resources/nltk_data，转写时由
+//!   transcribe_whisperx 显式设 NLTK_DATA），无需手动预置；
 //! - HuggingFace token 且已接受 pyannote/speaker-diarization-3.1 与
 //!   pyannote/segmentation-3.0 的使用协议（也可经 ECHO_HF_TOKEN 注入）。
 //!
