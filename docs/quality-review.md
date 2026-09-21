@@ -51,7 +51,7 @@
 | L6 | 三类归类的提示词边界 | 见下节：会上提出的开放问题被写进待办、`未解决` 为空。提示词需明确「提出但未解决 → open_questions」 |
 | L7 | maxItems 8 未做压力测试 | 基准片段只含 2 个待办，未触发 8 上限；需一条富信息样本专门测截断 |
 | L8 | whisperX 模型显示实际值 | 入库仍写死 `whisperx-large-v2`（见 L2 的 Mimosa 拦截说明） |
-| L9 | **whisperX 环境预置（阻塞级）** | NLTK `punkt_tab` 数据被 NLTK 的代理 SSRF 防护（CWE-918）拦下：任何挂代理的机器上 whisperX 都会在 alignment 步骤中止、不产出 JSON，应用侧整条路径失败。本次以手动预置 `~/nltk_data/tokenizers/punkt_tab` 绕过。**应用必须在安装/首次使用时预置该数据**（或在子进程环境显式 `NLTK_ALLOW_PROXIED_URLOPEN=1`——放宽安全开关，不推荐优先） |
+| L9 | ~~whisperX 环境预置（阻塞级）~~ **已修复（2026-09-21）** | NLTK `punkt_tab` 数据被 NLTK 的代理 SSRF 防护（CWE-918）拦下，挂代理的机器上 whisperX 在 alignment 中止。修复：数据随应用分发（`app/src-tauri/resources/nltk_data`，11MB），`transcribe_whisperx` 给子进程显式设 `NLTK_DATA`。验证：移走 `~/nltk_data` 模拟干净机器，仅用随附数据跑 whisperX 完整产出 JSON。**剩余**：从 Finder 启动的应用不继承 `HTTP_PROXY/HTTPS_PROXY` 环境变量，pyannote/模型下载会失败——封装期需处理（打包器不传 shell 环境），当前 dev 运行不受影响 |
 | L10 | whisperX 输出质量存疑 | 对话基准片段实测 CER 26.0%（内嵌 14.2%），且**整轮丢失两段发言**（内容级失败，比错字严重）——疑与 pyannote VAD 对合成音过滤有关；需真人对话素材复验后决定是否调 VAD/换模型。另：本机运行在 CPU（float32），无 Metal 加速，速度预期要写进 UI |
 | L11 | whisperX 依赖链脆弱 | torch 2.8 与 torchcodec/ffmpeg 版本不匹配告警（pyannote 回退内存解码，功能可用）；环境体积约 2–3GB。封装期需决定：内嵌、还是引导安装 + 环境自检报告缺什么 |
 
