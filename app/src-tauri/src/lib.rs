@@ -2,6 +2,7 @@ pub mod analysis;
 pub mod audio;
 pub mod commands;
 pub mod db;
+pub mod degeneration;
 pub mod dock;
 pub mod document;
 pub mod error;
