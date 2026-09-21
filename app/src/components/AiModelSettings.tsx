@@ -146,8 +146,12 @@ export default function AiModelSettings(props: AiModelSettingsProps) {
             title={`说话人分离设置${engine?.hfTokenSet ? "（Token 已配置）" : "（还差 HuggingFace Token）"}`}
           >
             <p className="em-hint">
-              说话人分离要靠 HuggingFace 上的 pyannote 模型：先在 huggingface.co 接受该模型的使用协议，
-              再把 Token 填在这里。首次使用会自动下载模型，建议在独显或大内存机器上跑。
+              说话人分离要靠 HuggingFace 上的 pyannote 模型。第一次用需要先做三件事：
+              1) 在 huggingface.co 登录；2) 打开并同意下面三个模型页（都要点「同意」，
+              其中两个还要填公司/用途信息）；3) 建一个 Read 权限的 Token 填在这里。
+              三个模型页：<code>pyannote/speaker-diarization-community-1</code>、
+              <code>pyannote/segmentation-3.0</code>、<code>pyannote/speaker-diarization-3.1</code>。
+              同意后首次使用会自动下载模型（约 200MB），建议在独显或大内存机器上跑。
             </p>
             <Field
               label="HuggingFace Token"
