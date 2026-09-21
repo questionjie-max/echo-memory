@@ -433,10 +433,18 @@ pub fn transcribe_whisperx(
         .map_err(|error| AppError::Import(format!("无法启动 whisperX：{error}")))?;
     if !output.status.success() {
         let message = String::from_utf8_lossy(&output.stderr);
-        return Err(AppError::Import(format!(
-            "whisperX 转写失败：{}",
-            message.trim().chars().take(400).collect::<String>()
-        )));
+        // 取末尾而不是开头：whisperX 的 stderr 前半几乎总是 torchcodec 之类的
+        // UserWarning 墙，真正的异常在最后（此前截前 400 字符会把原因整个藏掉）。
+        let tail: String = message
+            .trim()
+            .chars()
+            .rev()
+            .take(500)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        return Err(AppError::Import(format!("whisperX 转写失败：{tail}")));
     }
     let stem = wav_path
         .file_stem()
