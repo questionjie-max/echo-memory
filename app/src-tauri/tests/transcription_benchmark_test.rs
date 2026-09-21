@@ -139,8 +139,25 @@ fn transcribes_benchmark_clips_and_reports_cer() {
             .unwrap();
 
         let started = Instant::now();
-        transcribe_with_library(&library, &imported.record_id).unwrap();
+        // 质量闸门（degeneration）判定退化时 transcribe_with_library 会返回错误——
+        // 对基准来说这本身就是有效结果：记录失败原因，不要 panic。
+        let transcribe_result = transcribe_with_library(&library, &imported.record_id);
         let elapsed = started.elapsed();
+
+        if let Err(error) = transcribe_result {
+            println!("{}  转写被拒/失败: {error}", id);
+            results.push(json!({
+                "id": id,
+                "model": model.file_name().unwrap().to_string_lossy(),
+                "language": language,
+                "duration_ms": clip["duration_ms"],
+                "elapsed_ms": elapsed.as_millis() as u64,
+                "accepted": false,
+                "error": error.to_string(),
+                "reference": reference,
+            }));
+            continue;
+        }
 
         let segments = library
             .repository()
@@ -183,17 +200,30 @@ fn transcribes_benchmark_clips_and_reports_cer() {
     }
 
     // 可选：真实录音稳定性对照（无真值，只记录转写与时间轴）。
+    // 语言必须显式设置：跑完片段循环后设置里残留的是最后一条片段的语言
+    // （英文），不设置就会用英语去转中文录音——whisper 对错语言输入会产生
+    // 循环幻觉，2026-09-21 的「P0 复现」整个是这个 harness 缺陷造成的假象。
     if let Ok(extra) = std::env::var("ECHO_BENCH_REAL") {
+        let real_language =
+            std::env::var("ECHO_BENCH_REAL_LANG").unwrap_or_else(|_| "zh".to_owned());
+        library
+            .repository()
+            .update_knowledge_settings(&echo_memory_lib::types::KnowledgeSettings {
+                transcription_language: real_language.clone(),
+                ..library.repository().knowledge_settings().unwrap()
+            })
+            .unwrap();
         for path in extra.split(';').filter(|p| !p.trim().is_empty()) {
             let path = PathBuf::from(path.trim());
             let imported = library.import_audio(&path, None, false).unwrap();
             let started = Instant::now();
-            transcribe_with_library(&library, &imported.record_id).unwrap();
+            // 质量闸门判定退化时返回错误——对真实录音对照来说同样是有效结果。
+            let transcribe = transcribe_with_library(&library, &imported.record_id);
             let elapsed = started.elapsed();
             let segments = library
                 .repository()
                 .list_transcript_segments(&imported.record_id)
-                .unwrap();
+                .unwrap_or_default();
             let hypothesis: String = segments
                 .iter()
                 .filter_map(|segment| segment.normalized_text.as_deref())
@@ -202,8 +232,10 @@ fn transcribes_benchmark_clips_and_reports_cer() {
             results.push(json!({
                 "id": format!("real-{}", path.file_stem().unwrap_or_default().to_string_lossy()),
                 "model": model.file_name().unwrap().to_string_lossy(),
-                "language": "zh",
+                "language": real_language,
                 "elapsed_ms": elapsed.as_millis() as u64,
+                "accepted": transcribe.is_ok(),
+                "error": transcribe.as_ref().err().map(|error| error.to_string()),
                 "segment_count": segments.len(),
                 "hypothesis": hypothesis,
             }));
