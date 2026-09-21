@@ -1228,6 +1228,20 @@ fn run_whisperx_transcription(
             "whisperX 没有生成可用片段".to_owned(),
         ));
     }
+    // 与内嵌引擎同一道质量闸门：退化输出不落库，保留此前版本。
+    let degeneration = crate::degeneration::assess_transcript_degeneration(
+        &inputs
+            .iter()
+            .map(|segment| segment.original_text.clone())
+            .collect::<Vec<_>>(),
+        language,
+    );
+    if degeneration.degenerate {
+        return Err(crate::error::AppError::Import(format!(
+            "转写质量异常（{}），已保留此前的转写版本。如反复出现，请更换转写模型或切换语言后重试。",
+            degeneration.reasons.join("；")
+        )));
+    }
     repository.update_job_progress(&job.id, "saving", 1, 1)?;
     let metadata_json = serde_json::to_string(&metadata)
         .map_err(|error| crate::error::AppError::Import(format!("预处理信息无效：{error}")))?;
@@ -1379,6 +1393,21 @@ fn run_transcription_with_engine(
             ));
         }
         repository.update_job_progress(&job.id, "normalizing", 1, 1)?;
+        // 质量闸门：退化输出不落库。失败路径会保留此前的转写版本并把记录
+        // 状态回到 completed——最坏结果是显式失败，而不是静默的数据损坏。
+        let degeneration = crate::degeneration::assess_transcript_degeneration(
+            &inputs
+                .iter()
+                .map(|segment| segment.original_text.clone())
+                .collect::<Vec<_>>(),
+            language,
+        );
+        if degeneration.degenerate {
+            return Err(crate::error::AppError::Import(format!(
+                "转写质量异常（{}），已保留此前的转写版本。如反复出现，请在设置里更换转写模型或切换语言后重试。",
+                degeneration.reasons.join("；")
+            )));
+        }
         let model = adapter.model_name();
         let metadata_json = serde_json::to_string(&metadata)
             .map_err(|error| crate::error::AppError::Import(format!("预处理信息无效：{error}")))?;
