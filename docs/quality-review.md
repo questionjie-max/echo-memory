@@ -52,8 +52,8 @@
 | L7 | maxItems 8 未做压力测试 | 基准片段只含 2 个待办，未触发 8 上限；需一条富信息样本专门测截断 |
 | L8 | whisperX 模型显示实际值 | 入库仍写死 `whisperx-large-v2`（见 L2 的 Mimosa 拦截说明） |
 | L9 | ~~whisperX 环境预置（阻塞级）~~ **已修复（2026-09-21）** | NLTK `punkt_tab` 数据被 NLTK 的代理 SSRF 防护（CWE-918）拦下，挂代理的机器上 whisperX 在 alignment 中止。修复：数据随应用分发（`app/src-tauri/resources/nltk_data`，11MB），`transcribe_whisperx` 给子进程显式设 `NLTK_DATA`。验证：移走 `~/nltk_data` 模拟干净机器，仅用随附数据跑 whisperX 完整产出 JSON。**剩余**：从 Finder 启动的应用不继承 `HTTP_PROXY/HTTPS_PROXY` 环境变量，pyannote/模型下载会失败——封装期需处理（打包器不传 shell 环境），当前 dev 运行不受影响 |
-| L10 | whisperX 输出质量存疑 | 对话基准片段实测 CER 26.0%（内嵌 14.2%），且**整轮丢失两段发言**（内容级失败，比错字严重）——疑与 pyannote VAD 对合成音过滤有关；需真人对话素材复验后决定是否调 VAD/换模型。另：本机运行在 CPU（float32），无 Metal 加速，速度预期要写进 UI |
-| L11 | whisperX 依赖链脆弱 | torch 2.8 与 torchcodec/ffmpeg 版本不匹配告警（pyannote 回退内存解码，功能可用）；环境体积约 2–3GB。封装期需决定：内嵌、还是引导安装 + 环境自检报告缺什么 |
+| L10 | whisperX 输出质量存疑 | ~~部分复测~~（2026-09-21 端到端已跑通）：带 --diarize 后之前丢失的轮次回来了，CER 待复算；**轮次级分离不完美**——whisperX 的 ASR 先把音频切成 2 个大段，说话人只能按段标（前 4 轮同标、后 4 轮同标），合成对话场景暴露了 ASR 分段粒度限制；真人会议录音需复验。CPU 运行、无 Metal，速度预期要写进 UI |
+| L11 | whisperX 依赖链脆弱 | torch 2.8 与 torchcodec/ffmpeg 版本不匹配告警（pyannote 回退内存解码，功能可用）；环境体积约 2–3GB。**门控模型是三个不是两个**：speaker-diarization-community-1（whisperX 3.8 默认管线）、segmentation-3.0、speaker-diarization-3.1，且前两个要填公司/用途表单——引导文案已更新。封装期需决定：内嵌、还是引导安装 + 环境自检报告缺什么 |
 
 ---
 
@@ -70,6 +70,12 @@
   - 「截止日期十月一日」这类提醒**没有**被误判成待办（0011 规则生效）
   - 忠实传播 ASR 错误（王芳→王方），行为符合预期
   - 归类边界问题见 L6；明细 results/20260919T154047Z-analysis-qwen2.5:7b.json
+- **whisperX 说话人分离端到端（2026-09-21 首跑通过）**：
+  - 全链路：whisperX 安装（uv/py3.11）→ 检测（GUI PATH 修复）→ NLTK 随附 →
+    三个门控模型同意 → HF token → 导入 → 转写+分离 → 标签本地化（说话人 1/2）入库
+  - 基准片段实测：2 个说话人、时间轴单调、轮次边界正确（2 段各约 25s）
+  - 保留意见见 L10（轮次级分离受 ASR 分段粒度限制，需真人录音复验）
+  - 明细 results/20260921T102845Z-whisperx-diarize.json
 
 ## 对标得到大脑（提示词/功能候选）
 
