@@ -222,6 +222,97 @@ pub fn is_overlap_duplicate(
         || bigram_similarity(&left, &right) >= 0.72
 }
 
+/// 跨块重叠区的「接续」合并。同一段音频被相邻两块各自解码了一次，两边切出的片段
+/// 边界不同：上一条的结尾和候选的开头说的是同一句话。此时候选不是重复段，不能丢
+/// （丢了她就丢了边界后面的新内容），直接留下又会在成稿里出现
+/// 「……推荐模型的推荐模型的大小是574兆」这种接缝。
+///
+/// 做法：在上一条结尾附近找候选开头的最长重合（≥4 个有效字符，允许上一条在重合
+/// 之后还剩几个字——那是上一块对重叠区的另一次解码）。把重合部分从候选里去掉，
+/// 剩余文本并回上一条；候选覆盖得上一条的尾部时，上一条那段尾巴也一并对成候选的
+/// 版本。上一条的结束时间取两者较晚者。
+/// 返回 false 表示不构成接续，调用方按原有判重逻辑处理。
+pub fn merge_overlap_continuation(
+    previous: &mut crate::whisper::WhisperSegment,
+    candidate: &crate::whisper::WhisperSegment,
+) -> bool {
+    if previous.end_ms < candidate.start_ms || candidate.end_ms < previous.start_ms {
+        return false;
+    }
+    let (left_text, left_origin) = compact_with_origin(&previous.text);
+    let (right_text, right_origin) = compact_with_origin(&candidate.text);
+    let left: Vec<char> = left_text.chars().collect();
+    let right: Vec<char> = right_text.chars().collect();
+    if left.is_empty() || right.is_empty() {
+        return false;
+    }
+    // 从最长可能的重合往下找，命中即止：重合越长越可信。
+    let limit = right.len().min(left.len());
+    let mut hit = None;
+    for overlap in (MIN_CONTINUATION_CHARS..=limit).rev() {
+        let head = &right[..overlap];
+        let earliest = left.len().saturating_sub(overlap + MAX_TAIL_SLACK);
+        if let Some(offset) = left[earliest..]
+            .windows(overlap)
+            .position(|window| window == head)
+        {
+            hit = Some((overlap, earliest + offset + overlap));
+            break;
+        }
+    }
+    let Some((overlap, match_end)) = hit else {
+        return false;
+    };
+    // 重合的字符数映射回候选原文的字节位置，从那里开始接；
+    // 重合数等于候选全长时没有可接内容，交给调用方按重复段处理。
+    let cut = right_origin
+        .get(overlap)
+        .copied()
+        .unwrap_or(candidate.text.len());
+    let rest = candidate.text[cut..].trim();
+    if rest.is_empty() {
+        return false;
+    }
+    // 上一条在重合之后还剩的内容，是同一段重叠音频的另一次解码。候选覆盖得到达段
+    // 音频时，用候选的版本替换掉，否则会留下「从音频和音频文本都不上传」这种残尾。
+    if match_end < left.len() && candidate.end_ms >= previous.end_ms {
+        let keep = left_origin
+            .get(match_end)
+            .copied()
+            .unwrap_or(previous.text.len());
+        previous.text.truncate(keep);
+    }
+    previous.text.push_str(rest);
+    previous.end_ms = previous.end_ms.max(candidate.end_ms);
+    true
+}
+
+/// 接续判定的最小重合字符数。低于这个长度，「然后」「就是」这类常用连接词
+/// 也会被误判成同一段音频，宁可留下接缝也不能吃掉正常内容。
+const MIN_CONTINUATION_CHARS: usize = 4;
+
+/// 重合点允许落在上一条结尾之后多少个字以内。上一块对重叠区末尾的识别可能多出
+/// 几个字，不给这点余量就会漏掉真实接缝。
+const MAX_TAIL_SLACK: usize = 4;
+
+/// 压缩文本（去标点、转小写）同时记录每个压缩字符在原文中的字符位置，
+/// 这样按重合字数裁剪原文时不必重新数字符。
+fn compact_with_origin(text: &str) -> (String, Vec<usize>) {
+    let normalized = crate::transcript::normalize_chinese(text);
+    let mut compacted = String::new();
+    let mut origin = Vec::new();
+    for (index, character) in normalized.char_indices() {
+        if !character.is_alphanumeric() {
+            continue;
+        }
+        for lowered in character.to_lowercase() {
+            compacted.push(lowered);
+            origin.push(index);
+        }
+    }
+    (compacted, origin)
+}
+
 fn compact_text(text: &str) -> String {
     crate::transcript::normalize_chinese(text)
         .chars()
@@ -318,6 +409,82 @@ mod tests {
             end_ms: 49_000,
             text: "我们下一步讨论产品发布的计划".to_owned(),
         };
+        assert!(is_overlap_duplicate(&previous, &candidate));
+    }
+
+    fn segment(start_ms: i64, end_ms: i64, text: &str) -> crate::whisper::WhisperSegment {
+        crate::whisper::WhisperSegment {
+            start_ms,
+            end_ms,
+            text: text.to_owned(),
+        }
+    }
+
+    #[test]
+    fn boundary_continuation_merges_repeated_tail_into_previous() {
+        // 06-long 第 1 个边界：上块结尾「…推荐模型的」与本块开头「推荐模型的大小是574兆」
+        // 说的是同一段音频，重合 5 个字，合并后应接成完整句子。
+        let mut previous = segment(
+            53_000,
+            62_000,
+            "下一步要做的是自动推荐热词,第二个议题是模型下载链路,推荐模型的",
+        );
+        let candidate = segment(60_800, 64_100, "推荐模型的大小是574兆");
+        assert!(merge_overlap_continuation(&mut previous, &candidate));
+        assert_eq!(
+            previous.text,
+            "下一步要做的是自动推荐热词,第二个议题是模型下载链路,推荐模型的大小是574兆"
+        );
+        assert_eq!(previous.end_ms, 64_100);
+    }
+
+    #[test]
+    fn boundary_continuation_handles_short_overlap_and_misheard_tail() {
+        // 06-long 第 3 个边界：重合只有 4 个字，且上一块把重叠区末尾多听成了「音频」。
+        // 候选覆盖得上一条的尾部，那段残尾应被候选的版本替换掉。
+        let mut previous = segment(170_000, 182_000, "隐私口径也要相应调整,从音频和音频。");
+        let candidate = segment(180_800, 183_600, "从音频和文本都不上传");
+        assert!(merge_overlap_continuation(&mut previous, &candidate));
+        assert_eq!(previous.text, "隐私口径也要相应调整,从音频和文本都不上传");
+        assert_eq!(previous.end_ms, 183_600);
+    }
+
+    #[test]
+    fn boundary_continuation_keeps_tail_when_candidate_does_not_cover_it() {
+        // 候选比上一条短：重合点之后上一条还有候选没覆盖到的内容，不能截，
+        // 否则会平白丢掉文字。
+        let mut previous = segment(0, 10_000, "我们先对齐一下排期,然后确认负责人");
+        let candidate = segment(9_000, 9_500, "然后确认负责人和时间");
+        assert!(merge_overlap_continuation(&mut previous, &candidate));
+        assert_eq!(previous.text, "我们先对齐一下排期,然后确认负责人和时间");
+    }
+
+    #[test]
+    fn boundary_continuation_ignores_unrelated_or_disjoint_text() {
+        // 时间不重叠：不是同一段音频，不能合。
+        let mut previous = segment(0, 1_000, "我们下午三点开会");
+        let candidate = segment(5_000, 6_000, "我们下午三点开会");
+        assert!(!merge_overlap_continuation(&mut previous, &candidate));
+        assert_eq!(previous.text, "我们下午三点开会");
+
+        // 时间重叠但内容无关：合了就会吃掉正常内容。
+        let mut previous = segment(0, 5_000, "今天先讲第一件事");
+        let candidate = segment(4_000, 8_000, "然后再讲第二件事");
+        assert!(!merge_overlap_continuation(&mut previous, &candidate));
+        assert_eq!(previous.text, "今天先讲第一件事");
+
+        // 重合太短（常用连接词级别）：留给原有判重逻辑，不合并。
+        let mut previous = segment(0, 5_000, "这个事情然后");
+        let candidate = segment(4_000, 8_000, "然后我们就定了");
+        assert!(!merge_overlap_continuation(&mut previous, &candidate));
+    }
+
+    #[test]
+    fn boundary_continuation_with_nothing_new_left_is_not_a_merge() {
+        // 候选整条都是上一条的结尾：这是纯重复，交给 is_overlap_duplicate。
+        let mut previous = segment(0, 5_000, "大家下午好");
+        let candidate = segment(4_000, 6_000, "大家下午好");
+        assert!(!merge_overlap_continuation(&mut previous, &candidate));
         assert!(is_overlap_duplicate(&previous, &candidate));
     }
 }
