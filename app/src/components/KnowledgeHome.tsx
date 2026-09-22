@@ -7,6 +7,7 @@ import type {
   KnowledgeReference,
 } from "../shared/types";
 import {
+  createExportTicket,
   exportKnowledgeBase,
   getKnowledgeIndexStatus,
   getKnowledgeOverview,
@@ -124,12 +125,14 @@ export default function KnowledgeHome({ scope, projectId, unfiledOnly, refreshKe
   }
 
   async function exportAll(format: "md" | "txt") {
+    // 先领票据再弹目录选择对话框——后端凭票放行导出。
+    const ticket = await createExportTicket();
     const destination = await open({ directory: true, multiple: false, title: `导出${name}` });
     if (typeof destination !== "string") return;
     setBusy(true);
     setError("");
     try {
-      const path = await exportKnowledgeBase(projectId, unfiledOnly, destination, format);
+      const path = await exportKnowledgeBase(projectId, unfiledOnly, destination, format, ticket);
       setNotice(`已导出到 ${path}`);
     } catch (reason) {
       setError(String(reason));

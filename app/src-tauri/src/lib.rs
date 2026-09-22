@@ -61,6 +61,7 @@ pub fn run() {
             commands::ask_knowledge_base,
             commands::export_record,
             commands::export_knowledge_base,
+            commands::create_export_ticket,
             commands::update_record_knowledge_base,
             commands::update_record_title,
             commands::get_mcp_status,
