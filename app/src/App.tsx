@@ -145,8 +145,9 @@ export default function App() {
         {/* 行动页不消费知识库范围，是唯一不放侧栏的视图；其余四个视图侧栏都接了真实数据 */}
         {mainView !== "actions" && <ProjectPanel selectedScope={scope} refreshKey={refreshKey} onSelect={selectScope} />}
         {mainView === "library" ? <>
+          {/* 不用 key 强制重挂载：那会在批量移动/删除后把面板里的结果提示一并清掉，
+              用户看不到操作是否成功。范围切换时的状态重置由面板自己的 effect 负责。 */}
           <RecordPanel
-            key={`${scope}-${refreshKey}`}
             projectId={projectId}
             unfiledOnly={unfiledOnly}
             onImported={() => changed()}

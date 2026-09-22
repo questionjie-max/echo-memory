@@ -548,6 +548,29 @@ impl LibraryRepository {
         Ok(())
     }
 
+    /// 删除记录在磁盘上的产物：受管目录里的原始音频，以及 raw/<记录 id>/ 下的
+    /// 预处理音频与转写中间文件。库内行由 delete_record 删除（外键级联会带走
+    /// 转写、分析、待办、知识分片和搜索项）。
+    ///
+    /// 返回没能删掉的路径：文件清理失败不阻断删除——库里已经没有这条记录了，
+    /// 留下孤儿文件比让整批删除失败更可接受，但要把痕迹报告给用户。
+    pub fn remove_record_files(&self, library_root: &Path, id: &str) -> Vec<PathBuf> {
+        let mut failed = Vec::new();
+        if let Ok(relative) = self.audio_path_for_record(id) {
+            let audio = library_root.join(&relative);
+            match std::fs::remove_file(&audio) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => failed.push(audio),
+            }
+        }
+        let raw = library_root.join("raw").join(id);
+        if raw.exists() && std::fs::remove_dir_all(&raw).is_err() {
+            failed.push(raw);
+        }
+        failed
+    }
+
     /* --------------------------- processing_jobs ------------------------ */
 
     pub fn create_job(&self, record_id: &str, job_type: &str) -> AppResult<ProcessingJob> {
