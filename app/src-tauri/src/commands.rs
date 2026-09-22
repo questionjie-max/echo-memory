@@ -1067,6 +1067,22 @@ pub fn update_transcript_segment(
 
 #[tauri::command]
 pub fn transcribe_record(state: State<AppState>, record_id: String) -> Result<(), String> {
+    // 与 retranscribe_record 同一道在途检查：收件箱自动导入与手动触发可能
+    // 撞在同一条记录上，两个线程会共享同一个预处理文件和 whisperX JSON，
+    // 互相删除对方正在读的文件。
+    if state
+        .library
+        .repository()
+        .list_jobs_for_record(&record_id)
+        .map_err(|error| error.to_frontend())?
+        .iter()
+        .any(|job| {
+            job.job_type == "transcribe"
+                && matches!(job.status.as_str(), "preparing" | "transcribing")
+        })
+    {
+        return Err("该录音正在转写".to_owned());
+    }
     let job = reserve_transcription(&state.library, &record_id).map_err(|e| e.to_frontend())?;
     let settings = state
         .library

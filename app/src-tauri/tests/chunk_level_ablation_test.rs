@@ -65,7 +65,7 @@ fn decode_first_chunks_one_by_one() {
             chunk.accept_end_ms as f32 / 1000.0,
             without.len(),
             report_without.cjk_ratio * 100.0,
-            report_without.trigram_repeat_ratio * 100.0,
+            report_without.repeat_ratio * 100.0,
             report_without.degenerate,
             brief(&without_text, 80)
         );
@@ -83,7 +83,7 @@ fn decode_first_chunks_one_by_one() {
                 "块{index} 带prompt: {}段 中文占比{:.0}% 重复率{:.0}% 退化={} | {}",
                 with.len(),
                 report_with.cjk_ratio * 100.0,
-                report_with.trigram_repeat_ratio * 100.0,
+                report_with.repeat_ratio * 100.0,
                 report_with.degenerate,
                 brief(&with_text, 80)
             );
