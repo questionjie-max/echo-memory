@@ -19,8 +19,8 @@ pub struct DegenerationReport {
     pub reasons: Vec<String>,
     /// 中日韩字符占全部字母数字字符的比例。
     pub cjk_ratio: f64,
-    /// 三字符串 repetition rate（出现次数 >1 的三字母/汉字组合数 / 总数）。
-    pub trigram_repeat_ratio: f64,
+    /// 10 字符窗口的重复占比（循环幻觉时趋近 1.0）。
+    pub repeat_ratio: f64,
     /// 参与检测的字符总量（去除标点空白后）。
     pub char_count: usize,
 }
@@ -31,7 +31,7 @@ impl Default for DegenerationReport {
             degenerate: false,
             reasons: Vec::new(),
             cjk_ratio: 1.0,
-            trigram_repeat_ratio: 0.0,
+            repeat_ratio: 0.0,
             char_count: 0,
         }
     }
@@ -48,20 +48,25 @@ fn is_cjk(c: char) -> bool {
     matches!(c, '\u{4e00}'..='\u{9fff}')
 }
 
-/// 三字符串 repetition rate：滑窗统计，出现次数 ≥2 的组合视为重复。
-fn trigram_repeat_ratio(chars: &[char]) -> f64 {
-    if chars.len() < 6 {
+/// N 字符串重复窗口占比：出现次数 ≥2 的窗口数 / 总窗口数。
+///
+/// 循环幻觉（同一段话无限重复）时该值趋近 1.0；正常语音转写里 exact
+/// N 字符序列的重复极少。窗口取 10 字符：短于 10 的窗口在正常中文里
+/// 就会大量重现（「的会议」「星期三下」这类），10 字符以上的精确重复
+/// 基本只有循环和口头禅式复读才会出现。
+fn repeat_window_ratio(chars: &[char], n: usize) -> f64 {
+    if chars.len() < n {
         return 0.0;
     }
     let mut seen: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
     let mut repeated = 0usize;
     let mut total = 0usize;
-    for window in chars.windows(3) {
+    for window in chars.windows(n) {
         let key: String = window.iter().collect();
         total += 1;
         let count = seen.entry(key).or_insert(0);
         *count += 1;
-        if *count == 2 {
+        if *count >= 2 {
             repeated += 1;
         }
     }
@@ -80,6 +85,10 @@ fn cjk_ratio(chars: &[char]) -> f64 {
     cjk as f64 / chars.len() as f64
 }
 
+/// 重复率规则的最短文本长度。短录音里用户 legitimately 把同一句话说两遍
+/// （「好的好的」），不足这个长度不启用重复规则，避免误伤语音备忘。
+const REPEAT_RULE_MIN_CHARS: usize = 300;
+
 /// 判断一次转写输出是否退化。
 ///
 /// `expected_language` 是用户在设置里选择的语言（"zh"/"en"/"auto"…）；
@@ -95,7 +104,7 @@ pub fn assess_transcript_degeneration(
     let mut report = DegenerationReport {
         char_count,
         cjk_ratio: cjk_ratio(&chars),
-        trigram_repeat_ratio: trigram_repeat_ratio(&chars),
+        repeat_ratio: repeat_window_ratio(&chars, 10),
         ..Default::default()
     };
 
@@ -115,11 +124,13 @@ pub fn assess_transcript_degeneration(
         ));
     }
 
-    // 规则二：三字符串重复率过高——循环幻觉的典型特征。
-    if report.trigram_repeat_ratio > 0.3 {
+    // 规则二：10 字符窗口重复占比过高——循环幻觉的典型特征。
+    // 语言无关（auto 时也生效），但短文本不启用：用户把同一句话说两遍
+    // 是合法的语音备忘形态，不是退化。
+    if char_count >= REPEAT_RULE_MIN_CHARS && report.repeat_ratio > 0.3 {
         report.reasons.push(format!(
             "输出存在大量重复片段（重复率 {:.0}%）",
-            report.trigram_repeat_ratio * 100.0
+            report.repeat_ratio * 100.0
         ));
     }
 
@@ -165,6 +176,35 @@ mod tests {
     }
 
     #[test]
+    fn loop_is_caught_by_the_repeat_rule_even_in_the_right_language() {
+        // 关键回归：中文循环（语言规则放行）必须被重复规则抓住——
+        // 这正是 2026-09-21 之前三字符串度量数学上抓不到的情形。
+        let mut looped = Vec::new();
+        for _ in 0..60 {
+            looped.push("但是西偏套有需要无所谓的这些事情根本说不清楚".to_owned());
+        }
+        let report = assess_transcript_degeneration(&looped, "zh");
+        assert!(report.degenerate, "{report:?}");
+        assert!(
+            report.reasons.iter().any(|r| r.contains("重复")),
+            "应命中重复规则: {report:?}"
+        );
+        assert!(report.cjk_ratio > 0.9, "中文循环的语言规则确实放行");
+    }
+
+    #[test]
+    fn loop_is_caught_when_language_is_auto() {
+        // 语言为 auto 时语言规则不生效，重复规则是唯一兜底。
+        let mut looped = Vec::new();
+        for _ in 0..60 {
+            looped.push("So what I wanted to say is that I was able to go to the top".to_owned());
+        }
+        let report = assess_transcript_degeneration(&looped, "auto");
+        assert!(report.degenerate, "{report:?}");
+        assert!(report.reasons.iter().any(|r| r.contains("重复")));
+    }
+
+    #[test]
     fn foreign_language_marker_is_caught() {
         let mut markers = Vec::new();
         for _ in 0..30 {
@@ -177,12 +217,35 @@ mod tests {
 
     #[test]
     fn normal_chinese_is_not_flagged_as_repetitive() {
-        // 会议里 legitimately 会重复词（「转写」「模型」），但三字符串重复率应远低于阈值。
+        // 会议里 legitimately 会重复词（「转写」「模型」），但 10 字符窗口的
+        // 精确重复占比应远低于阈值。
         let report = assess_transcript_degeneration(&normal_zh(), "zh");
         assert!(
-            report.trigram_repeat_ratio < 0.1,
+            report.repeat_ratio < 0.1,
             "重复率异常高: {}",
-            report.trigram_repeat_ratio
+            report.repeat_ratio
+        );
+    }
+
+    #[test]
+    fn short_recording_with_a_repeated_sentence_is_not_flagged() {
+        // 短语音备忘：「好的，我记一下，明天提醒我」说两遍——不足最短长度，
+        // 重复规则不启用，不能误伤。
+        let repeated = "好的我记一下明天早上提醒我带电脑".to_owned();
+        let report = assess_transcript_degeneration(&[repeated.clone(), repeated], "zh");
+        assert!(!report.degenerate, "{report:?}");
+    }
+
+    #[test]
+    fn long_normal_meeting_text_is_not_flagged() {
+        // 约 600 字的正常会议文本（取自基准长片段的真值）：重复规则不误伤。
+        let text = include_str!("../../../benchmarks/clips/06-long.txt");
+        let report = assess_transcript_degeneration(&[text.to_owned()], "zh");
+        assert!(!report.degenerate, "{report:?}");
+        assert!(
+            report.repeat_ratio < 0.3,
+            "正常长文重复率: {}",
+            report.repeat_ratio
         );
     }
 

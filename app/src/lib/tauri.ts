@@ -216,12 +216,17 @@ export function latestAnalysis(recordId: string): Promise<StoredAnalysis | null>
   return invoke<StoredAnalysis | null>("latest_analysis", { recordId });
 }
 
-export function exportRecord(recordId: string, destinationPath: string, format: "md" | "txt"): Promise<string> {
-  return invoke<string>("export_record", { recordId, destinationPath, format });
+/** 弹出保存对话框前先领一张一次性导出票据——后端只认走过对话框的导出。 */
+export function createExportTicket(): Promise<string> {
+  return invoke<string>("create_export_ticket");
 }
 
-export function exportKnowledgeBase(projectId: string | null, unfiledOnly: boolean, destinationPath: string, format: "md" | "txt"): Promise<string> {
-  return invoke<string>("export_knowledge_base", { projectId, unfiledOnly, destinationPath, format });
+export function exportRecord(recordId: string, destinationPath: string, format: "md" | "txt", ticket: string): Promise<string> {
+  return invoke<string>("export_record", { recordId, destinationPath, format, ticket });
+}
+
+export function exportKnowledgeBase(projectId: string | null, unfiledOnly: boolean, destinationPath: string, format: "md" | "txt", ticket: string): Promise<string> {
+  return invoke<string>("export_knowledge_base", { projectId, unfiledOnly, destinationPath, format, ticket });
 }
 
 
