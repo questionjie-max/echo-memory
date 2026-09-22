@@ -21,8 +21,8 @@ use crate::types::{
     TranscriptionEngineStatus,
 };
 use crate::whisper::{
-    library_model_files, localize_speaker_label, WhisperAdapter, RECOMMENDED_MODEL_BYTES,
-    RECOMMENDED_MODEL_ID, RECOMMENDED_MODEL_SHA256, RECOMMENDED_MODEL_URL,
+    library_model_files, localize_speaker_label, WhisperAdapter, WhisperSession,
+    RECOMMENDED_MODEL_BYTES, RECOMMENDED_MODEL_ID, RECOMMENDED_MODEL_SHA256, RECOMMENDED_MODEL_URL,
 };
 use chrono::{Duration as ChronoDuration, Local, SecondsFormat, TimeZone, Utc};
 use sha2::{Digest, Sha256};
@@ -963,20 +963,26 @@ pub fn list_jobs(state: State<AppState>, record_id: String) -> Result<Vec<Proces
 }
 
 #[tauri::command]
-pub fn import_audio(
-    state: State<AppState>,
+pub async fn import_audio(
+    state: State<'_, AppState>,
     source_path: String,
     project_id: Option<String>,
     duplicate_confirmed: bool,
 ) -> Result<IngestResult, String> {
-    state
-        .library
-        .import_audio(
-            &PathBuf::from(source_path),
-            project_id.as_deref(),
-            duplicate_confirmed,
-        )
-        .map_err(|e| e.to_frontend())
+    // 大文件的哈希、时长探测与拷贝都是磁盘 IO，放在后台线程执行，
+    // 否则导入 GB 级录音时主线程被占住，界面直接冻住。
+    let library = state.inner().library.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        library
+            .import_audio(
+                &PathBuf::from(source_path),
+                project_id.as_deref(),
+                duplicate_confirmed,
+            )
+            .map_err(|e| e.to_frontend())
+    })
+    .await
+    .map_err(|_| "导入后台任务异常".to_owned())?
 }
 
 #[tauri::command]
@@ -1355,6 +1361,11 @@ fn run_transcription_with_engine(
         repository.update_job_status(&job.id, "transcribing", None)?;
         repository.update_record_status(record_id, "transcribing")?;
         let hotword_prefix = repository.hotwords_prompt().unwrap_or_default();
+        // 模型只加载一次：每个音频块共用同一个 context，解码状态每块新建
+        // （whisper.cpp 的 state 有跨调用残留，复用会改变转写结果）。
+        let session = WhisperSession::load(adapter.model_path().ok_or_else(|| {
+            crate::error::AppError::Import("找不到 Whisper 模型文件".to_owned())
+        })?)?;
         let mut accepted = Vec::new();
         let mut prompt = String::new();
         for (index, chunk) in chunks.iter().enumerate() {
@@ -1372,7 +1383,7 @@ fn run_transcription_with_engine(
             } else {
                 format!("{hotword_prefix}\n{prompt}")
             };
-            let chunk_segments = adapter.transcribe_samples(
+            let chunk_segments = session.transcribe(
                 &samples[chunk.sample_start..chunk.sample_end],
                 language,
                 (!initial_prompt.is_empty()).then_some(initial_prompt.as_str()),
@@ -2297,6 +2308,7 @@ pub fn correct_transcript(
     record_id: String,
 ) -> Result<(), String> {
     let library_root = state.library.root().to_path_buf();
+    let index_root = library_root.clone();
     std::thread::spawn(move || {
         let result = (|| -> Result<u32, String> {
             let library = ManagedLibrary::open(library_root).map_err(|error| error.to_string())?;
@@ -2304,6 +2316,10 @@ pub fn correct_transcript(
             crate::analysis::correct_transcript_with_library(&library, &record_id)
                 .map_err(|error| error.to_string())
         })();
+        // 校对改写了逐字稿，知识索引里还是旧文本，重建一次。
+        if result.is_ok() {
+            spawn_incremental_index(index_root, record_id.clone());
+        }
         let _ = app.emit(
             "transcript-corrected",
             serde_json::json!({

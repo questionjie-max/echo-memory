@@ -174,6 +174,123 @@ fn transcript_changes_stale_analysis_and_remove_derived_items() {
 }
 
 #[test]
+fn llm_correction_updates_text_and_stales_everything_derived() {
+    let repository = LibraryRepository::new(database_path()).unwrap();
+    let project = repository.create_project("校对").unwrap();
+    let record = repository
+        .create_record(
+            "校对录音",
+            Some(&project.id),
+            Path::new("audio/corrected.wav"),
+            "corrected-hash",
+            1_000,
+        )
+        .unwrap();
+    let (version, segments) = repository
+        .save_transcript(
+            &record.id,
+            "whisper.cpp",
+            "small",
+            &[TranscriptSegmentInput {
+                start_ms: 0,
+                end_ms: 1_000,
+                speaker_label: None,
+                original_text: "确认采用本地知识库".into(),
+            }],
+        )
+        .unwrap();
+    repository
+        .save_analysis(
+            &record.id,
+            &version.id,
+            "qwen",
+            &cited_draft(&segments[0].id, "确认采用本地知识库"),
+        )
+        .unwrap();
+    repository
+        .replace_knowledge_chunks(
+            &record.id,
+            &[KnowledgeChunkInput {
+                id: "chunk-1".into(),
+                record_id: record.id.clone(),
+                project_id: Some(project.id.clone()),
+                transcript_version_id: version.id.clone(),
+                segment_ids: vec![segments[0].id.clone()],
+                body: "确认采用本地知识库".into(),
+                start_ms: 0,
+                end_ms: 1_000,
+                speaker_label: None,
+                content_hash: "hash".into(),
+                embedding_model: "embedding-test".into(),
+                embedding: vec![0.1, 0.2],
+            }],
+        )
+        .unwrap();
+
+    let changed = repository
+        .set_segment_normalized_texts(
+            &record.id,
+            &[
+                (segments[0].id.clone(), "确认采用纯本地知识库".into()),
+                ("不存在的片段".into(), "无效写入".into()),
+            ],
+        )
+        .unwrap();
+    // 只统计真正命中的行，无效 id 不能算进校对数。
+    assert_eq!(changed, 1);
+
+    let updated = repository.list_transcript_segments(&record.id).unwrap();
+    assert_eq!(
+        updated[0].normalized_text.as_deref(),
+        Some("确认采用纯本地知识库")
+    );
+    assert_eq!(
+        updated[0].normalization_version.as_deref(),
+        Some("llm-corrected-v1")
+    );
+    assert_eq!(updated[0].original_text, "确认采用本地知识库");
+
+    // 文本变了，分析结论与知识索引都不能再用旧的。
+    assert_eq!(
+        repository
+            .latest_analysis(&record.id)
+            .unwrap()
+            .unwrap()
+            .status,
+        "stale"
+    );
+    assert!(repository.list_action_items(None, None).unwrap().is_empty());
+    assert!(repository
+        .list_knowledge_chunks(Some(&project.id), false, "embedding-test")
+        .unwrap()
+        .is_empty());
+
+    // 空的校对列表什么都不动，不该把已完成的索引判脏。
+    repository
+        .save_analysis(
+            &record.id,
+            &version.id,
+            "qwen",
+            &cited_draft(&segments[0].id, "确认采用纯本地知识库"),
+        )
+        .unwrap();
+    assert_eq!(
+        repository
+            .set_segment_normalized_texts(&record.id, &[])
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        repository
+            .latest_analysis(&record.id)
+            .unwrap()
+            .unwrap()
+            .status,
+        "completed"
+    );
+}
+
+#[test]
 fn custom_template_snapshot_survives_template_deletion() {
     let repository = LibraryRepository::new(database_path()).unwrap();
     assert!(repository
