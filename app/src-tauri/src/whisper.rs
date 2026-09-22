@@ -39,6 +39,93 @@ pub struct WhisperAdapter {
     model: PathBuf,
 }
 
+/// 跨音频块复用的转写会话：模型（WhisperContext）只加载一次，长录音分块转写时
+/// 不必每个块都把 574MB 的模型重新初始化一遍。
+///
+/// 注意：解码状态（WhisperState）刻意**每块新建**，不复用。whisper.cpp 的
+/// `whisper_full` 虽然会清空结果、重置 decoder、清空 self-attention 缓存，但实测
+/// 同一 state 连续解码时，第三块的输出会与「重新加载模型」产生偏差（且同一块连解
+/// 两次结果也不同）——存在未能定位的跨调用状态残留。转写质量是数据信任底线，
+/// 宁可每块多付一次 state 分配，也不让未解释的偏差进入长录音。
+#[cfg(target_os = "macos")]
+pub struct WhisperSession {
+    context: whisper_rs::WhisperContext,
+}
+
+#[cfg(target_os = "macos")]
+impl WhisperSession {
+    pub fn load(model: &Path) -> AppResult<Self> {
+        use whisper_rs::{WhisperContext, WhisperContextParameters};
+        silence_whisper_logs();
+        let context = WhisperContext::new_with_params(
+            &model.to_string_lossy(),
+            WhisperContextParameters::default(),
+        )
+        .map_err(|error| AppError::Import(format!("无法加载 Whisper 模型: {error}")))?;
+        Ok(Self { context })
+    }
+
+    pub fn transcribe(
+        &self,
+        audio: &[f32],
+        language: &str,
+        initial_prompt: Option<&str>,
+    ) -> AppResult<Vec<WhisperSegment>> {
+        use whisper_rs::{FullParams, SamplingStrategy};
+        let mut state = self
+            .context
+            .create_state()
+            .map_err(|error| AppError::Import(format!("无法创建 Whisper 状态: {error}")))?;
+        // 每块独立解码：跨块上下文只由调用方显式传入的 initial_prompt 提供，
+        // 不依赖 whisper.cpp 内部的 prompt_past 延续。
+        let mut params = FullParams::new(SamplingStrategy::BeamSearch {
+            beam_size: 5,
+            patience: 1.0,
+        });
+        params.set_no_context(true);
+        params.set_language((language != "auto").then_some(language));
+        if let Some(prompt) = initial_prompt.filter(|prompt| !prompt.trim().is_empty()) {
+            params.set_initial_prompt(prompt);
+        }
+        params.set_print_progress(false);
+        params.set_print_realtime(false);
+        params.set_print_special(false);
+        params.set_print_timestamps(false);
+        state
+            .full(params, audio)
+            .map_err(|error| AppError::Import(format!("Whisper 转写失败: {error}")))?;
+        let count = state
+            .full_n_segments()
+            .map_err(|error| AppError::Import(format!("无法读取 Whisper 片段: {error}")))?;
+        let mut segments = Vec::new();
+        for index in 0..count {
+            let text = state
+                .full_get_segment_text_lossy(index)
+                .map_err(|error| AppError::Import(format!("无法读取 Whisper 文本: {error}")))?
+                .trim()
+                .to_owned();
+            if text.is_empty() {
+                continue;
+            }
+            segments.push(WhisperSegment {
+                start_ms: state
+                    .full_get_segment_t0(index)
+                    .map_err(|error| AppError::Import(error.to_string()))?
+                    * 10,
+                end_ms: state
+                    .full_get_segment_t1(index)
+                    .map_err(|error| AppError::Import(error.to_string()))?
+                    * 10,
+                text,
+            });
+        }
+        if segments.is_empty() {
+            return Err(AppError::Import("Whisper 没有生成可用片段".into()));
+        }
+        Ok(segments)
+    }
+}
+
 /// 模型目录里的有效模型文件：`.bin` 结尾，且不是下载中的临时文件。
 pub fn is_whisper_model_file(path: &Path) -> bool {
     let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
@@ -112,7 +199,7 @@ impl WhisperAdapter {
     ) -> AppResult<Vec<WhisperSegment>> {
         #[cfg(target_os = "macos")]
         {
-            embedded_transcribe_samples(&self.model, samples, language, initial_prompt)
+            WhisperSession::load(&self.model)?.transcribe(samples, language, initial_prompt)
         }
         #[cfg(not(target_os = "macos"))]
         {
@@ -144,68 +231,6 @@ fn pick_library_model(models_dir: &Path) -> Option<PathBuf> {
         .collect();
     candidates.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
     candidates.into_iter().next().map(|(_, path)| path)
-}
-
-#[cfg(target_os = "macos")]
-fn embedded_transcribe_samples(
-    model: &Path,
-    audio: &[f32],
-    language: &str,
-    initial_prompt: Option<&str>,
-) -> AppResult<Vec<WhisperSegment>> {
-    use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
-    silence_whisper_logs();
-    let context = WhisperContext::new_with_params(
-        &model.to_string_lossy(),
-        WhisperContextParameters::default(),
-    )
-    .map_err(|error| AppError::Import(format!("无法加载 Whisper 模型: {error}")))?;
-    let mut state = context
-        .create_state()
-        .map_err(|error| AppError::Import(format!("无法创建 Whisper 状态: {error}")))?;
-    let mut params = FullParams::new(SamplingStrategy::BeamSearch {
-        beam_size: 5,
-        patience: 1.0,
-    });
-    params.set_language((language != "auto").then_some(language));
-    if let Some(prompt) = initial_prompt.filter(|prompt| !prompt.trim().is_empty()) {
-        params.set_initial_prompt(prompt);
-    }
-    params.set_print_progress(false);
-    params.set_print_realtime(false);
-    params.set_print_special(false);
-    params.set_print_timestamps(false);
-    state
-        .full(params, audio)
-        .map_err(|error| AppError::Import(format!("Whisper 转写失败: {error}")))?;
-    let count = state
-        .full_n_segments()
-        .map_err(|error| AppError::Import(format!("无法读取 Whisper 片段: {error}")))?;
-    let mut segments = Vec::new();
-    for index in 0..count {
-        let text = state
-            .full_get_segment_text_lossy(index)
-            .map_err(|error| AppError::Import(format!("无法读取 Whisper 文本: {error}")))?
-            .trim()
-            .to_owned();
-        if !text.is_empty() {
-            segments.push(WhisperSegment {
-                start_ms: state
-                    .full_get_segment_t0(index)
-                    .map_err(|error| AppError::Import(error.to_string()))?
-                    * 10,
-                end_ms: state
-                    .full_get_segment_t1(index)
-                    .map_err(|error| AppError::Import(error.to_string()))?
-                    * 10,
-                text,
-            });
-        }
-    }
-    if segments.is_empty() {
-        return Err(AppError::Import("Whisper 没有生成可用片段".into()));
-    }
-    Ok(segments)
 }
 
 #[cfg(target_os = "macos")]

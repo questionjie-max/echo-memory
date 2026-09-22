@@ -2586,15 +2586,21 @@ impl LibraryRepository {
         record_id: &str,
         corrections: &[(String, String)],
     ) -> AppResult<u32> {
-        let connection = self.connect()?;
+        let mut connection = self.connect()?;
+        let transaction = connection.transaction()?;
         let mut changed = 0_u32;
         for (segment_id, text) in corrections {
-            let updated = connection.execute(
-                "UPDATE transcript_segments SET normalized_text = ?2, normalization_version = 'llm-corrected-v1'                  WHERE id = ?1 AND record_id = ?3",
-                params![segment_id, text, record_id],
+            let updated = transaction.execute(
+                "UPDATE transcript_segments SET normalized_text = ?2, normalization_version = 'llm-corrected-v1', updated_at = ?4 WHERE id = ?1 AND record_id = ?3",
+                params![segment_id, text, record_id, Utc::now().to_rfc3339()],
             )?;
             changed += updated.max(0) as u32;
         }
+        // 逐字稿文本变了：分析结论引用的原文可能对不上，知识索引也要重建。
+        if changed > 0 {
+            Self::invalidate_record_knowledge(&transaction, record_id, true)?;
+        }
+        transaction.commit()?;
         Ok(changed)
     }
     /* ------------------------------ v0.4.0：AI 伙伴 / 产出文件夹 ------------------------------ */
