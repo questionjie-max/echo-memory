@@ -1,7 +1,7 @@
 use crate::analysis::{resolve_citation_aliases, verify_citations, OllamaAdapter};
 use crate::audio::{
-    is_overlap_duplicate, plan_chunks, preprocess, preprocessor_status, read_normalized_wav,
-    AudioPreprocessorStatus,
+    is_overlap_duplicate, merge_overlap_continuation, plan_chunks, preprocess, preprocessor_status,
+    read_normalized_wav, AudioPreprocessorStatus,
 };
 use crate::db::repository::LibraryRepository;
 use crate::error::AppResult;
@@ -34,6 +34,10 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
 
 const AUTO_MEMORY_UPDATE_DELAY: Duration = Duration::from_secs(120);
+
+/// 跨块接续合并时向前回溯的已接受片段数。重叠区里的重复几乎总落在最近一两条，
+/// 不需要扫全表。
+const OVERLAP_MERGE_SCAN: usize = 3;
 
 #[tauri::command]
 pub async fn get_local_ai_status(state: State<'_, AppState>) -> Result<LocalAiStatus, String> {
@@ -1393,6 +1397,16 @@ fn run_transcription_with_engine(
                 segment.end_ms += offset_ms;
                 let midpoint = segment.start_ms + (segment.end_ms - segment.start_ms) / 2;
                 if midpoint >= chunk.accept_start_ms && midpoint <= chunk.accept_end_ms {
+                    // 重叠区里同一句话被两块各解一次：上一条的结尾和本条的开头
+                    // 说的是同一段音频。先尝试接续合并，合并不了再按重复段丢弃。
+                    let merged = accepted
+                        .iter_mut()
+                        .rev()
+                        .take(OVERLAP_MERGE_SCAN)
+                        .any(|previous| merge_overlap_continuation(previous, &segment));
+                    if merged {
+                        continue;
+                    }
                     let duplicate =
                         accepted
                             .last()

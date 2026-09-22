@@ -108,6 +108,97 @@ fn session_reuse_matches_fresh_loads() {
     std::fs::remove_dir_all(&scratch).ok();
 }
 
+/// 跨块边界重复报告：复刻 commands.rs 的接受窗口 + 去重循环，把每个边界上
+/// 「上一块最后接受的片段」与「下一块开头被接受的片段」打出来，用于定位漏检形态。
+#[test]
+#[ignore = "requires ECHO_ABLATE=1, ECHO_TEST_AUDIO and a Whisper model"]
+fn boundary_duplication_report() {
+    if std::env::var("ECHO_ABLATE")
+        .map(|v| v != "1")
+        .unwrap_or(true)
+    {
+        panic!("消融测试需要 ECHO_ABLATE=1 显式开启");
+    }
+    let audio_path = PathBuf::from(std::env::var("ECHO_TEST_AUDIO").expect("ECHO_TEST_AUDIO"));
+    let model = PathBuf::from(std::env::var("ECHO_WHISPER_MODEL").expect("ECHO_WHISPER_MODEL"));
+
+    let scratch = std::env::temp_dir().join(format!("echo-boundary-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&scratch).unwrap();
+    let wav = scratch.join("p.wav");
+    audio::preprocess(&audio_path, &wav).unwrap();
+    let samples = read_normalized_wav(&wav).unwrap();
+    let chunks = plan_chunks(&samples);
+    println!("分块数: {}", chunks.len());
+
+    let session = WhisperSession::load(&model).unwrap();
+    let mut accepted: Vec<echo_memory_lib::whisper::WhisperSegment> = Vec::new();
+    for (index, chunk) in chunks.iter().enumerate() {
+        let offset_ms = chunk.sample_start as i64 * 1_000 / 16_000;
+        let before = accepted.len();
+        let segments = session
+            .transcribe(&samples[chunk.sample_start..chunk.sample_end], "zh", None)
+            .unwrap();
+        let decoded = segments.len();
+        let mut kept = 0_usize;
+        let mut merged_count = 0_usize;
+        for mut segment in segments {
+            segment.start_ms += offset_ms;
+            segment.end_ms += offset_ms;
+            let midpoint = segment.start_ms + (segment.end_ms - segment.start_ms) / 2;
+            if midpoint < chunk.accept_start_ms || midpoint > chunk.accept_end_ms {
+                continue;
+            }
+            let merged = accepted.iter_mut().rev().take(3).any(|previous| {
+                echo_memory_lib::audio::merge_overlap_continuation(previous, &segment)
+            });
+            if merged {
+                merged_count += 1;
+                continue;
+            }
+            let duplicate = accepted.last().is_some_and(|previous| {
+                echo_memory_lib::audio::is_overlap_duplicate(previous, &segment)
+            });
+            if duplicate {
+                continue;
+            }
+            accepted.push(segment);
+            kept += 1;
+        }
+        if index > 0 && before < accepted.len() {
+            println!(
+                "\n=== 边界 {index}（accept {:.1}s-{:.1}s）上一块尾部 vs 本块开头 ===",
+                chunks[index - 1].accept_end_ms as f32 / 1000.0,
+                chunk.accept_start_ms as f32 / 1000.0
+            );
+            for segment in accepted.iter().skip(before.saturating_sub(2)).take(2) {
+                println!(
+                    "  上块尾 [{:.1}-{:.1}s] {}",
+                    segment.start_ms as f32 / 1000.0,
+                    segment.end_ms as f32 / 1000.0,
+                    brief(&segment.text, 60)
+                );
+            }
+            for segment in accepted.iter().skip(before).take(2) {
+                println!(
+                    "  本块头 [{:.1}-{:.1}s] {}",
+                    segment.start_ms as f32 / 1000.0,
+                    segment.end_ms as f32 / 1000.0,
+                    brief(&segment.text, 60)
+                );
+            }
+        }
+        println!("块{index}: 解码 {decoded} 段，窗口内保留 {kept} 段，接续合并 {merged_count} 段");
+    }
+
+    let text: String = accepted.iter().map(|s| s.text.as_str()).collect();
+    println!(
+        "\n总片段 {} / 总字数 {}",
+        accepted.len(),
+        text.chars().count()
+    );
+    std::fs::remove_dir_all(&scratch).ok();
+}
+
 #[test]
 #[ignore = "requires ECHO_ABLATE=1, ECHO_TEST_AUDIO and a Whisper model"]
 fn decode_first_chunks_one_by_one() {
