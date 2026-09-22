@@ -801,7 +801,12 @@ pub fn export_record(
     record_id: String,
     destination_path: String,
     format: String,
+    ticket: String,
 ) -> Result<String, String> {
+    // 一次性票据：只有走过保存对话框的导出才签发了票。
+    if !crate::state::consume_export_ticket(&ticket) {
+        return Err("导出未经验证，请重新通过「另存为」对话框导出".to_owned());
+    }
     crate::export::export_record(
         &state.library,
         &record_id,
@@ -819,9 +824,13 @@ pub fn export_knowledge_base(
     unfiled_only: bool,
     destination_path: String,
     format: String,
+    ticket: String,
 ) -> Result<String, String> {
     crate::knowledge::validate_scope(project_id.as_deref(), unfiled_only)
         .map_err(|error| error.to_frontend())?;
+    if !crate::state::consume_export_ticket(&ticket) {
+        return Err("导出未经验证，请重新通过「另存为」对话框导出".to_owned());
+    }
     crate::export::export_knowledge_base(
         &state.library,
         project_id.as_deref(),
@@ -831,6 +840,12 @@ pub fn export_knowledge_base(
     )
     .map(|path| path.to_string_lossy().to_string())
     .map_err(|error| error.to_frontend())
+}
+
+/// 前端在弹出保存对话框前调用，拿到一次性导出票据。
+#[tauri::command]
+pub fn create_export_ticket() -> String {
+    crate::state::issue_export_ticket()
 }
 
 #[tauri::command]

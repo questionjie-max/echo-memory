@@ -20,6 +20,7 @@ import type {
 import {
   analyzeRecord,
   exportRecord,
+  createExportTicket,
   getLocalAiStatus,
   getRecord,
   latestAnalysis,
@@ -394,6 +395,8 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
 
   async function exportOne(format: "md" | "txt") {
     if (detailMenu.current) detailMenu.current.open = false;
+    // 先领票据再弹对话框：后端凭票放行导出，挡掉绕过对话框的任意路径写入。
+    const ticket = await createExportTicket();
     const destination = await saveDialog({
       title: `导出${currentRecord.title}`,
       defaultPath: `${currentRecord.title}.${format}`,
@@ -403,7 +406,7 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
     setBusy(true);
     setError("");
     try {
-      await exportRecord(record.id, destination, format);
+      await exportRecord(record.id, destination, format, ticket);
     } catch (reason) {
       setError(String(reason));
     } finally {

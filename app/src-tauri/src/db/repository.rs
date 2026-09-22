@@ -1118,14 +1118,9 @@ impl LibraryRepository {
         if base_url.is_empty() || base_url.len() > 500 {
             return Err(AppError::Invalid("外部 AI Base URL 无效".to_owned()));
         }
-        let secure = base_url.starts_with("https://")
-            || base_url.starts_with("http://127.0.0.1")
-            || base_url.starts_with("http://localhost");
-        if !secure {
-            return Err(AppError::Invalid(
-                "外部 AI 必须使用 HTTPS；仅本机测试允许 HTTP".to_owned(),
-            ));
-        }
+        // 安全校验：解析真实 host 后判定（字符串前缀可被 userinfo/子域绕过，
+        // 详见 memory.rs::validate_external_base_url）。
+        crate::memory::validate_external_base_url(base_url)?;
         if model.is_empty() || model.len() > 160 {
             return Err(AppError::Invalid("外部 AI 模型名称无效".to_owned()));
         }

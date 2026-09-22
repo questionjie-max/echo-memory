@@ -815,6 +815,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "thiserror 1.0.69",
  "ureq",
+ "url",
  "uuid",
  "whisper-rs",
  "zip",
