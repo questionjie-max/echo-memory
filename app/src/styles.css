@@ -219,7 +219,11 @@ input::placeholder, textarea::placeholder { color: var(--em-ink-4); }
   backdrop-filter: blur(20px) saturate(155%);
 }
 .record-pane { display: flex; flex-direction: column; padding: 16px 14px 12px; background: var(--em-pane); overflow: hidden; }
-.detail-pane { display: grid; grid-template-rows: auto auto auto auto minmax(0, 1fr); background: var(--em-pane); overflow: hidden; }
+/* 详情页用弹性列布局：内容区独占剩余空间并内部滚动，说话人/相关记录等区块按自然
+   高度依次排布。早先写死 grid-template-rows 五行，一旦音频条把子元素挤到六个，
+   「说话人」就落到了那个 minmax(0,1fr) 行上，逐字稿一超高该行被压成 0 像素，
+   内容溢出后正好压在「相关记录」上面。 */
+.detail-pane { display: flex; flex-direction: column; background: var(--em-pane); overflow: hidden; }
 .detail-empty { display: grid; place-items: center; background: var(--em-pane); color: var(--em-ink-4); text-align: center; }
 .detail-empty h2 { color: var(--em-ink-2); font-size: 16px; margin: 0; }
 .detail-empty p { font-size: 13px; margin: 5px 0 0; }
@@ -498,7 +502,7 @@ input::placeholder, textarea::placeholder { color: var(--em-ink-4); }
 .detail-tabs button.selected { color: var(--em-ink); }
 .detail-tabs button.selected::after { content: ""; position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; border-radius: 1px; background: var(--em-accent); }
 .detail-error { margin: 8px 16px 0; }
-.detail-content { min-height: 0; padding: 12px 14px 14px; overflow: auto; scroll-behavior: smooth; }
+.detail-content { flex: 1; min-height: 0; padding: 12px 14px 14px; overflow: auto; scroll-behavior: smooth; }
 .detail-placeholder { min-height: 150px; display: grid; place-items: center; align-content: center; gap: 8px; color: var(--em-ink-3); font-size: 12px; text-align: center; }
 .segment-list { display: grid; gap: 6px; }
 .transcript-block-list { display: grid; gap: 7px; }
