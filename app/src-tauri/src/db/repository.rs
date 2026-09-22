@@ -67,7 +67,9 @@ impl LibraryRepository {
 
     fn connect(&self) -> AppResult<Connection> {
         let connection = Connection::open(&self.db_path)?;
-        connection.execute_batch("PRAGMA foreign_keys = ON;")?;
+        // busy_timeout：转写/分析/dock/MCP 多线程并发写时，等锁而不是立刻
+        // 报「database is locked」（rusqlite 默认超时为 0，一撞就失败）。
+        connection.execute_batch("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;")?;
         Ok(connection)
     }
 
