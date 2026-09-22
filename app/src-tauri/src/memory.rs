@@ -125,7 +125,7 @@ pub fn validate_external_base_url(base_url: &str) -> AppResult<String> {
         }
         Host::Domain(domain) => {
             let port = url.port_or_known_default().unwrap_or(443);
-            if let Ok(addrs) = (domain.clone(), port).to_socket_addrs() {
+            if let Ok(addrs) = (domain.as_str(), port).to_socket_addrs() {
                 for addr in addrs {
                     let ip = addr.ip();
                     if is_non_global_ip(ip) && !ip.is_loopback() {
@@ -148,7 +148,7 @@ fn assert_endpoint_still_safe(endpoint: &str) -> AppResult<()> {
         Url::parse(endpoint).map_err(|_| AppError::ExternalAi("外部 AI 地址无效".to_owned()))?;
     if let Some(Host::Domain(domain)) = url.host() {
         let port = url.port_or_known_default().unwrap_or(443);
-        if let Ok(addrs) = (domain.clone(), port).to_socket_addrs() {
+        if let Ok(addrs) = (domain, port).to_socket_addrs() {
             for addr in addrs {
                 let ip = addr.ip();
                 if is_non_global_ip(ip) && !ip.is_loopback() {
