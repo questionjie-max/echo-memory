@@ -85,6 +85,45 @@ pub fn heavy_job_limiter() -> &'static JobLimiter {
     })
 }
 
+/// 导出票据：前端「打开保存对话框」与「真正写文件」之间的一次性凭证。
+///
+/// 存在的原因：导出命令的目标路径是前端直传的字符串。没有这道闸，
+/// 任何能触达 invoke 的代码（XSS/被投毒的依赖）都可以让后端把任意内容
+/// 写到任意路径——最致命的目标是库目录下的 memory.db。
+/// 票据只在用户真实走过对话框时签发（5 分钟有效、一次一码），
+/// 没票的导出一律拒绝。
+static EXPORT_TICKETS: OnceLock<Mutex<HashMap<String, std::time::Instant>>> = OnceLock::new();
+
+const EXPORT_TICKET_TTL: std::time::Duration = std::time::Duration::from_secs(300);
+
+fn export_tickets() -> &'static Mutex<HashMap<String, std::time::Instant>> {
+    EXPORT_TICKETS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// 签发一张导出票据（前端在弹出保存对话框前调用）。
+pub fn issue_export_ticket() -> String {
+    let ticket = uuid::Uuid::new_v4().to_string();
+    let mut tickets = export_tickets()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let now = std::time::Instant::now();
+    tickets.retain(|_, issued| now.duration_since(*issued) < EXPORT_TICKET_TTL);
+    tickets.insert(ticket.clone(), now);
+    ticket
+}
+
+/// 核销一张导出票据。过期、不存在、已使用都返回 false。
+pub fn consume_export_ticket(ticket: &str) -> bool {
+    let mut tickets = export_tickets()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let now = std::time::Instant::now();
+    tickets.retain(|_, issued| now.duration_since(*issued) < EXPORT_TICKET_TTL);
+    tickets
+        .remove(ticket)
+        .is_some_and(|issued| now.duration_since(issued) < EXPORT_TICKET_TTL)
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub library: ManagedLibrary,
