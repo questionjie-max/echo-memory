@@ -883,6 +883,89 @@ pub fn update_record_title(
     Ok(updated)
 }
 
+/// 批量移动：把多条记录一次性归到某个知识库（传 null 表示移出到「未归档」）。
+/// 单条移动已经能在详情页做，这里是工作区勾选多条后的批量版本。
+#[tauri::command]
+pub fn move_records(
+    state: State<AppState>,
+    record_ids: Vec<String>,
+    knowledge_base_id: Option<String>,
+) -> Result<u32, String> {
+    let repository = state.library.repository();
+    // 先确认目标知识库存在，避免把一批记录指到不存在的项目上。
+    if let Some(id) = knowledge_base_id.as_deref() {
+        let exists = repository
+            .list_projects()
+            .map_err(|e| e.to_frontend())?
+            .into_iter()
+            .any(|project| project.id == id);
+        if !exists {
+            return Err("目标知识库不存在，可能已被删除".to_owned());
+        }
+    }
+    let mut moved = 0_u32;
+    let mut first_error: Option<String> = None;
+    for record_id in &record_ids {
+        match repository.update_record_project(record_id, knowledge_base_id.as_deref()) {
+            Ok(_) => moved += 1,
+            Err(error) => {
+                if first_error.is_none() {
+                    first_error = Some(error.to_frontend());
+                }
+            }
+        }
+    }
+    if moved > 0 {
+        spawn_index_metadata_refresh(state.library.root().to_path_buf());
+        schedule_memory_update(state.inner().clone());
+    }
+    // 有一条没成功能算成功吗？不能——用户以为整批都动了。宁可报错让他重试。
+    if let Some(error) = first_error {
+        return Err(error);
+    }
+    Ok(moved)
+}
+
+/// 批量删除：删库内行（外键级联带走转写、分析、待办、知识分片、搜索项）、
+/// 磁盘上的原始音频和预处理产物。返回实际删除的条数。
+#[tauri::command]
+pub fn delete_records(state: State<AppState>, record_ids: Vec<String>) -> Result<u32, String> {
+    let library_root = state.library.root().to_path_buf();
+    let mut deleted = 0_u32;
+    let mut leftover: Vec<String> = Vec::new();
+    for record_id in &record_ids {
+        match state.library.repository().delete_record(record_id) {
+            Ok(()) => {
+                deleted += 1;
+                leftover.extend(
+                    state
+                        .library
+                        .repository()
+                        .remove_record_files(&library_root, record_id)
+                        .into_iter()
+                        .map(|path| path.to_string_lossy().to_string()),
+                );
+            }
+            // 记录已经不在了（并发删除、或者前端拿着过期列表）不算失败。
+            Err(crate::error::AppError::NotFound(_)) => {}
+            Err(error) => return Err(error.to_frontend()),
+        }
+    }
+    if deleted > 0 {
+        spawn_index_metadata_refresh(library_root);
+        schedule_memory_update(state.inner().clone());
+    }
+    if !leftover.is_empty() {
+        // 库里已经删干净，但磁盘上留了东西——如实告知，别让用户以为彻底删掉了。
+        return Err(format!(
+            "已删除 {deleted} 条记录，但有 {} 个文件没能清理：{}",
+            leftover.len(),
+            leftover.join("、")
+        ));
+    }
+    Ok(deleted)
+}
+
 #[tauri::command]
 pub fn get_mcp_status(state: State<AppState>) -> Result<McpStatus, String> {
     state

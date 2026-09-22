@@ -127,6 +127,16 @@ export function updateRecordTitle(recordId: string, title: string): Promise<Reco
   return invoke<RecordBrief>("update_record_title", { recordId, title });
 }
 
+/** 批量移动：把多条记录归到某个知识库，传 null 移出到「未归档」。 */
+export function moveRecords(recordIds: string[], knowledgeBaseId: string | null): Promise<number> {
+  return invoke<number>("move_records", { recordIds, knowledgeBaseId });
+}
+
+/** 批量删除：删库内行、原始音频与预处理产物。返回实际删除的条数。 */
+export function deleteRecords(recordIds: string[]): Promise<number> {
+  return invoke<number>("delete_records", { recordIds });
+}
+
 export function getMcpStatus(): Promise<McpStatus> {
   return invoke<McpStatus>("get_mcp_status");
 }

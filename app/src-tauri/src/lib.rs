@@ -64,6 +64,8 @@ pub fn run() {
             commands::create_export_ticket,
             commands::update_record_knowledge_base,
             commands::update_record_title,
+            commands::move_records,
+            commands::delete_records,
             commands::get_mcp_status,
             commands::set_mcp_enabled,
             commands::get_record,
