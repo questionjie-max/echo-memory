@@ -44,6 +44,10 @@ fn contains_sql_migrations(dir: &Path) -> bool {
 /// 对给定数据库路径执行所有未应用的迁移，可重复调用（幂等）。
 pub fn run_migrations(db_path: &Path) -> AppResult<()> {
     let mut conn = Connection::open(db_path)?;
+    // WAL：读者不阻塞写者——UI 轮询与后台转写/索引并发时不再互斥。
+    // journal_mode 持久化在库文件头，设一次即可；busy_timeout 让并发的
+    // schema_migrations 写入等待而不是直接失败（MCP 组件与 App 可能同时迁移）。
+    conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;")?;
 
     // 跟踪表（首次由 0001 创建；此处防御性确保存在）。
     conn.execute_batch(
@@ -83,8 +87,10 @@ pub fn run_migrations(db_path: &Path) -> AppResult<()> {
         let sql = std::fs::read_to_string(&path)?;
         let tx = conn.transaction()?;
         tx.execute_batch(&sql)?;
+        // OR IGNORE：App 与 MCP 组件可能同时启动迁移，同 version 的重复记录
+        // 静默跳过而不是让一侧启动失败。
         tx.execute(
-            "INSERT INTO schema_migrations (version, name, applied_at) VALUES (?1, ?2, ?3)",
+            "INSERT OR IGNORE INTO schema_migrations (version, name, applied_at) VALUES (?1, ?2, ?3)",
             rusqlite::params![version, name, chrono::Utc::now().to_rfc3339()],
         )?;
         tx.commit()?;
