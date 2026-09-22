@@ -2,6 +2,7 @@
 
 use echo_memory_lib::analysis::{AnalysisDraft, AnalysisItemDraft};
 use echo_memory_lib::db::repository::LibraryRepository;
+use echo_memory_lib::error::AppError;
 use echo_memory_lib::types::{
     EvolutionItem, KnowledgeChunkInput, KnowledgeIndexStatus, MemoryGenerationStatus, MemoryScope,
     MemorySnapshotResult, MemoryViewKind, TemplateSection, TranscriptSegmentInput,
@@ -1465,4 +1466,134 @@ fn dock_chat_roundtrip_keeps_history_and_clears() {
     repository.clear_dock_chats().unwrap();
     assert!(repository.latest_dock_chat().unwrap().is_none());
     let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn deleting_a_record_cascades_to_transcripts_and_analyses() {
+    // 删记录必须把转写、分析、待办一起带走——否则知识索引和搜索里留一堆孤儿数据。
+    let repository = LibraryRepository::new(database_path()).unwrap();
+    let record = repository
+        .create_record(
+            "待删除",
+            None,
+            Path::new("audio/delete.wav"),
+            "delete-hash",
+            1_000,
+        )
+        .unwrap();
+    let (version, segments) = repository
+        .save_transcript(
+            &record.id,
+            "whisper.cpp",
+            "small",
+            &[TranscriptSegmentInput {
+                start_ms: 0,
+                end_ms: 1_000,
+                speaker_label: None,
+                original_text: "确认采用本地知识库".into(),
+            }],
+        )
+        .unwrap();
+    repository
+        .save_analysis(
+            &record.id,
+            &version.id,
+            "qwen",
+            &cited_draft(&segments[0].id, "确认采用本地知识库"),
+        )
+        .unwrap();
+
+    repository.delete_record(&record.id).unwrap();
+
+    assert!(repository.get_record(&record.id).is_err());
+    assert!(repository
+        .list_transcript_segments(&record.id)
+        .unwrap()
+        .is_empty());
+    assert!(repository.latest_analysis(&record.id).unwrap().is_none());
+    assert!(repository.list_action_items(None, None).unwrap().is_empty());
+    // 再删一次要报「不存在」，命令层据此区分「已经没了」和真失败。
+    assert!(matches!(
+        repository.delete_record(&record.id),
+        Err(AppError::NotFound(_))
+    ));
+}
+
+#[test]
+fn removing_record_files_takes_audio_and_preprocessed_dir() {
+    // 删除要把磁盘上的原始音频和 raw/<记录>/ 下的预处理产物一起清掉，
+    // 否则资料库目录里会无限堆积没人引用的文件。
+    let root = std::env::temp_dir().join(format!("echo-delete-files-{}", uuid::Uuid::new_v4()));
+    let audio_dir = root.join("audio").join("2026").join("09");
+    std::fs::create_dir_all(&audio_dir).unwrap();
+    std::fs::create_dir_all(root.join("raw").join("rec-1")).unwrap();
+    let audio = audio_dir.join("rec-1.m4a");
+    std::fs::write(&audio, b"fake audio").unwrap();
+    std::fs::write(
+        root.join("raw").join("rec-1").join("job-enhanced.wav"),
+        b"fake wav",
+    )
+    .unwrap();
+
+    let repository = LibraryRepository::new(root.join("memory.db")).unwrap();
+    repository
+        .create_record(
+            "录音",
+            None,
+            Path::new("audio/2026/09/rec-1.m4a"),
+            "files-hash",
+            1_000,
+        )
+        .unwrap();
+    let record_id = repository.list_records(None, false).unwrap()[0].id.clone();
+
+    let failed = repository.remove_record_files(&root, &record_id);
+
+    assert!(failed.is_empty(), "清理失败的文件: {failed:?}");
+    assert!(!audio.exists(), "原始音频应已删除");
+    assert!(
+        !root.join("raw").join(&record_id).exists(),
+        "预处理目录应已删除"
+    );
+    // 文件本来就不存在时不算失败。
+    assert!(repository.remove_record_files(&root, &record_id).is_empty());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn moving_a_record_between_knowledge_bases_updates_scope() {
+    // 批量移动的基础能力：单条记录的归属可在知识库之间切换，也能移回未归档。
+    let repository = LibraryRepository::new(database_path()).unwrap();
+    let first = repository.create_project("Alpha").unwrap();
+    let second = repository.create_project("Beta").unwrap();
+    let record = repository
+        .create_record(
+            "访谈",
+            None,
+            Path::new("audio/move.wav"),
+            "move-hash",
+            1_000,
+        )
+        .unwrap();
+    assert_eq!(record.project_id, None);
+
+    let moved = repository
+        .update_record_project(&record.id, Some(&first.id))
+        .unwrap();
+    assert_eq!(moved.project_id.as_deref(), Some(first.id.as_str()));
+    assert_eq!(moved.project_name.as_deref(), Some("Alpha"));
+
+    let moved = repository
+        .update_record_project(&record.id, Some(&second.id))
+        .unwrap();
+    assert_eq!(moved.project_name.as_deref(), Some("Beta"));
+
+    let unfiled = repository.update_record_project(&record.id, None).unwrap();
+    assert_eq!(unfiled.project_id, None);
+    assert_eq!(unfiled.project_name, None);
+
+    // 目标知识库不存在时必须报错，不能把记录挂到野项目上。
+    assert!(repository
+        .update_record_project(&record.id, Some("no-such-project"))
+        .is_err());
 }
