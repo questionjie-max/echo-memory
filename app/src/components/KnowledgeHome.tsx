@@ -1,4 +1,5 @@
 import { open } from "@tauri-apps/plugin-dialog";
+import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef, useState } from "react";
 import type {
   KnowledgeAnswerCitation,
@@ -91,6 +92,13 @@ export default function KnowledgeHome({ scope, projectId, unfiledOnly, refreshKe
       if (timer !== undefined) window.clearTimeout(timer);
     };
   }, [index?.status, currentScopeKey]);
+
+  useEffect(() => {
+    const stop = listen("knowledge-index-update", () => void refresh());
+    return () => {
+      void stop.then((unlisten) => unlisten());
+    };
+  }, [currentScopeKey]);
 
   async function rebuild() {
     const rebuildId = ++requestId.current;

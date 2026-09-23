@@ -6,6 +6,7 @@ use crate::error::AppResult;
 use rusqlite::Connection;
 use std::path::{Path, PathBuf};
 
+pub(super) mod record_ops;
 pub mod repository;
 
 /// 迁移文件目录：优先用随包分发的 `Resources/migrations`，
@@ -181,7 +182,7 @@ mod tests {
                 let (version, name) = stem.split_once('_')?;
                 let version = version.parse::<i64>().ok()?;
                 let name = name.to_owned();
-                (version < 10).then(|| (version, name, path))
+                (version < 10).then_some((version, name, path))
             })
             .collect::<Vec<_>>();
         entries.sort_by_key(|(version, _, _)| *version);

@@ -62,6 +62,7 @@ pub fn rebuild_scope(
     library: &ManagedLibrary,
     project_id: Option<&str>,
     unfiled_only: bool,
+    on_update: &mut impl FnMut(),
 ) -> AppResult<KnowledgeIndexStatus> {
     validate_scope(project_id, unfiled_only)?;
     let repository = library.repository();
@@ -83,6 +84,7 @@ pub fn rebuild_scope(
         updated_at: Utc::now().to_rfc3339(),
     };
     repository.save_knowledge_index_status(&status)?;
+    on_update();
     if let Err(error) = ensure_model_installed(&settings.embedding_model) {
         status.status = "failed".to_owned();
         status.last_error = Some(error.to_string());
@@ -99,12 +101,14 @@ pub fn rebuild_scope(
                 status.chunk_count += count as i64;
                 status.updated_at = Utc::now().to_rfc3339();
                 repository.save_knowledge_index_status(&status)?;
+                on_update();
             }
             Err(error) => {
                 status.status = "failed".to_owned();
                 status.last_error = Some(error.to_string());
                 status.updated_at = Utc::now().to_rfc3339();
                 repository.save_knowledge_index_status(&status)?;
+                on_update();
                 return Err(error);
             }
         }
@@ -112,6 +116,7 @@ pub fn rebuild_scope(
     status.status = "completed".to_owned();
     status.updated_at = Utc::now().to_rfc3339();
     repository.save_knowledge_index_status(&status)?;
+    on_update();
     Ok(status)
 }
 

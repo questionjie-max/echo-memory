@@ -1,11 +1,12 @@
 //! Versioned external-AI memory views. Source records remain authoritative and immutable.
 
 use crate::error::{AppError, AppResult};
+use crate::external_ai_gate::{get_api_key, require_external_ai_consent};
 use crate::library::ManagedLibrary;
 use crate::state::AppState;
 use crate::transcript::effective_text;
 use crate::types::{
-    ExternalAiSettings, GrowthEdge, GrowthGraph, GrowthNode, MemoryBranch, MemoryGenerationRequest,
+    GrowthEdge, GrowthGraph, GrowthNode, MemoryBranch, MemoryGenerationRequest,
     MemoryGenerationStatus, MemoryScope, MemorySnapshot, MemorySnapshotResult,
     MemorySourceReference, MemoryViewKind, TimelineItem,
 };
@@ -20,8 +21,6 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 use url::{Host, Url};
 
-const KEYCHAIN_SERVICE: &str = "com.soloplay.echo-memory.external-ai";
-const KEYCHAIN_ACCOUNT: &str = "default";
 const CHUNK_TEXT_BUDGET: usize = 28_000;
 
 #[derive(Debug, Clone, Serialize)]
@@ -443,7 +442,7 @@ pub fn get_hf_token() -> AppResult<Option<String>> {
             return Ok(None);
         }
         let value = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-        return Ok((!value.is_empty()).then_some(value));
+        Ok((!value.is_empty()).then_some(value))
     }
     #[cfg(not(target_os = "macos"))]
     Ok(None)
@@ -510,109 +509,6 @@ pub fn clear_hf_token() -> AppResult<()> {
     Ok(())
 }
 
-pub fn get_api_key() -> AppResult<Option<String>> {
-    // 用户点过「清除」后 env 兜底失效，直到下次保存。
-    let env_suppressed = ENV_API_KEY_SUPPRESSED.load(std::sync::atomic::Ordering::SeqCst);
-    if !env_suppressed {
-        if let Ok(value) = std::env::var("ECHO_EXTERNAL_AI_API_KEY") {
-            if !value.trim().is_empty() {
-                return Ok(Some(value));
-            }
-        }
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let output = Command::new("security")
-            .args([
-                "find-generic-password",
-                "-s",
-                KEYCHAIN_SERVICE,
-                "-a",
-                KEYCHAIN_ACCOUNT,
-                "-w",
-            ])
-            .output()
-            .map_err(|_| AppError::Io(std::io::Error::other("无法访问 macOS 钥匙串")))?;
-        if !output.status.success() {
-            return Ok(None);
-        }
-        let value = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-        return Ok((!value.is_empty()).then_some(value));
-    }
-    #[cfg(not(target_os = "macos"))]
-    Ok(None)
-}
-
-/// env 来源的 Key 被用户在 UI 清除后，本进程内不再回退读取 env。
-/// （重启后 env 仍然生效——那是运维层面的显式覆盖，UI 会在重启后如实显示已配置。）
-static ENV_API_KEY_SUPPRESSED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-
-pub fn set_api_key(api_key: &str) -> AppResult<()> {
-    if api_key.trim().is_empty() {
-        return Err(AppError::Invalid("API Key 不能为空".to_owned()));
-    }
-    #[cfg(target_os = "macos")]
-    {
-        // 密钥走 stdin，不进 argv：同用户其他进程 `ps` 看不到。
-        let mut child = Command::new("security")
-            .args([
-                "add-generic-password",
-                "-U",
-                "-s",
-                KEYCHAIN_SERVICE,
-                "-a",
-                KEYCHAIN_ACCOUNT,
-            ])
-            .stdin(Stdio::piped())
-            .spawn()
-            .map_err(|_| AppError::Io(std::io::Error::other("无法访问 macOS 钥匙串")))?;
-        if let Some(stdin) = child.stdin.as_mut() {
-            stdin
-                .write_all(api_key.trim().as_bytes())
-                .map_err(|_| AppError::Io(std::io::Error::other("无法写入 macOS 钥匙串")))?;
-        }
-        let status = child
-            .wait()
-            .map_err(|_| AppError::Io(std::io::Error::other("无法写入 macOS 钥匙串")))?;
-        if !status.success() {
-            return Err(AppError::Invalid(
-                "API Key 保存到 macOS 钥匙串失败".to_owned(),
-            ));
-        }
-        // 重新保存即恢复 env 兜底的默认优先级语义。
-        ENV_API_KEY_SUPPRESSED.store(false, std::sync::atomic::Ordering::SeqCst);
-        return Ok(());
-    }
-    #[cfg(not(target_os = "macos"))]
-    Err(AppError::Invalid("当前平台不支持 macOS 钥匙串"))
-}
-
-pub fn clear_api_key() -> AppResult<()> {
-    #[cfg(target_os = "macos")]
-    {
-        let _ = Command::new("security")
-            .args([
-                "delete-generic-password",
-                "-s",
-                KEYCHAIN_SERVICE,
-                "-a",
-                KEYCHAIN_ACCOUNT,
-            ])
-            .status();
-    }
-    // 清除必须权威：Key 来自环境变量时也要让「已清除」成为事实，
-    // 否则界面显示已清除、实际仍在发送（UI 状态说谎）。
-    ENV_API_KEY_SUPPRESSED.store(true, std::sync::atomic::Ordering::SeqCst);
-    Ok(())
-}
-
-pub fn external_settings(library: &ManagedLibrary) -> AppResult<ExternalAiSettings> {
-    library
-        .repository()
-        .external_ai_settings(get_api_key()?.is_some())
-}
-
 pub fn local_timeline(
     library: &ManagedLibrary,
     scope: &MemoryScope,
@@ -674,12 +570,8 @@ pub fn local_timeline(
                         .and_then(Value::as_array)
                         .and_then(|ids| ids.first())
                         .and_then(Value::as_str);
-                    let source_segment = segment_id.and_then(|id| {
-                        record
-                            .transcript
-                            .iter()
-                            .find(|segment| segment.id == id || id == segment.id)
-                    });
+                    let source_segment = segment_id
+                        .and_then(|id| record.transcript.iter().find(|segment| segment.id == id));
                     items.push(TimelineItem {
                         id: stable_id("local-analysis", &[&record.id, kind, text]),
                         occurred_at: record.imported_at.clone(),
@@ -829,7 +721,7 @@ pub fn generate_snapshot(
     state: &AppState,
     request: &MemoryGenerationRequest,
 ) -> AppResult<MemorySnapshot> {
-    let settings = external_settings(&state.library)?;
+    let settings = require_external_ai_consent(&state.library)?;
     if !settings.enabled {
         return Err(AppError::Invalid("请先在设置中启用外部 AI".to_owned()));
     }
@@ -858,8 +750,7 @@ pub fn generate_snapshot(
     let snapshot = state.library.repository().create_memory_snapshot(
         &request.view_kind,
         &request.scope,
-        request.range_start.as_deref(),
-        request.range_end.as_deref(),
+        (request.range_start.as_deref(), request.range_end.as_deref()),
         &settings.model,
         &source_record_ids,
         &request_hash,
@@ -1292,6 +1183,7 @@ fn hex_hash(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::external_ai_gate::ApiKeyEnvGuard;
     use crate::types::{MemoryEdge, MemoryNode};
     use std::io::{Read, Write};
     use std::net::TcpListener;
@@ -1666,6 +1558,91 @@ mod tests {
         assert!(request_lower.contains("authorization: bearer top-secret"));
         assert!(request.contains(r#""model":"test-model""#));
         assert!(!request.contains(r#""temperature""#));
+    }
+
+    #[test]
+    fn every_external_ai_entry_requires_consent_before_any_network_call() {
+        let _api_key = ApiKeyEnvGuard::set("test-key");
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let root = std::env::temp_dir().join(format!("external-consent-{}", uuid::Uuid::new_v4()));
+        let state = crate::state::AppState::initialize(root.clone()).unwrap();
+        let repository = state.library.repository();
+        for (key, value) in [
+            ("external_ai_enabled", "true"),
+            ("external_ai_base_url", base_url.as_str()),
+            ("external_ai_model", "test-model"),
+            ("external_ai_privacy_consent_at", ""),
+        ] {
+            repository.set_setting_value(key, value).unwrap();
+        }
+
+        let request = MemoryGenerationRequest {
+            generation_id: "consent-test".to_owned(),
+            view_kind: MemoryViewKind::Map,
+            scope: MemoryScope {
+                kind: "all".to_owned(),
+                project_id: None,
+            },
+            range_start: None,
+            range_end: None,
+        };
+        let errors = [
+            generate_snapshot(&state, &request).unwrap_err().to_string(),
+            crate::dock::ask_external(&state.library, crate::dock::MODE_FREE, &[], "hello", None)
+                .unwrap_err()
+                .to_string(),
+            crate::commands::test_external_ai_connection_blocking(&state).unwrap_err(),
+        ];
+        for error in errors {
+            assert!(error.contains("确认文本发送说明"), "{error}");
+        }
+        assert!(!crate::dock::external_available(&state.library));
+
+        listener.set_nonblocking(true).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_millis(200);
+        let mut accepted = None;
+        while std::time::Instant::now() < deadline {
+            match listener.accept() {
+                Ok((_, _)) => {
+                    accepted = Some(Ok(()));
+                    break;
+                }
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => {
+                    accepted = Some(Err(error));
+                    break;
+                }
+            }
+        }
+        assert!(accepted.is_none(), "未同意隐私说明时不应产生网络请求");
+
+        repository
+            .set_setting_value("external_ai_privacy_consent_at", "2026-09-23T00:00:00Z")
+            .unwrap();
+        assert!(require_external_ai_consent(&state.library).is_ok());
+        assert!(crate::dock::external_available(&state.library));
+
+        let response = r#"{"choices":[{"message":{"content":"{\"ok\":true}"}}]}"#;
+        let (accepted_base_url, server) = serve_one_response("200 OK", response);
+        repository
+            .set_setting_value("external_ai_base_url", &accepted_base_url)
+            .unwrap();
+        crate::commands::test_external_ai_connection_blocking(&state).unwrap();
+        assert!(server
+            .join()
+            .unwrap()
+            .starts_with("POST /chat/completions HTTP/1.1"));
+
+        drop(state);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

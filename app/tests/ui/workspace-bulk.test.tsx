@@ -79,7 +79,10 @@ beforeEach(() => {
     { id: "p2", name: "客户与增长", status: "active", createdAt: "", updatedAt: "" } as Project,
   ]);
   vi.mocked(tauri.moveRecords).mockResolvedValue(2);
-  vi.mocked(tauri.deleteRecords).mockResolvedValue(2);
+  vi.mocked(tauri.deleteRecords).mockResolvedValue({
+    deletedCount: 2,
+    fileCleanupFailures: [],
+  });
   vi.mocked(tauri.importAudio).mockResolvedValue({
     recordId: "x",
     hash: "h",
@@ -200,9 +203,9 @@ describe("工作区批量管理", () => {
     }
   });
 
-  it("删除失败时如实报错，不清空勾选", async () => {
+  it("数据库删除失败时如实报错，不清空勾选", async () => {
     vi.mocked(tauri.listRecords).mockResolvedValue(records);
-    vi.mocked(tauri.deleteRecords).mockRejectedValue(new Error("有 1 个文件没能清理"));
+    vi.mocked(tauri.deleteRecords).mockRejectedValue(new Error("数据库事务失败"));
     vi.spyOn(window, "confirm").mockReturnValue(true);
     renderPanel();
     await screen.findByText("季度产品评审");
@@ -213,7 +216,26 @@ describe("工作区批量管理", () => {
     await screen.findByText("已选 1 条");
     fireEvent.click(screen.getByRole("button", { name: "删除" }));
 
-    await screen.findByText("有 1 个文件没能清理");
+    await screen.findByText("数据库事务失败");
     expect(screen.getByText("已选 1 条")).toBeTruthy();
+  });
+
+  it("数据库删除成功后遗留文件只显示警告并清空选择", async () => {
+    vi.mocked(tauri.listRecords).mockResolvedValue(records);
+    vi.mocked(tauri.deleteRecords).mockResolvedValue({
+      deletedCount: 1,
+      fileCleanupFailures: ["/library/audio/r1.m4a"],
+    });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderPanel();
+    await screen.findByText("季度产品评审");
+    fireEvent.click(screen.getByRole("button", { name: /最近/ }));
+    await screen.findByText("英文对照");
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择 季度产品评审" }));
+    fireEvent.click(screen.getByRole("button", { name: "删除" }));
+
+    await screen.findByText("已删除 1 条记录，但有 1 个文件遗留。");
+    await waitFor(() => expect(screen.queryByText("已选 1 条")).toBeNull());
   });
 });
