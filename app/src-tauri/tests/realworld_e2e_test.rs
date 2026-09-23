@@ -53,7 +53,7 @@ fn full_pipeline_from_real_speech_to_output_folder() {
     eprintln!(
         "转写片段数：{}，开头：{}",
         segments.len(),
-        &transcript.chars().take(60).collect::<String>()
+        transcript.chars().take(60).collect::<String>()
     );
 
     // 3) 真实 Ollama 分析（qwen2.5:7b）。
@@ -91,7 +91,7 @@ fn full_pipeline_from_real_speech_to_output_folder() {
     )
     .expect("Dock 对话失败");
     assert!(reply.chars().count() > 4, "Dock 回复异常：{reply}");
-    eprintln!("Dock 回复：{}", &reply.chars().take(50).collect::<String>());
+    eprintln!("Dock 回复：{}", reply.chars().take(50).collect::<String>());
 
     // 6) 总结模式注入当前记录上下文。
     let summary = dock::ask_local(
@@ -103,10 +103,7 @@ fn full_pipeline_from_real_speech_to_output_folder() {
     )
     .expect("总结模式失败");
     assert!(summary.chars().count() > 8);
-    eprintln!(
-        "总结回复：{}",
-        &summary.chars().take(60).collect::<String>()
-    );
+    eprintln!("总结回复：{}", summary.chars().take(60).collect::<String>());
 
     // 7) 模板草稿生成（真实本地模型 + JSON schema）。
     let draft = dock::generate_template_draft(
