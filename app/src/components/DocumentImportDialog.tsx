@@ -2,6 +2,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState } from "react";
 import { getRecord, importDocument } from "../lib/tauri";
 import type { IngestResult, RecordBrief } from "../shared/types";
+import { PlusIcon, ShieldCheckIcon, CheckIcon } from "./icons";
 import "./document-import.css";
 
 interface DocumentImportDialogProps {
@@ -214,7 +215,7 @@ export default function DocumentImportDialog({
               className="document-import-picker"
               onClick={() => void chooseDocument()}
             >
-              <span className="document-import-picker-icon" aria-hidden="true">＋</span>
+              <span className="document-import-picker-icon" aria-hidden="true"><PlusIcon size={18} /></span>
               <strong>选择一个文字文档</strong>
               <span>支持 .md、.markdown、.txt、.docx</span>
             </button>
@@ -260,7 +261,7 @@ export default function DocumentImportDialog({
           </section>
 
           <aside className="document-import-privacy">
-            <span aria-hidden="true">⌾</span>
+            <span aria-hidden="true"><ShieldCheckIcon size={18} /></span>
             <p>
               <strong>隐私说明</strong>
               <span>文件在本机读取和保存。若当前分析配置使用外部 AI，提取出的文字会按你的现有设置发送；原始文档不会直接上传。</span>
@@ -291,7 +292,7 @@ export default function DocumentImportDialog({
 
           {phase === "success" && (
             <div className="document-import-success" role="status" aria-live="polite">
-              <span aria-hidden="true">✓</span>
+              <span aria-hidden="true"><CheckIcon size={12} /></span>
               <p>
                 <strong>{usedExistingRecord ? `“${successTitle || selected?.name}”已存在于知识库` : `“${successTitle || selected?.name}”已导入`}</strong>
                 <span>{usedExistingRecord ? "未创建重复副本，已定位到原有记录。" : analysisQueued ? "内容已写入，分析任务正在后台进行。" : "内容已写入知识库，可在记录详情查看分析状态。"}</span>

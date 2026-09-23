@@ -6,6 +6,7 @@
  */
 import type { LocalAiStatus, LocalModelInfo, RecommendedModel } from "../shared/types";
 import { Button, ListRow, List, Pill, Progress, type RowState } from "./SettingsKit";
+import { PlusIcon } from "./icons";
 import { formatBytes, type DownloadState } from "./useModelDownloads";
 
 /** 推荐的分析模型。不给假尺寸：真实体积只有拉取时后端才拿得到。 */
@@ -87,7 +88,7 @@ export function WhisperModelList({
       </List>
       {onChooseFile && (
         <Button variant="dashed" onClick={onChooseFile}>
-          ＋ 使用本机已有的 GGML 模型文件…
+          <PlusIcon size={14} /> 使用本机已有的 GGML 模型文件…
         </Button>
       )}
     </>

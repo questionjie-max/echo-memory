@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { BotIcon } from "./icons";
 import type { DockMessage, DockMode } from "../shared/types";
 import { askDock, clearDockChat, getDockStatus, saveDockMessageToOutput } from "../lib/tauri";
 
@@ -149,7 +150,7 @@ export default function AssistantDock({ selectedRecordId, selectedRecordTitle }:
           aria-expanded={!collapsed}
           onClick={() => setCollapsed((value) => !value)}
         >
-          🤖 随行助手{collapsed ? "（收起）" : ""}
+          <BotIcon size={13} /> 随行助手{collapsed ? "（收起）" : ""}
         </button>
         {!collapsed && (
           <>

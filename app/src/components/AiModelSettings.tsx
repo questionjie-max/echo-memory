@@ -7,7 +7,7 @@
  *
  * 所有改动即时生效，成功飘一句「已保存」，失败留在该卡片自己的提示里。
  */
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import type {
   AudioPreprocessorStatus,
   ExternalAiSettings,
@@ -64,7 +64,7 @@ export interface AiModelSettingsProps {
   onTestExternal: () => void;
   onRefresh: () => void;
   onOpenKnowledge: () => void;
-  testResult: string | null;
+  testResult: ReactNode;
   error: string | null;
 }
 
@@ -284,7 +284,7 @@ function ExternalChannel({
 }: {
   external: ExternalAiSettings | null;
   busy: boolean;
-  testResult: string | null;
+  testResult: ReactNode;
   onSave: (patch: Partial<ExternalAiSettings>) => void;
   onSaveKey: (key: string) => void;
   onClearKey: () => void;
