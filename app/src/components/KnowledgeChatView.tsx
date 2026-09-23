@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { askKnowledgeBase, getKnowledgeIndexStatus, listProjects, rebuildKnowledgeIndex } from "../lib/tauri";
 import type { KnowledgeAnswer, KnowledgeAnswerCitation, KnowledgeIndexStatus } from "../shared/types";
 import "./knowledge-chat.css";
@@ -99,6 +100,15 @@ export default function KnowledgeChatView({ scope, projectId, unfiledOnly, refre
       if (timer !== undefined) window.clearTimeout(timer);
     };
   }, [indexStatus?.status, scopeRequestKey]);
+
+  useEffect(() => {
+    const stop = listen("knowledge-index-update", () =>
+      void loadScopeData(false, false),
+    );
+    return () => {
+      void stop.then((unlisten) => unlisten());
+    };
+  }, [scopeRequestKey]);
 
   useEffect(() => {
     conversationEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });

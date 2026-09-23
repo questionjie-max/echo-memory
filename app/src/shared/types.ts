@@ -303,6 +303,11 @@ export interface IngestResult {
   title: string;
 }
 
+export interface DeleteRecordsResult {
+  deletedCount: number;
+  fileCleanupFailures: string[];
+}
+
 /* -------------------------- external memory views -------------------------- */
 
 export interface ExternalAiSettings {

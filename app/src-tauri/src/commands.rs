@@ -5,6 +5,9 @@ use crate::audio::{
 };
 use crate::db::repository::LibraryRepository;
 use crate::error::AppResult;
+use crate::external_ai_gate::{
+    clear_api_key, external_settings, get_api_key, require_external_ai_consent, set_api_key,
+};
 use crate::library::ManagedLibrary;
 use crate::memory::{self, OpenAiCompatibleClient};
 use crate::state::AppState;
@@ -28,7 +31,7 @@ use chrono::{Duration as ChronoDuration, Local, SecondsFormat, TimeZone, Utc};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
@@ -38,6 +41,17 @@ const AUTO_MEMORY_UPDATE_DELAY: Duration = Duration::from_secs(120);
 /// 跨块接续合并时向前回溯的已接受片段数。重叠区里的重复几乎总落在最近一两条，
 /// 不需要扫全表。
 const OVERLAP_MERGE_SCAN: usize = 3;
+
+fn emit_processing_progress(app: &AppHandle, record_id: &str) {
+    let _ = app.emit(
+        "processing-progress",
+        serde_json::json!({ "recordId": record_id }),
+    );
+}
+
+fn emit_knowledge_index_update(app: &AppHandle) {
+    let _ = app.emit("knowledge-index-update", ());
+}
 
 #[tauri::command]
 pub async fn get_local_ai_status(state: State<'_, AppState>) -> Result<LocalAiStatus, String> {
@@ -712,6 +726,7 @@ pub fn get_knowledge_index_status(
 
 #[tauri::command]
 pub fn rebuild_knowledge_index(
+    app: AppHandle,
     state: State<AppState>,
     project_id: Option<String>,
     unfiled_only: bool,
@@ -746,19 +761,25 @@ pub fn rebuild_knowledge_index(
         state.finish_knowledge_index(&scope_key);
         return Err(error.to_frontend());
     }
+    emit_knowledge_index_update(&app);
 
     let library_root = state.library.root().to_path_buf();
     let embedding_model = settings.embedding_model;
     let failure_scope_key = scope_key.clone();
     let app_state = state.inner().clone();
+    let progress_app = app.clone();
     let heavy_jobs = crate::state::heavy_job_limiter().clone();
     std::thread::spawn(move || {
         let _permit = heavy_jobs.acquire();
         match ManagedLibrary::open(library_root.clone()) {
             Ok(library) => {
-                if let Err(error) =
-                    crate::knowledge::rebuild_scope(&library, project_id.as_deref(), unfiled_only)
-                {
+                let result = crate::knowledge::rebuild_scope(
+                    &library,
+                    project_id.as_deref(),
+                    unfiled_only,
+                    &mut || emit_knowledge_index_update(&progress_app),
+                );
+                if let Err(error) = result {
                     let _ = library.repository().mark_knowledge_index_failed(
                         &failure_scope_key,
                         &embedding_model,
@@ -776,6 +797,7 @@ pub fn rebuild_knowledge_index(
             }
         }
         app_state.finish_knowledge_index(&failure_scope_key);
+        emit_knowledge_index_update(&progress_app);
     });
     Ok(())
 }
@@ -854,6 +876,7 @@ pub fn create_export_ticket() -> String {
 
 #[tauri::command]
 pub fn update_record_knowledge_base(
+    app: AppHandle,
     state: State<AppState>,
     record_id: String,
     knowledge_base_id: Option<String>,
@@ -863,7 +886,7 @@ pub fn update_record_knowledge_base(
         .repository()
         .update_record_project(&record_id, knowledge_base_id.as_deref())
         .map_err(|e| e.to_frontend())?;
-    spawn_index_metadata_refresh(state.library.root().to_path_buf());
+    spawn_index_metadata_refresh(app, state.library.root().to_path_buf());
     schedule_memory_update(state.inner().clone());
     Ok(updated)
 }
@@ -881,89 +904,6 @@ pub fn update_record_title(
         .map_err(|e| e.to_frontend())?;
     schedule_memory_update(state.inner().clone());
     Ok(updated)
-}
-
-/// 批量移动：把多条记录一次性归到某个知识库（传 null 表示移出到「未归档」）。
-/// 单条移动已经能在详情页做，这里是工作区勾选多条后的批量版本。
-#[tauri::command]
-pub fn move_records(
-    state: State<AppState>,
-    record_ids: Vec<String>,
-    knowledge_base_id: Option<String>,
-) -> Result<u32, String> {
-    let repository = state.library.repository();
-    // 先确认目标知识库存在，避免把一批记录指到不存在的项目上。
-    if let Some(id) = knowledge_base_id.as_deref() {
-        let exists = repository
-            .list_projects()
-            .map_err(|e| e.to_frontend())?
-            .into_iter()
-            .any(|project| project.id == id);
-        if !exists {
-            return Err("目标知识库不存在，可能已被删除".to_owned());
-        }
-    }
-    let mut moved = 0_u32;
-    let mut first_error: Option<String> = None;
-    for record_id in &record_ids {
-        match repository.update_record_project(record_id, knowledge_base_id.as_deref()) {
-            Ok(_) => moved += 1,
-            Err(error) => {
-                if first_error.is_none() {
-                    first_error = Some(error.to_frontend());
-                }
-            }
-        }
-    }
-    if moved > 0 {
-        spawn_index_metadata_refresh(state.library.root().to_path_buf());
-        schedule_memory_update(state.inner().clone());
-    }
-    // 有一条没成功能算成功吗？不能——用户以为整批都动了。宁可报错让他重试。
-    if let Some(error) = first_error {
-        return Err(error);
-    }
-    Ok(moved)
-}
-
-/// 批量删除：删库内行（外键级联带走转写、分析、待办、知识分片、搜索项）、
-/// 磁盘上的原始音频和预处理产物。返回实际删除的条数。
-#[tauri::command]
-pub fn delete_records(state: State<AppState>, record_ids: Vec<String>) -> Result<u32, String> {
-    let library_root = state.library.root().to_path_buf();
-    let mut deleted = 0_u32;
-    let mut leftover: Vec<String> = Vec::new();
-    for record_id in &record_ids {
-        match state.library.repository().delete_record(record_id) {
-            Ok(()) => {
-                deleted += 1;
-                leftover.extend(
-                    state
-                        .library
-                        .repository()
-                        .remove_record_files(&library_root, record_id)
-                        .into_iter()
-                        .map(|path| path.to_string_lossy().to_string()),
-                );
-            }
-            // 记录已经不在了（并发删除、或者前端拿着过期列表）不算失败。
-            Err(crate::error::AppError::NotFound(_)) => {}
-            Err(error) => return Err(error.to_frontend()),
-        }
-    }
-    if deleted > 0 {
-        spawn_index_metadata_refresh(library_root);
-        schedule_memory_update(state.inner().clone());
-    }
-    if !leftover.is_empty() {
-        // 库里已经删干净，但磁盘上留了东西——如实告知，别让用户以为彻底删掉了。
-        return Err(format!(
-            "已删除 {deleted} 条记录，但有 {} 个文件没能清理：{}",
-            leftover.len(),
-            leftover.join("、")
-        ));
-    }
-    Ok(deleted)
 }
 
 #[tauri::command]
@@ -1074,6 +1014,7 @@ pub async fn import_audio(
 
 #[tauri::command]
 pub fn import_document(
+    app: AppHandle,
     state: State<AppState>,
     source_path: String,
     project_id: Option<String>,
@@ -1090,7 +1031,7 @@ pub fn import_document(
         let library_root = state.library.root().to_path_buf();
         let record_id = result.record_id.clone();
         let app_state = state.inner().clone();
-        spawn_incremental_index(library_root.clone(), record_id.clone());
+        spawn_incremental_index(app.clone(), library_root.clone(), record_id.clone());
         let heavy_jobs = crate::state::heavy_job_limiter().clone();
         std::thread::spawn(move || {
             let _permit = heavy_jobs.acquire();
@@ -1141,6 +1082,7 @@ pub fn list_transcript_blocks(
 
 #[tauri::command]
 pub fn update_transcript_segment(
+    app: AppHandle,
     state: State<AppState>,
     segment_id: String,
     edited_text: Option<String>,
@@ -1151,6 +1093,7 @@ pub fn update_transcript_segment(
         .update_segment_text(&segment_id, edited_text.as_deref())
         .map_err(|e| e.to_frontend())?;
     spawn_incremental_index(
+        app,
         state.library.root().to_path_buf(),
         segment.record_id.clone(),
     );
@@ -1159,7 +1102,11 @@ pub fn update_transcript_segment(
 }
 
 #[tauri::command]
-pub fn transcribe_record(state: State<AppState>, record_id: String) -> Result<(), String> {
+pub fn transcribe_record(
+    app: AppHandle,
+    state: State<AppState>,
+    record_id: String,
+) -> Result<(), String> {
     // 与 retranscribe_record 同一道在途检查：收件箱自动导入与手动触发可能
     // 撞在同一条记录上，两个线程会共享同一个预处理文件和 whisperX JSON，
     // 互相删除对方正在读的文件。
@@ -1177,6 +1124,7 @@ pub fn transcribe_record(state: State<AppState>, record_id: String) -> Result<()
         return Err("该录音正在转写".to_owned());
     }
     let job = reserve_transcription(&state.library, &record_id).map_err(|e| e.to_frontend())?;
+    emit_processing_progress(&app, &record_id);
     let settings = state
         .library
         .repository()
@@ -1184,12 +1132,14 @@ pub fn transcribe_record(state: State<AppState>, record_id: String) -> Result<()
         .map_err(|error| error.to_frontend())?;
     let library_root = state.library.root().to_path_buf();
     let app_state = state.inner().clone();
+    let progress_app = app.clone();
     let heavy_jobs = crate::state::heavy_job_limiter().clone();
     std::thread::spawn(move || {
         let _permit = heavy_jobs.acquire();
         match ManagedLibrary::open(library_root.clone()) {
             Ok(library) => {
                 if run_transcription(
+                    Some(&progress_app),
                     &library,
                     &record_id,
                     &job,
@@ -1211,6 +1161,7 @@ pub fn transcribe_record(state: State<AppState>, record_id: String) -> Result<()
                 );
             }
         }
+        emit_processing_progress(&progress_app, &record_id);
     });
     Ok(())
 }
@@ -1221,6 +1172,7 @@ pub fn transcribe_with_library(library: &ManagedLibrary, record_id: &str) -> App
     let job = reserve_transcription(library, record_id)?;
     let settings = library.repository().knowledge_settings()?;
     run_transcription(
+        None,
         library,
         record_id,
         &job,
@@ -1231,6 +1183,7 @@ pub fn transcribe_with_library(library: &ManagedLibrary, record_id: &str) -> App
 
 #[tauri::command]
 pub fn retranscribe_record(
+    app: AppHandle,
     state: State<AppState>,
     record_id: String,
     language: String,
@@ -1279,14 +1232,17 @@ pub fn retranscribe_record(
             repository.get_job(&job.id)
         })
         .map_err(|error| error.to_frontend())?;
+    emit_processing_progress(&app, &record_id);
     let library_root = state.library.root().to_path_buf();
     let app_state = state.inner().clone();
+    let progress_app = app.clone();
     let heavy_jobs = crate::state::heavy_job_limiter().clone();
     std::thread::spawn(move || {
         let _permit = heavy_jobs.acquire();
         match ManagedLibrary::open(library_root.clone()) {
             Ok(library) => {
                 if run_transcription_with_engine(
+                    Some(&progress_app),
                     &library,
                     &record_id,
                     &job,
@@ -1309,12 +1265,14 @@ pub fn retranscribe_record(
                 );
             }
         }
+        emit_processing_progress(&progress_app, &record_id);
     });
     Ok(())
 }
 
 /// whisperX 外置引擎路径：整段转写 + 说话人分离，跳过内嵌引擎的分块循环。
 fn run_whisperx_transcription(
+    progress_app: Option<&AppHandle>,
     library: &ManagedLibrary,
     record_id: &str,
     job: &ProcessingJob,
@@ -1335,6 +1293,9 @@ fn run_whisperx_transcription(
     let metadata = preprocess(&audio_path, preprocessed)?;
     repository.update_job_status(&job.id, "transcribing", None)?;
     repository.update_record_status(record_id, "transcribing")?;
+    if let Some(app) = progress_app {
+        emit_processing_progress(app, record_id);
+    }
     let hf_token = crate::memory::get_hf_token().ok().flatten();
     let segments =
         crate::whisper::transcribe_whisperx(&binary, preprocessed, language, hf_token.as_deref())?;
@@ -1380,7 +1341,14 @@ fn run_whisperx_transcription(
     )?;
     repository.update_job_status(&job.id, "completed", None)?;
     repository.update_record_status(record_id, "completed")?;
-    spawn_incremental_index(library.root().to_path_buf(), record_id.to_owned());
+    if let Some(app) = progress_app {
+        emit_processing_progress(app, record_id);
+        spawn_incremental_index(
+            app.clone(),
+            library.root().to_path_buf(),
+            record_id.to_owned(),
+        );
+    }
     Ok(())
 }
 
@@ -1399,16 +1367,26 @@ fn reserve_transcription(library: &ManagedLibrary, record_id: &str) -> AppResult
 }
 
 fn run_transcription(
+    progress_app: Option<&AppHandle>,
     library: &ManagedLibrary,
     record_id: &str,
     job: &ProcessingJob,
     language: &str,
     model_path: Option<&str>,
 ) -> AppResult<()> {
-    run_transcription_with_engine(library, record_id, job, language, model_path, None)
+    run_transcription_with_engine(
+        progress_app,
+        library,
+        record_id,
+        job,
+        language,
+        model_path,
+        None,
+    )
 }
 
 fn run_transcription_with_engine(
+    progress_app: Option<&AppHandle>,
     library: &ManagedLibrary,
     record_id: &str,
     job: &ProcessingJob,
@@ -1433,7 +1411,14 @@ fn run_transcription_with_engine(
             })
             .unwrap_or_else(|| "embedded".to_owned());
         if engine == "whisperx" {
-            return run_whisperx_transcription(library, record_id, job, &preprocessed, language);
+            return run_whisperx_transcription(
+                progress_app,
+                library,
+                record_id,
+                job,
+                &preprocessed,
+                language,
+            );
         }
         let adapter = WhisperAdapter::detect_with_model_path(model_path)?;
         let relative_audio = repository.audio_path_for_record(record_id)?;
@@ -1447,6 +1432,9 @@ fn run_transcription_with_engine(
         let chunks = plan_chunks(&samples);
         repository.update_job_status(&job.id, "transcribing", None)?;
         repository.update_record_status(record_id, "transcribing")?;
+        if let Some(app) = progress_app {
+            emit_processing_progress(app, record_id);
+        }
         let hotword_prefix = repository.hotwords_prompt().unwrap_or_default();
         // 模型只加载一次：每个音频块共用同一个 context，解码状态每块新建
         // （whisper.cpp 的 state 有跨调用残留，复用会改变转写结果）。
@@ -1562,7 +1550,14 @@ fn run_transcription_with_engine(
         )?;
         repository.update_job_status(&job.id, "completed", None)?;
         repository.update_record_status(record_id, "completed")?;
-        spawn_incremental_index(library.root().to_path_buf(), record_id.to_owned());
+        if let Some(app) = progress_app {
+            emit_processing_progress(app, record_id);
+            spawn_incremental_index(
+                app.clone(),
+                library.root().to_path_buf(),
+                record_id.to_owned(),
+            );
+        }
         Ok::<(), crate::error::AppError>(())
     })();
     let _ = std::fs::remove_file(&preprocessed);
@@ -1575,13 +1570,16 @@ fn run_transcription_with_engine(
             "failed"
         };
         let _ = repository.update_record_status(record_id, fallback_status);
+        if let Some(app) = progress_app {
+            emit_processing_progress(app, record_id);
+        }
         return Err(error);
     }
     Ok(())
 }
 
 fn mark_processing_failed(
-    library_root: &PathBuf,
+    library_root: &Path,
     record_id: &str,
     job_id: Option<&str>,
     job_type: &str,
@@ -1608,7 +1606,7 @@ fn mark_processing_failed(
 }
 
 fn mark_knowledge_index_failed(
-    library_root: &PathBuf,
+    library_root: &Path,
     scope_key: &str,
     embedding_model: &str,
     error: &str,
@@ -1619,14 +1617,14 @@ fn mark_knowledge_index_failed(
     let _ = repository.mark_knowledge_index_failed(scope_key, embedding_model, error);
 }
 
-fn mark_knowledge_indexes_failed(library_root: &PathBuf, error: &str) {
+fn mark_knowledge_indexes_failed(library_root: &Path, error: &str) {
     let Ok(repository) = LibraryRepository::new(library_root.join("memory.db")) else {
         return;
     };
     let _ = repository.mark_knowledge_indexes_failed(error);
 }
 
-fn spawn_incremental_index(library_root: PathBuf, record_id: String) {
+fn spawn_incremental_index(app: AppHandle, library_root: PathBuf, record_id: String) {
     let heavy_jobs = crate::state::heavy_job_limiter().clone();
     std::thread::spawn(move || {
         let _permit = heavy_jobs.acquire();
@@ -1644,10 +1642,11 @@ fn spawn_incremental_index(library_root: PathBuf, record_id: String) {
                 mark_knowledge_indexes_failed(&library_root, &error.to_string());
             }
         }
+        emit_knowledge_index_update(&app);
     });
 }
 
-fn spawn_index_metadata_refresh(library_root: PathBuf) {
+pub(crate) fn spawn_index_metadata_refresh(app: AppHandle, library_root: PathBuf) {
     std::thread::spawn(move || {
         if let Ok(library) = ManagedLibrary::open(library_root) {
             let repository = library.repository();
@@ -1655,11 +1654,13 @@ fn spawn_index_metadata_refresh(library_root: PathBuf) {
                 let _ = repository.refresh_knowledge_index_counts(&settings.embedding_model);
             }
         }
+        emit_knowledge_index_update(&app);
     });
 }
 
 #[tauri::command]
 pub fn analyze_record(
+    app: AppHandle,
     state: State<AppState>,
     record_id: String,
     template_id: Option<String>,
@@ -1672,14 +1673,16 @@ pub fn analyze_record(
             .map_err(|error| error.to_frontend())?;
     }
     let job = reserve_analysis(&state.library, &record_id).map_err(|e| e.to_frontend())?;
+    emit_processing_progress(&app, &record_id);
     let library_root = state.library.root().to_path_buf();
     let app_state = state.inner().clone();
+    let progress_app = app.clone();
     let heavy_jobs = crate::state::heavy_job_limiter().clone();
     std::thread::spawn(move || {
         let _permit = heavy_jobs.acquire();
         match ManagedLibrary::open(library_root.clone()) {
             Ok(library) => {
-                if run_analysis(&library, &record_id, &job).is_ok() {
+                if run_analysis(Some(&progress_app), &library, &record_id, &job).is_ok() {
                     schedule_memory_update(app_state);
                 }
             }
@@ -1693,6 +1696,7 @@ pub fn analyze_record(
                 );
             }
         }
+        emit_processing_progress(&progress_app, &record_id);
     });
     Ok(())
 }
@@ -1700,7 +1704,7 @@ pub fn analyze_record(
 /// Runs the same local analysis path synchronously for explicit real-data regression tests.
 pub fn analyze_with_library(library: &ManagedLibrary, record_id: &str) -> AppResult<()> {
     let job = reserve_analysis(library, record_id)?;
-    run_analysis(library, record_id, &job)
+    run_analysis(None, library, record_id, &job)
 }
 
 pub fn revalidate_analysis_with_library(
@@ -1759,7 +1763,12 @@ fn reserve_analysis(library: &ManagedLibrary, record_id: &str) -> AppResult<Proc
     Ok(job)
 }
 
-fn run_analysis(library: &ManagedLibrary, record_id: &str, job: &ProcessingJob) -> AppResult<()> {
+fn run_analysis(
+    progress_app: Option<&AppHandle>,
+    library: &ManagedLibrary,
+    record_id: &str,
+    job: &ProcessingJob,
+) -> AppResult<()> {
     let repository = library.repository();
     let result = (|| {
         repository.update_job_progress(&job.id, "analyzing", 0, 1)?;
@@ -1816,16 +1825,28 @@ fn run_analysis(library: &ManagedLibrary, record_id: &str, job: &ProcessingJob) 
         )?;
         repository.update_job_status(&job.id, "completed", None)?;
         repository.update_record_status(record_id, "completed")?;
-        if crate::dock::auto_export_enabled(&library.repository())? {
+        if let Some(app) = progress_app {
+            emit_processing_progress(app, record_id);
+        }
+        if crate::dock::auto_export_enabled(library.repository())? {
             let _ = crate::dock::export_analysis_to_output(library, record_id);
         }
-        spawn_incremental_index(library.root().to_path_buf(), record_id.to_owned());
+        if let Some(app) = progress_app {
+            spawn_incremental_index(
+                app.clone(),
+                library.root().to_path_buf(),
+                record_id.to_owned(),
+            );
+        }
         Ok::<(), crate::error::AppError>(())
     })();
     if let Err(error) = result {
         let message = error.to_string();
         let _ = repository.update_job_status(&job.id, "failed", Some(&message));
         let _ = repository.update_record_status(record_id, "failed");
+        if let Some(app) = progress_app {
+            emit_processing_progress(app, record_id);
+        }
         return Err(error);
     }
     Ok(())
@@ -1843,17 +1864,20 @@ pub fn latest_analysis(
         .map_err(|e| e.to_frontend())
 }
 
-fn schedule_memory_update(state: AppState) {
+pub(crate) fn schedule_memory_update(state: AppState) {
     let revision = state.schedule_memory_update();
     std::thread::spawn(move || {
         std::thread::sleep(AUTO_MEMORY_UPDATE_DELAY);
         if !state.is_latest_memory_update(revision) {
             return;
         }
-        let Ok(settings) = memory::external_settings(&state.library) else {
+        if require_external_ai_consent(&state.library).is_err() {
+            return;
+        }
+        let Ok(settings) = external_settings(&state.library) else {
             return;
         };
-        if !settings.enabled || !settings.has_api_key || settings.privacy_consent_at.is_none() {
+        if !settings.enabled || !settings.has_api_key {
             return;
         }
 
@@ -1913,7 +1937,7 @@ fn automatic_memory_range() -> (String, String) {
 
 #[tauri::command]
 pub fn get_external_ai_settings(state: State<AppState>) -> Result<ExternalAiSettings, String> {
-    memory::external_settings(&state.library).map_err(|error| error.to_frontend())
+    external_settings(&state.library).map_err(|error| error.to_frontend())
 }
 
 #[tauri::command]
@@ -1921,7 +1945,7 @@ pub fn update_external_ai_settings(
     state: State<AppState>,
     settings: ExternalAiSettings,
 ) -> Result<ExternalAiSettings, String> {
-    let has_api_key = memory::get_api_key()
+    let has_api_key = get_api_key()
         .map_err(|error| error.to_frontend())?
         .is_some();
     state
@@ -1936,31 +1960,36 @@ pub fn set_external_ai_api_key(
     state: State<AppState>,
     api_key: String,
 ) -> Result<ExternalAiSettings, String> {
-    memory::set_api_key(&api_key).map_err(|error| error.to_frontend())?;
-    memory::external_settings(&state.library).map_err(|error| error.to_frontend())
+    set_api_key(&api_key).map_err(|error| error.to_frontend())?;
+    external_settings(&state.library).map_err(|error| error.to_frontend())
 }
 
 #[tauri::command]
 pub fn clear_external_ai_api_key(state: State<AppState>) -> Result<ExternalAiSettings, String> {
-    memory::clear_api_key().map_err(|error| error.to_frontend())?;
-    memory::external_settings(&state.library).map_err(|error| error.to_frontend())
+    clear_api_key().map_err(|error| error.to_frontend())?;
+    external_settings(&state.library).map_err(|error| error.to_frontend())
 }
 
 #[tauri::command]
 pub async fn test_external_ai_connection(state: State<'_, AppState>) -> Result<(), String> {
     let state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let settings =
-            memory::external_settings(&state.library).map_err(|error| error.to_frontend())?;
-        let api_key = memory::get_api_key()
-            .map_err(|error| error.to_frontend())?
-            .ok_or_else(|| "请先配置外部 AI API Key".to_owned())?;
-        OpenAiCompatibleClient::new(&settings.base_url, &settings.model, &api_key)
-            .and_then(|client| client.test())
-            .map_err(|error| error.to_frontend())
-    })
-    .await
-    .map_err(|_| "外部 AI 连接测试后台任务异常，请重试".to_owned())?
+    tauri::async_runtime::spawn_blocking(move || test_external_ai_connection_blocking(&state))
+        .await
+        .map_err(|_| "外部 AI 连接测试后台任务异常，请重试".to_owned())?
+}
+
+pub(crate) fn test_external_ai_connection_blocking(state: &AppState) -> Result<(), String> {
+    let settings =
+        require_external_ai_consent(&state.library).map_err(|error| error.to_frontend())?;
+    if !settings.enabled {
+        return Err("请先启用外部 AI".to_owned());
+    }
+    let api_key = get_api_key()
+        .map_err(|error| error.to_frontend())?
+        .ok_or_else(|| "请先配置外部 AI API Key".to_owned())?;
+    OpenAiCompatibleClient::new(&settings.base_url, &settings.model, &api_key)
+        .and_then(|client| client.test())
+        .map_err(|error| error.to_frontend())
 }
 
 #[tauri::command]
@@ -2415,7 +2444,7 @@ pub fn correct_transcript(
         })();
         // 校对改写了逐字稿，知识索引里还是旧文本，重建一次。
         if result.is_ok() {
-            spawn_incremental_index(index_root, record_id.clone());
+            spawn_incremental_index(app.clone(), index_root, record_id.clone());
         }
         let _ = app.emit(
             "transcript-corrected",
@@ -2547,10 +2576,10 @@ fn ask_dock_blocking(
     let engine = engine.unwrap_or_else(|| "local".to_owned());
     let reply = match engine.as_str() {
         "external" => {
-            crate::dock::ask_external(library, &mode, &history, &message, record_id.as_deref())
+            crate::dock::ask_external(library, mode, &history, &message, record_id.as_deref())
                 .map_err(|error| error.to_frontend())?
         }
-        _ => crate::dock::ask_local(library, &mode, &history, &message, record_id.as_deref())
+        _ => crate::dock::ask_local(library, mode, &history, &message, record_id.as_deref())
             .map_err(|error| error.to_frontend())?,
     };
     let assistant_message = repository

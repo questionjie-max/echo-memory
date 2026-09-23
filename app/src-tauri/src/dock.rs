@@ -191,13 +191,13 @@ pub fn ask_external(
     record_id: Option<&str>,
 ) -> AppResult<String> {
     validate_mode(mode)?;
-    let settings = crate::memory::external_settings(library)?;
+    let settings = crate::external_ai_gate::require_external_ai_consent(library)?;
     if !settings.enabled {
         return Err(AppError::Invalid(
             "外部 AI 未启用，请先在设置中配置".to_owned(),
         ));
     }
-    let api_key = crate::memory::get_api_key()?
+    let api_key = crate::external_ai_gate::get_api_key()?
         .ok_or_else(|| AppError::Invalid("请先配置外部 AI API Key".to_owned()))?;
     let client =
         crate::memory::OpenAiCompatibleClient::new(&settings.base_url, &settings.model, &api_key)?;
@@ -213,10 +213,10 @@ pub fn ask_external(
 
 /// 外部引擎是否可用（已启用 + 有 Key）。
 pub fn external_available(library: &ManagedLibrary) -> bool {
-    let Ok(settings) = crate::memory::external_settings(library) else {
+    let Ok(settings) = crate::external_ai_gate::require_external_ai_consent(library) else {
         return false;
     };
-    settings.enabled && crate::memory::get_api_key().ok().flatten().is_some()
+    settings.enabled && settings.has_api_key
 }
 
 pub fn history_turns() -> u32 {
@@ -437,7 +437,7 @@ pub fn list_recent_outputs(
             ))
         })
         .collect();
-    files.sort_by(|left, right| right.0.cmp(&left.0));
+    files.sort_by_key(|file| std::cmp::Reverse(file.0));
     files
         .into_iter()
         .map(|(_, file)| file)
@@ -504,7 +504,7 @@ pub fn export_record_kind(
 ) -> AppResult<std::path::PathBuf> {
     let repository = library.repository();
     let record = repository.get_record(record_id)?;
-    let folder = resolve_output_folder(&repository)?;
+    let folder = resolve_output_folder(repository)?;
     let (body, kind_label) = match kind {
         "transcript" => {
             let segments = repository.list_transcript_segments(record_id)?;
@@ -540,7 +540,7 @@ pub fn save_markdown_to_output(
     kind: &str,
 ) -> AppResult<std::path::PathBuf> {
     let repository = library.repository();
-    let folder = resolve_output_folder(&repository)?;
+    let folder = resolve_output_folder(repository)?;
     let safe_title = if title.trim().is_empty() {
         "AI 对话"
     } else {
