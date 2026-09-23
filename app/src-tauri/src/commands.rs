@@ -1,7 +1,7 @@
 use crate::analysis::{resolve_citation_aliases, verify_citations, OllamaAdapter};
 use crate::audio::{
-    is_overlap_duplicate, merge_overlap_continuation, plan_chunks, preprocess, preprocessor_status,
-    read_normalized_wav, AudioPreprocessorStatus,
+    is_overlap_duplicate, merge_overlap_continuation, normalize_segment_timestamps, plan_chunks,
+    preprocess, preprocessor_status, read_normalized_wav, AudioPreprocessorStatus,
 };
 use crate::db::repository::LibraryRepository;
 use crate::error::AppResult;
@@ -1499,6 +1499,7 @@ fn run_transcription_with_engine(
                 .rev()
                 .collect();
         }
+        normalize_segment_timestamps(&mut accepted);
         repository.update_job_progress(
             &job.id,
             "merging",
