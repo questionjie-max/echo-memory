@@ -712,7 +712,7 @@ input::placeholder, textarea::placeholder { color: var(--em-ink-4); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; }
+  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation: none !important; }
 }
 
 /* 毛玻璃面板在「减少透明度」下换成实底，否则半透明背景会让文字看不清。
@@ -909,7 +909,8 @@ input::placeholder, textarea::placeholder { color: var(--em-ink-4); }
 .onboarding-footer { display: flex; justify-content: space-between; gap: 10px; }
 .onboarding-footer .primary-button { min-width: 110px; }
 
-.inbox-strip { margin: 0 0 10px; padding: 7px 11px; border: 1px solid var(--em-accent-border); border-radius: var(--em-r-sm); background: var(--em-accent-soft); color: var(--em-accent-ink); font-size: 11px; }
+.inbox-strip { display: flex; align-items: center; gap: 6px; margin: 0 0 10px; padding: 7px 11px; border: 1px solid var(--em-accent-border); border-radius: var(--em-r-sm); background: var(--em-accent-soft); color: var(--em-accent-ink); font-size: 11px; }
+.inbox-strip svg { flex: 0 0 auto; }
 .hotword-input-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
 .hotword-input-row input { padding: 7px 10px; border: 1px solid var(--em-input-border); border-radius: 7px; font-size: 12px; background: var(--em-input-bg); }
 
@@ -952,7 +953,8 @@ input::placeholder, textarea::placeholder { color: var(--em-ink-4); }
 .assistant-dock { display: grid; grid-template-rows: auto auto minmax(120px, 22vh) auto auto; gap: 8px; margin: 0 14px 10px; padding: 10px 14px; border: 1px solid var(--em-hairline); border-radius: var(--em-r-md); background: var(--em-panel); box-shadow: var(--em-shadow-md); }
 .assistant-dock.collapsed { grid-template-rows: auto; }
 .dock-header { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.dock-toggle { padding: 4px 10px; border: 0; border-radius: 7px; background: var(--em-accent-soft); color: var(--em-accent-ink); font-size: 12px; font-weight: 650; cursor: pointer; }
+.dock-toggle { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border: 0; border-radius: 7px; background: var(--em-accent-soft); color: var(--em-accent-ink); font-size: 12px; font-weight: 650; cursor: pointer; }
+.dock-toggle svg { flex: 0 0 auto; }
 .dock-engine { padding: 4px 7px; border: 1px solid var(--em-hairline); border-radius: 6px; background: var(--em-select-bg); font-size: 11px; }
 .dock-modes { display: flex; gap: 4px; overflow-x: auto; }
 .dock-modes button { padding: 4px 9px; border: 0; border-radius: var(--em-r-pill); background: transparent; color: var(--em-ink-3); font-size: 11px; cursor: pointer; white-space: nowrap; }

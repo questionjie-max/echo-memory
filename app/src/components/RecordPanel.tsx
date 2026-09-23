@@ -8,7 +8,7 @@ import { importAudio, listRecords, transcribeRecord, listProjects, moveRecords, 
 import { formatMinutesSeconds as formatDuration, isProcessingStatus as isProcessing } from "../lib/format";
 import { getInboxStatus } from "../lib/tauri";
 import DocumentImportDialog from "./DocumentImportDialog";
-import { PlayIcon } from "./icons";
+import { PlayIcon, InboxIcon } from "./icons";
 
 interface Props {
   projectId: string | null;
@@ -259,7 +259,7 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
 
       {inbox && (inbox.watchFolders.length > 0 || inbox.usbDetection) && (
         <p className="inbox-strip" role="status">
-          📮 收件箱监听中
+          <InboxIcon size={13} /> 收件箱监听中
           {inbox.counts.pending > 0 ? ` · ${inbox.counts.pending} 个文件处理中` : ""}
           {inbox.counts.imported > 0 ? ` · 已自动导入 ${inbox.counts.imported}` : ""}
           {inbox.counts.failed > 0 ? ` · ${inbox.counts.failed} 个失败` : ""}

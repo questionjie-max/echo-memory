@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { McpStatus, Project } from "../shared/types";
+import { PlusIcon } from "./icons";
 import {
   createProject,
   deleteProject,
@@ -153,7 +154,7 @@ export default function ProjectPanel({ selectedScope, refreshKey, onSelect }: Pr
         }}
       >
         <input value={name} onChange={(event) => setName(event.target.value)} placeholder="新知识库名称" aria-label="新知识库名称" />
-        <button type="submit" className="icon-button" disabled={busy || !name.trim()} aria-label="新建知识库" title="新建知识库">+</button>
+        <button type="submit" className="icon-button" disabled={busy || !name.trim()} aria-label="新建知识库" title="新建知识库"><PlusIcon size={14} /></button>
       </form>
 
       <div className="knowledge-list">

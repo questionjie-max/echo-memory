@@ -214,9 +214,9 @@
 }
 
 .document-import-privacy > span {
+  display: flex;
+  align-items: center;
   color: var(--em-ok-ink);
-  font-size: 18px;
-  line-height: 1;
 }
 
 .document-import-privacy p { display: grid; gap: 3px; margin: 0; }
