@@ -13,6 +13,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "tauri": "tauri",
+    "check:test-env": "bash scripts/check-env.sh",
+    "test:env": "bash scripts/run-env-tests.sh",
     "test:growth": "node --experimental-strip-types --test tests/growth-timeline.test.ts",
     "test:ui": "vitest run"
   },
