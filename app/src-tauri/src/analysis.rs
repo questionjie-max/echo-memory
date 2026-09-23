@@ -787,9 +787,14 @@ fn find_normalized_quote_window(quote: &str, segments: &[TranscriptSegment]) -> 
     let mut best: Option<(f32, usize, usize)> = None;
     for start in 0..segments.len() {
         let mut combined = String::new();
-        for end in start..segments.len().min(start + 24) {
-            combined.push_str(&normalize_for_match(effective_text(&segments[end])));
-            if combined.contains(&quote) {
+        for (end, segment) in segments
+            .iter()
+            .enumerate()
+            .take(segments.len().min(start + 24))
+            .skip(start)
+        {
+            combined.push_str(&normalize_for_match(effective_text(segment)));
+            if combined.contains(quote) {
                 if exact_best
                     .is_none_or(|(best_start, best_end)| end - start < best_end - best_start)
                 {
@@ -799,7 +804,7 @@ fn find_normalized_quote_window(quote: &str, segments: &[TranscriptSegment]) -> 
             }
             let combined_length = combined.chars().count();
             if quote_length >= 8 && combined_length + 12 >= quote_length {
-                let score = similarity(&combined, &quote);
+                let score = similarity(&combined, quote);
                 if best.is_none_or(|(best_score, _, _)| score > best_score) {
                     best = Some((score, start, end));
                 }
