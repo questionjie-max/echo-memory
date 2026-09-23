@@ -17,10 +17,11 @@
 ```bash
 # 前置：本机有一个 Whisper 模型（默认会找真实库 models/ 下最大的 .bin，
 # 也可用 ECHO_WHISPER_MODEL 显式指定路径）
-ECHO_BENCH=1 cargo test --features mcp-bin --test transcription_benchmark -- --nocapture
+ECHO_BENCH=1 cargo test --features mcp-bin --test transcription_benchmark_test -- --ignored --nocapture
 
 # 附加真实录音稳定性对照（无真值，不算 CER，只记录转写与耗时）：
-ECHO_BENCH=1 ECHO_BENCH_REAL="/path/a.m4a;/path/b.wav" cargo test --features mcp-bin --test transcription_benchmark -- --nocapture
+ECHO_BENCH=1 ECHO_BENCH_REAL="/path/a.m4a;/path/b.wav" \
+  cargo test --features mcp-bin --test transcription_benchmark_test -- --ignored --nocapture
 ```
 
 ## 片段设计

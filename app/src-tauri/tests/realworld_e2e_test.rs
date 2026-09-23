@@ -47,7 +47,7 @@ fn full_pipeline_from_real_speech_to_output_folder() {
     assert!(!segments.is_empty(), "转写结果为空");
     let transcript = segments
         .iter()
-        .map(|segment| echo_memory_lib::transcript::effective_text(segment))
+        .map(echo_memory_lib::transcript::effective_text)
         .collect::<Vec<_>>()
         .join("");
     eprintln!(

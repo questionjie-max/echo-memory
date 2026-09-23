@@ -37,6 +37,9 @@ jobs:
       - name: Rust format check
         run: cargo fmt --check
         working-directory: app/src-tauri
+      - name: Rust lints
+        run: cargo clippy --all-targets --features mcp-bin -- -D warnings
+        working-directory: app/src-tauri
       - name: Rust tests
         run: cargo test --features mcp-bin
         working-directory: app/src-tauri
