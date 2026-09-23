@@ -64,7 +64,7 @@ fn whole_file_single_decode_without_prompt() {
         chars.len(),
         cjk as f64 / chars.len().max(1) as f64 * 100.0
     );
-    println!("前 400 字: {}", &text.chars().take(400).collect::<String>());
+    println!("前 400 字: {}", text.chars().take(400).collect::<String>());
     println!(
         "中段 300 字: {}",
         text.chars().skip(1200).take(300).collect::<String>()
