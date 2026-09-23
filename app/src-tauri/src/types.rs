@@ -626,6 +626,13 @@ pub struct IngestResult {
     pub title: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteRecordsResult {
+    pub deleted_count: u32,
+    pub file_cleanup_failures: Vec<String>,
+}
+
 /* ----------------------------- v0.3.0：收件箱 / 词汇库 / 仪表盘 ----------------------------- */
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AnalysisTemplate,
   AudioPreprocessorStatus,
+  DeleteRecordsResult,
   ExternalAiSettings,
   GrowthGraph,
   IngestResult,
@@ -132,9 +133,9 @@ export function moveRecords(recordIds: string[], knowledgeBaseId: string | null)
   return invoke<number>("move_records", { recordIds, knowledgeBaseId });
 }
 
-/** 批量删除：删库内行、原始音频与预处理产物。返回实际删除的条数。 */
-export function deleteRecords(recordIds: string[]): Promise<number> {
-  return invoke<number>("delete_records", { recordIds });
+/** 批量删除：数据库事务提交后尽力清理文件，并返回遗留文件。 */
+export function deleteRecords(recordIds: string[]): Promise<DeleteRecordsResult> {
+  return invoke<DeleteRecordsResult>("delete_records", { recordIds });
 }
 
 export function getMcpStatus(): Promise<McpStatus> {

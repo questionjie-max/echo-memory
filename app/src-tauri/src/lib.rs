@@ -7,26 +7,41 @@ pub mod dock;
 pub mod document;
 pub mod error;
 pub mod export;
+pub mod external_ai_gate;
 pub mod inbox;
 pub mod knowledge;
 pub mod library;
 pub mod memory;
+pub mod record_commands;
 pub mod state;
 pub mod transcript;
 pub mod types;
 pub mod whisper;
 
 use state::{default_library_root, AppState};
-use tauri::Builder;
+use std::path::{Path, PathBuf};
+use tauri::{Builder, Manager};
+
+fn audio_scope_root(library_root: &Path) -> PathBuf {
+    library_root.join("audio")
+}
+
+#[cfg(test)]
+fn is_within_audio_scope(library_root: &Path, path: &Path) -> bool {
+    path.starts_with(audio_scope_root(library_root))
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let app_state = AppState::initialize(default_library_root()).expect("初始化回声记忆资料库失败");
+    let library_root = default_library_root();
+    let app_state = AppState::initialize(library_root.clone()).expect("初始化回声记忆资料库失败");
     Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(move |app| {
+            app.asset_protocol_scope()
+                .allow_directory(audio_scope_root(&library_root), true)
+                .map_err(|error| error.to_string())?;
             let handle = app.handle().clone();
-            let library_root = default_library_root();
             inbox::start(handle, library_root);
             Ok(())
         })
@@ -64,8 +79,8 @@ pub fn run() {
             commands::create_export_ticket,
             commands::update_record_knowledge_base,
             commands::update_record_title,
-            commands::move_records,
-            commands::delete_records,
+            record_commands::move_records,
+            record_commands::delete_records,
             commands::get_mcp_status,
             commands::set_mcp_enabled,
             commands::get_record,
@@ -125,4 +140,37 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("启动回声记忆失败");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+    use uuid::Uuid;
+
+    fn temporary_root(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("echo-audio-scope-{name}-{}", Uuid::new_v4()))
+    }
+
+    #[test]
+    fn audio_scope_follows_default_and_custom_library_roots() {
+        for name in ["default", "custom"] {
+            let root = temporary_root(name);
+            let audio_root = root.join("audio");
+
+            assert_eq!(audio_scope_root(&root), audio_root);
+            assert!(is_within_audio_scope(
+                &root,
+                &audio_root.join("2026/09/interview.m4a")
+            ));
+            assert!(!is_within_audio_scope(
+                &root,
+                &root.join("documents/private.txt")
+            ));
+            assert!(!is_within_audio_scope(
+                &root,
+                Path::new("/unrelated/audio/song.mp3")
+            ));
+        }
+    }
 }
