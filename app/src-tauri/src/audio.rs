@@ -287,6 +287,15 @@ pub fn merge_overlap_continuation(
     true
 }
 
+pub fn normalize_segment_timestamps(segments: &mut [crate::whisper::WhisperSegment]) {
+    segments.sort_by_key(|segment| (segment.start_ms, segment.end_ms));
+    let mut previous_end = segments.first().map_or(0, |segment| segment.end_ms);
+    for segment in segments.iter_mut().skip(1) {
+        segment.end_ms = segment.end_ms.max(previous_end);
+        previous_end = segment.end_ms;
+    }
+}
+
 /// 接续判定的最小重合字符数。低于这个长度，「然后」「就是」这类常用连接词
 /// 也会被误判成同一段音频，宁可留下接缝也不能吃掉正常内容。
 const MIN_CONTINUATION_CHARS: usize = 4;
@@ -486,5 +495,24 @@ mod tests {
         let candidate = segment(4_000, 6_000, "大家下午好");
         assert!(!merge_overlap_continuation(&mut previous, &candidate));
         assert!(is_overlap_duplicate(&previous, &candidate));
+    }
+
+    #[test]
+    fn normalized_timestamps_are_sorted_and_do_not_move_backwards() {
+        let mut segments = vec![
+            segment(1_000, 1_200, "第一段"),
+            segment(0, 500, "开头"),
+            segment(1_100, 1_150, "结尾"),
+        ];
+
+        normalize_segment_timestamps(&mut segments);
+
+        assert_eq!(
+            segments
+                .iter()
+                .map(|item| (item.start_ms, item.end_ms))
+                .collect::<Vec<_>>(),
+            vec![(0, 500), (1_000, 1_200), (1_100, 1_200)]
+        );
     }
 }
