@@ -229,6 +229,15 @@ fn transcribes_benchmark_clips_and_reports_cer() {
                 .filter_map(|segment| segment.normalized_text.as_deref())
                 .collect::<Vec<_>>()
                 .join("");
+            let monotonic = segments.windows(2).all(|pair| {
+                pair[1].start_ms >= pair[0].start_ms && pair[1].end_ms >= pair[0].end_ms
+            });
+            println!(
+                "real-{}  分段={}  时间轴单调={}",
+                path.file_stem().unwrap_or_default().to_string_lossy(),
+                segments.len(),
+                monotonic
+            );
             results.push(json!({
                 "id": format!("real-{}", path.file_stem().unwrap_or_default().to_string_lossy()),
                 "model": model.file_name().unwrap().to_string_lossy(),
@@ -237,6 +246,7 @@ fn transcribes_benchmark_clips_and_reports_cer() {
                 "accepted": transcribe.is_ok(),
                 "error": transcribe.as_ref().err().map(|error| error.to_string()),
                 "segment_count": segments.len(),
+                "timeline_monotonic": monotonic,
                 "hypothesis": hypothesis,
             }));
         }
