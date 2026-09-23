@@ -957,6 +957,154 @@ fn mcp_is_disabled_by_default_and_tracks_recent_calls() {
 }
 
 #[test]
+fn batch_move_rolls_back_when_any_record_is_missing() {
+    let repository = LibraryRepository::new(database_path()).unwrap();
+    let source = repository.create_project("源库").unwrap();
+    let destination = repository.create_project("目标库").unwrap();
+    let first = repository
+        .create_record(
+            "第一条",
+            Some(&source.id),
+            Path::new("audio/first.wav"),
+            "batch-move-1",
+            1,
+        )
+        .unwrap();
+    let second = repository
+        .create_record(
+            "第二条",
+            Some(&source.id),
+            Path::new("audio/second.wav"),
+            "batch-move-2",
+            1,
+        )
+        .unwrap();
+
+    assert!(matches!(
+        repository.move_records(
+            &[
+                first.id.clone(),
+                second.id.clone(),
+                "missing-record".to_owned()
+            ],
+            Some(&destination.id),
+        ),
+        Err(AppError::NotFound(_))
+    ));
+    assert_eq!(
+        repository.get_record(&first.id).unwrap().project_id,
+        Some(source.id.clone())
+    );
+    assert_eq!(
+        repository.get_record(&second.id).unwrap().project_id,
+        Some(source.id.clone())
+    );
+
+    assert_eq!(
+        repository
+            .move_records(
+                &[first.id.clone(), second.id.clone()],
+                Some(&destination.id),
+            )
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        repository
+            .get_record(&first.id)
+            .unwrap()
+            .project_id
+            .as_deref(),
+        Some(destination.id.as_str())
+    );
+    assert_eq!(
+        repository
+            .get_record(&second.id)
+            .unwrap()
+            .project_id
+            .as_deref(),
+        Some(destination.id.as_str())
+    );
+}
+
+#[test]
+fn batch_delete_rolls_back_database_and_files_when_any_record_is_missing() {
+    let root = std::env::temp_dir().join(format!(
+        "echo-batch-delete-rollback-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let audio_dir = root.join("audio");
+    std::fs::create_dir_all(&audio_dir).unwrap();
+    let first_audio = audio_dir.join("first.wav");
+    std::fs::write(&first_audio, b"first").unwrap();
+    let repository = LibraryRepository::new(root.join("memory.db")).unwrap();
+    let first = repository
+        .create_record(
+            "第一条",
+            None,
+            Path::new("audio/first.wav"),
+            "batch-delete-1",
+            1,
+        )
+        .unwrap();
+
+    assert!(matches!(
+        repository.delete_records(&[first.id.clone(), "missing-record".to_owned()]),
+        Err(AppError::NotFound(_))
+    ));
+    assert!(repository.get_record(&first.id).is_ok());
+    assert!(first_audio.exists());
+
+    let deleted = repository
+        .delete_records(std::slice::from_ref(&first.id))
+        .unwrap();
+    let failures = repository.cleanup_deleted_record_files(&root, &deleted);
+    assert!(failures.is_empty());
+    assert!(repository.get_record(&first.id).is_err());
+    assert!(!first_audio.exists());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn batch_delete_reports_post_commit_file_cleanup_failures() {
+    let root =
+        std::env::temp_dir().join(format!("echo-batch-delete-files-{}", uuid::Uuid::new_v4()));
+    let audio_dir = root.join("audio");
+    std::fs::create_dir_all(audio_dir.join("blocked.wav")).unwrap();
+    std::fs::write(audio_dir.join("ok.wav"), b"audio").unwrap();
+    let repository = LibraryRepository::new(root.join("memory.db")).unwrap();
+    let blocked = repository
+        .create_record(
+            "无法清理",
+            None,
+            Path::new("audio/blocked.wav"),
+            "batch-delete-blocked",
+            1,
+        )
+        .unwrap();
+    let ok = repository
+        .create_record(
+            "可以清理",
+            None,
+            Path::new("audio/ok.wav"),
+            "batch-delete-ok",
+            1,
+        )
+        .unwrap();
+
+    let deleted = repository
+        .delete_records(&[blocked.id.clone(), ok.id.clone()])
+        .unwrap();
+    let failures = repository.cleanup_deleted_record_files(&root, &deleted);
+
+    assert!(repository.get_record(&blocked.id).is_err());
+    assert!(repository.get_record(&ok.id).is_err());
+    assert!(!audio_dir.join("ok.wav").exists());
+    assert_eq!(failures, vec![audio_dir.join("blocked.wav")]);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn interrupted_knowledge_indexes_are_recovered_without_touching_terminal_states() {
     let repository = LibraryRepository::new(database_path()).unwrap();
     for (scope_key, status) in [
@@ -1172,8 +1320,7 @@ fn interrupted_memory_snapshots_are_recovered_on_startup() {
         .create_memory_snapshot(
             &MemoryViewKind::Map,
             &scope,
-            None,
-            None,
+            (None, None),
             "test-model",
             &[],
             "interrupted-hash",
@@ -1183,8 +1330,7 @@ fn interrupted_memory_snapshots_are_recovered_on_startup() {
         .create_memory_snapshot(
             &MemoryViewKind::Evolution,
             &scope,
-            None,
-            None,
+            (None, None),
             "test-model",
             &[],
             "completed-hash",
@@ -1244,8 +1390,7 @@ fn memory_snapshots_are_versioned_keep_feedback_and_become_stale() {
         .create_memory_snapshot(
             &MemoryViewKind::Evolution,
             &scope,
-            None,
-            None,
+            (None, None),
             "test-model",
             &source_ids,
             "hash-v1",
@@ -1287,8 +1432,7 @@ fn memory_snapshots_are_versioned_keep_feedback_and_become_stale() {
         .create_memory_snapshot(
             &MemoryViewKind::Evolution,
             &scope,
-            None,
-            None,
+            (None, None),
             "test-model",
             &source_ids,
             "hash-v2",

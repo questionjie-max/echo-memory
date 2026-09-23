@@ -51,10 +51,15 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
       }
     };
     void load();
-    const stop = listen("inbox-update", () => void load());
+    const stopInbox = listen("inbox-update", () => void load());
+    const stopProcessing = listen<{ recordId: string }>(
+      "processing-progress",
+      () => void refresh(),
+    );
     return () => {
       cancelled = true;
-      void stop.then((unlisten) => unlisten());
+      void stopInbox.then((unlisten) => unlisten());
+      void stopProcessing.then((unlisten) => unlisten());
     };
   }, []);
   const [busy, setBusy] = useState(false);
@@ -224,8 +229,12 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
     setError("");
     setNotice("");
     try {
-      const deleted = await deleteRecords(selectedIds);
-      setNotice(`已删除 ${deleted} 条记录及其音频文件。`);
+      const result = await deleteRecords(selectedIds);
+      setNotice(
+        result.fileCleanupFailures.length > 0
+          ? `已删除 ${result.deletedCount} 条记录，但有 ${result.fileCleanupFailures.length} 个文件遗留。`
+          : `已删除 ${result.deletedCount} 条记录及其音频文件。`,
+      );
       setSelected(new Set());
       await refresh();
       onImported();

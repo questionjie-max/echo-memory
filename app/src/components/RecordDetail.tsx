@@ -128,6 +128,18 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
     };
   }, [currentRecord.id]);
 
+  useEffect(() => {
+    const stop = listen<{ recordId: string }>(
+      "processing-progress",
+      (event) => {
+        if (event.payload.recordId === currentRecord.id) void load();
+      },
+    );
+    return () => {
+      void stop.then((unlisten) => unlisten());
+    };
+  }, [currentRecord.id]);
+
   async function startCorrection() {
     setCorrecting(true);
     try {
@@ -580,41 +592,43 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
         </div>
       </header>
 
-      {!isDocument && source && (
+      {!isDocument && (source || audioLoadState === "error") && (
         <div className="audio-bar">
           {/* 原生控件隐藏，播放/进度/倍速/音量由自定义播放条接管（外观对齐 Lovart 稿） */}
-          <audio
-            ref={audio}
-            preload="metadata"
-            src={source}
-            onLoadStart={() => {
-              setAudioLoadState("loading");
-              setDurationMs(null);
-              setIsPlaying(false);
-            }}
-            onLoadedMetadata={(event) => audioReady(event.currentTarget)}
-            onCanPlay={(event) => audioReady(event.currentTarget)}
-            onError={(event) => audioFailed(event.currentTarget)}
-            onTimeUpdate={(event) => setCurrentMs(event.currentTarget.currentTime * 1000)}
-            onPlay={() => setIsPlaying(true)}
-            onPause={() => setIsPlaying(false)}
-            onEnded={() => setIsPlaying(false)}
-          />
-          <div className="player">
+          {source && (
+            <audio
+              ref={audio}
+              preload="metadata"
+              src={source}
+              onLoadStart={() => {
+                setAudioLoadState("loading");
+                setDurationMs(null);
+                setIsPlaying(false);
+              }}
+              onLoadedMetadata={(event) => audioReady(event.currentTarget)}
+              onCanPlay={(event) => audioReady(event.currentTarget)}
+              onError={(event) => audioFailed(event.currentTarget)}
+              onTimeUpdate={(event) => setCurrentMs(event.currentTarget.currentTime * 1000)}
+              onPlay={() => setIsPlaying(true)}
+              onPause={() => setIsPlaying(false)}
+              onEnded={() => setIsPlaying(false)}
+            />
+          )}
+          <div className={`player${source ? "" : " player-unavailable"}`}>
             <div className="player-main">
               <button
                 type="button"
                 className="player-play"
                 aria-label={isPlaying ? "暂停" : "播放"}
-                disabled={audioLoadState !== "ready"}
+                disabled={!source || audioLoadState !== "ready"}
                 onClick={togglePlay}
               >
                 {isPlaying ? <PauseIcon size={18} /> : <PlayIcon size={18} />}
               </button>
-              <button type="button" className="player-skip" aria-label="后退 15 秒" disabled={audioLoadState !== "ready"} onClick={() => seekRelative(-15000)}>
+              <button type="button" className="player-skip" aria-label="后退 15 秒" disabled={!source || audioLoadState !== "ready"} onClick={() => seekRelative(-15000)}>
                 <SkipBackIcon />
               </button>
-              <button type="button" className="player-skip" aria-label="前进 15 秒" disabled={audioLoadState !== "ready"} onClick={() => seekRelative(15000)}>
+              <button type="button" className="player-skip" aria-label="前进 15 秒" disabled={!source || audioLoadState !== "ready"} onClick={() => seekRelative(15000)}>
                 <SkipForwardIcon />
               </button>
               <button type="button" className="player-rate" aria-label="播放速度" onClick={cycleRate}>
@@ -647,7 +661,7 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
               step={100}
               value={Math.min(currentMs, durationMs ?? currentRecord.audioDurationMs)}
               aria-label="播放进度"
-              disabled={audioLoadState !== "ready"}
+              disabled={!source || audioLoadState !== "ready"}
               onChange={(event) => seek(Number(event.target.value), isPlaying)}
             />
           </div>

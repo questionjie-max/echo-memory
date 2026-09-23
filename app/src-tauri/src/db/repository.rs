@@ -507,6 +507,14 @@ impl LibraryRepository {
         self.get_record(id)
     }
 
+    pub fn move_records(&self, record_ids: &[String], project_id: Option<&str>) -> AppResult<u32> {
+        let mut connection = self.connect()?;
+        let mut transaction = connection.transaction()?;
+        super::record_ops::move_records(&mut transaction, record_ids, project_id)?;
+        transaction.commit()?;
+        Ok(record_ids.len() as u32)
+    }
+
     pub fn update_record_title(&self, id: &str, title: &str) -> AppResult<RecordBrief> {
         let title = title.trim();
         if title.is_empty() {
@@ -546,6 +554,22 @@ impl LibraryRepository {
             return Err(AppError::NotFound(format!("record {id}")));
         }
         Ok(())
+    }
+
+    pub fn delete_records(&self, record_ids: &[String]) -> AppResult<Vec<(String, PathBuf)>> {
+        let mut connection = self.connect()?;
+        let mut transaction = connection.transaction()?;
+        let deleted = super::record_ops::delete_records(&mut transaction, record_ids)?;
+        transaction.commit()?;
+        Ok(deleted)
+    }
+
+    pub fn cleanup_deleted_record_files(
+        &self,
+        library_root: &Path,
+        deleted_records: &[(String, PathBuf)],
+    ) -> Vec<PathBuf> {
+        super::record_ops::cleanup_deleted_record_files(library_root, deleted_records)
     }
 
     /// 删除记录在磁盘上的产物：受管目录里的原始音频，以及 raw/<记录 id>/ 下的
@@ -1866,12 +1890,12 @@ impl LibraryRepository {
         &self,
         view_kind: &MemoryViewKind,
         scope: &MemoryScope,
-        range_start: Option<&str>,
-        range_end: Option<&str>,
+        range: (Option<&str>, Option<&str>),
         model: &str,
         source_record_ids: &[String],
         request_hash: &str,
     ) -> AppResult<MemorySnapshot> {
+        let (range_start, range_end) = range;
         if !matches!(scope.kind.as_str(), "all" | "project" | "unfiled") {
             return Err(AppError::Invalid("记忆视图作用域无效".to_owned()));
         }
@@ -2397,7 +2421,7 @@ impl LibraryRepository {
              FROM inbox_seen_files WHERE status IN ('pending', 'importing') ORDER BY seen_at",
         )?;
         let rows = statement
-            .query_map([], |row| Self::row_to_seen_file(row))?
+            .query_map([], Self::row_to_seen_file)?
             .collect::<Result<Vec<_>, rusqlite::Error>>()?;
         Ok(rows)
     }
@@ -2408,7 +2432,7 @@ impl LibraryRepository {
             "SELECT id, source_kind, source_path, file_path, file_name, file_size, mtime_ms, sha256, status, record_id, error_message, seen_at, updated_at              FROM inbox_seen_files ORDER BY seen_at DESC LIMIT ?1",
         )?;
         let rows = statement
-            .query_map(params![limit], |row| Self::row_to_seen_file(row))?
+            .query_map(params![limit], Self::row_to_seen_file)?
             .collect::<Result<Vec<_>, rusqlite::Error>>()?;
         Ok(rows)
     }
@@ -2617,7 +2641,7 @@ impl LibraryRepository {
                 "UPDATE transcript_segments SET normalized_text = ?2, normalization_version = 'llm-corrected-v1', updated_at = ?4 WHERE id = ?1 AND record_id = ?3",
                 params![segment_id, text, record_id, Utc::now().to_rfc3339()],
             )?;
-            changed += updated.max(0) as u32;
+            changed += updated as u32;
         }
         // 逐字稿文本变了：分析结论引用的原文可能对不上，知识索引也要重建。
         if changed > 0 {
@@ -2759,6 +2783,6 @@ impl LibraryRepository {
              WHERE record_id = ?1 AND speaker_label = ?2",
             params![record_id, from_label, to_label],
         )?;
-        Ok(changed.max(0) as u32)
+        Ok(changed as u32)
     }
 }

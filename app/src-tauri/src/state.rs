@@ -342,8 +342,7 @@ mod tests {
             .create_memory_snapshot(
                 &MemoryViewKind::Map,
                 &scope,
-                None,
-                None,
+                (None, None),
                 "test-model",
                 &[],
                 "interrupted-hash",
