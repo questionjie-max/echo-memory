@@ -39,7 +39,8 @@
 .em-pill.warn { background: var(--em-warn-soft); color: var(--em-warn-ink); }
 .em-pill.err { background: var(--em-err-soft); color: var(--em-err-ink); }
 .em-pill.accent { background: var(--em-accent-soft); color: var(--em-accent-ink); }
-.em-pill .em-pill-glyph { font-size: 10px; line-height: 1; }
+.em-pill .em-pill-glyph { display: inline-flex; align-items: center; font-size: 10px; line-height: 1; animation: em-pop 140ms var(--em-motion); }
+.em-pill .em-pill-glyph svg { display: block; }
 
 /* ---------------- 按钮 ---------------- */
 .em-btn { display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 7px 12px; border: 0.5px solid transparent; border-radius: var(--em-r-sm); background: transparent; cursor: pointer; font-size: var(--em-text-sm); font-weight: 620; white-space: nowrap; transition: background-color 160ms var(--em-motion), border-color 160ms var(--em-motion); }
@@ -74,11 +75,12 @@
 .em-row:disabled { cursor: default; }
 .em-row.static { cursor: default; }
 .em-row.static:hover { background: transparent; }
-.em-row-glyph { display: grid; place-items: center; width: 18px; height: 18px; flex: 0 0 18px; border-radius: 50%; color: var(--em-ink-4); font-size: var(--em-text-xs); }
+.em-row-glyph { display: grid; place-items: center; width: 18px; height: 18px; flex: 0 0 18px; border-radius: 50%; color: var(--em-ink-4); font-size: var(--em-text-xs); animation: em-pop 140ms var(--em-motion); }
 .em-row-glyph.done { background: var(--em-ok-soft); color: var(--em-ok-ink); }
 .em-row-glyph.working { border: 1.5px solid var(--em-accent-border); border-top-color: var(--em-accent); animation: em-spin 0.8s linear infinite; }
 .em-row-glyph.error { background: var(--em-err-soft); color: var(--em-err-ink); }
 @keyframes em-spin { to { transform: rotate(360deg); } }
+@keyframes em-pop { from { transform: scale(0.92); opacity: 0.6; } to { transform: scale(1); opacity: 1; } }
 .em-row-main { min-width: 0; display: grid; gap: 3px; }
 .em-row-title { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .em-row-title strong { overflow: hidden; font-size: var(--em-text-md); font-weight: 620; text-overflow: ellipsis; white-space: nowrap; }
@@ -112,8 +114,9 @@
 .em-collapsible { display: grid; gap: 10px; }
 .em-collapsible > summary { display: flex; align-items: center; gap: 7px; padding: 7px 0; color: var(--em-ink-3); cursor: pointer; font-size: var(--em-text-xs); list-style: none; }
 .em-collapsible > summary::-webkit-details-marker { display: none; }
-.em-collapsible > summary::before { content: "▸"; font-size: 9px; transition: transform 180ms var(--em-motion); }
-.em-collapsible[open] > summary::before { transform: rotate(90deg); }
+/* 折叠三角复用 --em-chevron（图形向下）：收起时旋转 -90° 指向右，展开时回正指向下。 */
+.em-collapsible > summary::before { content: ""; width: 10px; height: 6px; flex: 0 0 auto; background-image: var(--em-chevron); background-repeat: no-repeat; background-position: center; background-size: contain; transform: rotate(-90deg); transition: transform 180ms var(--em-motion); }
+.em-collapsible[open] > summary::before { transform: rotate(0deg); }
 .em-collapsible-body { display: grid; gap: 12px; padding: 4px 0 2px; }
 
 /* ---------------- 行内提示 ---------------- */

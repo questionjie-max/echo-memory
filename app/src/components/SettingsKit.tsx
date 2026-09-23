@@ -6,6 +6,7 @@
  * 每个可见控件都必须真的可用。视觉上：0.5px 发丝线、实底表面、999px 药丸。
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { CheckCircleIcon, TriangleAlertIcon, CircleXIcon, CheckIcon, CircleIcon } from "./icons";
 import "./settings-kit.css";
 
 /* ---------------- 面板骨架 ---------------- */
@@ -121,10 +122,10 @@ export function Stack({ children }: { children: ReactNode }) {
 
 export type Tone = "default" | "ok" | "warn" | "err" | "accent";
 
-const TONE_GLYPH: Record<Exclude<Tone, "default">, string> = {
-  ok: "✓",
-  warn: "!",
-  err: "×",
+const TONE_GLYPH: Record<Exclude<Tone, "default">, ReactNode> = {
+  ok: <CheckCircleIcon size={11} />,
+  warn: <TriangleAlertIcon size={11} />,
+  err: <CircleXIcon size={11} />,
   accent: "•",
 };
 
@@ -218,7 +219,7 @@ export function Segmented<T extends string>({
 
 export type RowState = "idle" | "done" | "working" | "error";
 
-const ROW_GLYPH: Record<RowState, string> = { idle: "○", done: "✓", working: "", error: "!" };
+const ROW_GLYPH: Record<RowState, ReactNode> = { idle: <CircleIcon size={11} />, done: <CheckIcon size={11} />, working: "", error: <TriangleAlertIcon size={11} /> };
 
 export function ListRow({
   state = "idle",

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { SparklesIcon } from "./icons";
 import MemoryViewControls from "./MemoryViewControls";
 import type { EvolutionItem, MemoryFeedback, MemoryScope, MemorySourceReference } from "../shared/types";
 import { listMemoryFeedback, updateMemoryFeedback } from "../lib/tauri";
@@ -119,7 +120,7 @@ function isExternalAiReady(settings: { enabled: boolean; hasApiKey: boolean; pri
 }
 
 function ConfiguredEmpty({ onOpenSettings }: { onOpenSettings: () => void }) {
-  return <div className="memory-config-empty"><div className="memory-config-icon">✦</div><h3>认知演化需要外部 AI</h3><p>启用后，模型只分析你确认发送的文本；音频文件永不上传。</p><button type="button" className="primary-button" onClick={onOpenSettings}>打开外部 AI 设置</button></div>;
+  return <div className="memory-config-empty"><div className="memory-config-icon"><SparklesIcon size={22} /></div><h3>认知演化需要外部 AI</h3><p>启用后，模型只分析你确认发送的文本；音频文件永不上传。</p><button type="button" className="primary-button" onClick={onOpenSettings}>打开外部 AI 设置</button></div>;
 }
 
 function Watchlist({ title, items, empty }: { title: string; items: string[]; empty: string }) {

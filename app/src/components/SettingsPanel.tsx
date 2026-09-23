@@ -1,5 +1,6 @@
 import { open } from "@tauri-apps/plugin-dialog";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { SparklesIcon, CheckIcon, XIcon } from "./icons";
 import { open as openDirectory } from "@tauri-apps/plugin-dialog";
 import AiModelSettings from "./AiModelSettings";
 import TemplateWizard from "./TemplateWizard";
@@ -118,7 +119,7 @@ export default function SettingsPanel({ open: visible, onClose, onOpenKnowledge 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [tabError, setTabError] = useState<string | null>(null);
-  const [testResult, setTestResult] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<ReactNode>(null);
   const { flash, show } = useSavedFlash();
   const { downloads, start, cancel } = useModelDownloads((settled) => {
     if (settled.phase === "done") void refresh();
@@ -292,10 +293,10 @@ export default function SettingsPanel({ open: visible, onClose, onOpenKnowledge 
     try {
       const startedAt = Date.now();
       await testExternalAiConnection();
-      setTestResult(`✓ ${Date.now() - startedAt}ms`);
+      setTestResult(<><CheckIcon size={12} /> {Date.now() - startedAt}ms</>);
       await refresh();
     } catch (reason) {
-      setTestResult("✗ 失败");
+      setTestResult(<><XIcon size={12} /> 失败</>);
       setError(String(reason));
     } finally {
       setBusy(false);
@@ -422,7 +423,7 @@ export default function SettingsPanel({ open: visible, onClose, onOpenKnowledge 
               description="分析时选一个模板，AI 就按它的栏目抽取内容。"
               actions={
                 <>
-                  <Button onClick={() => setWizardOpen(true)}>✨ AI 生成模板</Button>
+                  <Button onClick={() => setWizardOpen(true)}><SparklesIcon size={14} /> AI 生成模板</Button>
                   <Button variant="primary" onClick={() => setEditing(emptyTemplate())}>
                     新建模板
                   </Button>
