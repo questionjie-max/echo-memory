@@ -76,17 +76,51 @@ pub(super) fn cleanup_deleted_record_files(
 ) -> Vec<PathBuf> {
     let mut failed = Vec::new();
     for (record_id, relative_audio_path) in deleted_records {
-        let audio = library_root.join(relative_audio_path);
-        match std::fs::remove_file(&audio) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(_) => failed.push(audio),
+        match resolve_cleanup_target(library_root, relative_audio_path) {
+            Err(path) => failed.push(path),
+            Ok(audio) => match std::fs::remove_file(&audio) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => failed.push(audio),
+            },
         }
 
-        let raw = library_root.join("raw").join(record_id);
-        if raw.exists() && std::fs::remove_dir_all(&raw).is_err() {
-            failed.push(raw);
+        let relative_raw = Path::new("raw").join(record_id);
+        match resolve_cleanup_target(library_root, &relative_raw) {
+            Err(path) => failed.push(path),
+            Ok(raw) => {
+                if raw.exists() && std::fs::remove_dir_all(&raw).is_err() {
+                    failed.push(raw);
+                }
+            }
         }
     }
     failed
+}
+
+fn resolve_cleanup_target(library_root: &Path, relative_path: &Path) -> Result<PathBuf, PathBuf> {
+    let target = library_root.join(relative_path);
+    if relative_path.as_os_str().is_empty() || relative_path.is_absolute() {
+        return Err(target);
+    }
+    if relative_path
+        .components()
+        .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(target);
+    }
+
+    let canonical_root = std::fs::canonicalize(library_root).map_err(|_| target.clone())?;
+    let Some(parent) = target.parent() else {
+        return Err(target);
+    };
+    let canonical_parent = match std::fs::canonicalize(parent) {
+        Ok(path) => path,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(target),
+        Err(_) => return Err(target),
+    };
+    if !canonical_parent.starts_with(&canonical_root) {
+        return Err(target);
+    }
+    Ok(target)
 }

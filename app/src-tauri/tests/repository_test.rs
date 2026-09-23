@@ -1105,6 +1105,38 @@ fn batch_delete_reports_post_commit_file_cleanup_failures() {
 }
 
 #[test]
+fn batch_delete_rejects_audio_paths_outside_library_root() {
+    let parent = std::env::temp_dir().join(format!(
+        "echo-batch-delete-boundary-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let root = parent.join("library");
+    std::fs::create_dir_all(&root).unwrap();
+    let outside_audio = parent.join("outside.wav");
+    std::fs::write(&outside_audio, b"outside").unwrap();
+    let repository = LibraryRepository::new(root.join("memory.db")).unwrap();
+    let record = repository
+        .create_record(
+            "越界路径",
+            None,
+            Path::new("../outside.wav"),
+            "batch-delete-boundary",
+            1,
+        )
+        .unwrap();
+
+    let deleted = repository
+        .delete_records(std::slice::from_ref(&record.id))
+        .unwrap();
+    let failures = repository.cleanup_deleted_record_files(&root, &deleted);
+
+    assert!(repository.get_record(&record.id).is_err());
+    assert!(outside_audio.exists());
+    assert_eq!(failures, vec![root.join("../outside.wav")]);
+    let _ = std::fs::remove_dir_all(&parent);
+}
+
+#[test]
 fn interrupted_knowledge_indexes_are_recovered_without_touching_terminal_states() {
     let repository = LibraryRepository::new(database_path()).unwrap();
     for (scope_key, status) in [
