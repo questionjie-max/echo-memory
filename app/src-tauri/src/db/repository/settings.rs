@@ -7,6 +7,39 @@ use std::path::Path;
 use uuid::Uuid;
 
 impl LibraryRepository {
+    /// 读取通用 KV 设置；不存在时返回 None。
+    pub fn setting_value(&self, key: &str) -> AppResult<Option<String>> {
+        let connection = self.connect()?;
+        let mut statement = connection.prepare("SELECT value FROM app_settings WHERE key = ?1")?;
+        let mut rows = statement.query(params![key])?;
+        Ok(match rows.next()? {
+            Some(row) => Some(row.get(0)?),
+            None => None,
+        })
+    }
+
+    pub fn set_setting_value(&self, key: &str, value: &str) -> AppResult<()> {
+        self.connect()?.execute(
+            "INSERT INTO app_settings (key, value, updated_at) VALUES (?1, ?2, ?3)              ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            params![key, value, Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    pub fn onboarding_completed_at(&self) -> AppResult<Option<String>> {
+        Ok(self
+            .setting_value("onboarding_completed_at")?
+            .filter(|value| !value.trim().is_empty()))
+    }
+
+    pub fn complete_onboarding(&self) -> AppResult<()> {
+        self.set_setting_value("onboarding_completed_at", &Utc::now().to_rfc3339())
+    }
+
+    pub fn reset_onboarding(&self) -> AppResult<()> {
+        self.set_setting_value("onboarding_completed_at", "")
+    }
+
     pub fn knowledge_settings(&self) -> AppResult<KnowledgeSettings> {
         Ok(KnowledgeSettings {
             transcription_language: self.setting("transcription_language", "zh")?,
