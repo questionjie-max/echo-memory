@@ -306,27 +306,36 @@ impl OllamaAdapter {
             partials.push(self.analyze_single(chunk, template)?);
             progress(index + 1, total_steps)?;
         }
-        let partial_json = serde_json::to_string(&partials)
-            .map_err(|error| AppError::Analysis(format!("分段分析无法合并：{error}")))?;
-        let template_note = template.map_or_else(String::new, |item| {
-            format!(
-                "最终结果继续遵循模板“{}”，custom_sections 不得改变栏目。",
-                item.name
-            )
-        });
-        let prompt = format!(
-            "你是本地长文会议分析合并器。所有内容必须使用简体中文。下面是按时间顺序生成的分段分析。仅返回约定 JSON。\n\
-             合并摘要必须覆盖开头、中段和结尾；关键观点保留 3 到 8 条并去重。决策必须是明确确认的选择；待办必须是明确要求未来执行的任务，普通陈述不得写成待办。\n\
-             只能沿用输入中已有的 citation_segment_ids 和 quote_text，不得新造、改写或跨条目拼接引用。没有可靠证据的栏目返回空数组。{template_note}\n\
-             分段分析：\n{partial_json}"
-        );
-        let generated = self.generate(&prompt)?;
-        let mut merged =
-            parse_prepared_analysis(&generated).unwrap_or_else(|_| deterministic_merge(&partials));
-        normalize_custom_sections(&mut merged, template);
-        merged.quality_warning = analysis_quality_issue(&merged);
+        let mut merged = self.merge_partials(&partials, template)?;
+        let quality_warning = analysis_quality_issue(&merged);
+        append_quality_warning(&mut merged, quality_warning);
         simplify_draft(&mut merged);
         progress(total_steps, total_steps)?;
+        Ok(merged)
+    }
+
+    fn merge_partials(
+        &self,
+        partials: &[AnalysisDraft],
+        template: Option<&AnalysisTemplate>,
+    ) -> AppResult<AnalysisDraft> {
+        merge_partials_with(partials, template, |batch, template| {
+            self.merge_batch(batch, template)
+        })
+    }
+
+    fn merge_batch(
+        &self,
+        batch: &[AnalysisDraft],
+        template: Option<&AnalysisTemplate>,
+    ) -> AppResult<AnalysisDraft> {
+        let partial_json = serde_json::to_string(batch)
+            .map_err(|error| AppError::Analysis(format!("分段分析无法合并：{error}")))?;
+        let prompt = build_long_merge_prompt(&partial_json, template);
+        let generated = self.generate(&prompt)?;
+        let mut merged =
+            parse_prepared_analysis(&generated).unwrap_or_else(|_| deterministic_merge(batch));
+        normalize_custom_sections(&mut merged, template);
         Ok(merged)
     }
 
@@ -465,6 +474,103 @@ fn split_transcript(input: &str, maximum_chars: usize, overlap_chars: usize) -> 
         chunks.push(format!("{}\n", current.join("\n")));
     }
     chunks
+}
+
+const MAX_MERGE_PROMPT_CHARS: usize = 12_000;
+
+fn build_long_merge_prompt(partial_json: &str, template: Option<&AnalysisTemplate>) -> String {
+    let template_note = template.map_or_else(String::new, |item| {
+        format!(
+            "最终结果继续遵循模板“{}”，custom_sections 不得改变栏目。",
+            item.name
+        )
+    });
+    format!(
+        "你是本地长文会议分析合并器。所有内容必须使用简体中文。下面是按时间顺序生成的分段分析。仅返回约定 JSON。\n\
+         合并摘要必须覆盖开头、中段和结尾；关键观点保留 3 到 8 条并去重。决策必须是明确确认的选择；待办必须是明确要求未来执行的任务，普通陈述不得写成待办。\n\
+         只能沿用输入中已有的 citation_segment_ids 和 quote_text，不得新造、改写或跨条目拼接引用。没有可靠证据的栏目返回空数组。{template_note}\n\
+         分段分析：\n{partial_json}"
+    )
+}
+
+fn plan_long_merge_batches(
+    partials: &[AnalysisDraft],
+    template: Option<&AnalysisTemplate>,
+) -> AppResult<Vec<Vec<AnalysisDraft>>> {
+    let prompt_overhead = build_long_merge_prompt("", template).chars().count();
+    let maximum_payload_chars = MAX_MERGE_PROMPT_CHARS.saturating_sub(prompt_overhead);
+    let mut batches = Vec::new();
+    let mut current = Vec::new();
+    let mut current_payload_chars = 0;
+
+    for partial in partials {
+        let item_chars = serde_json::to_string(partial)
+            .map_err(|error| AppError::Analysis(format!("分段分析无法合并：{error}")))?
+            .chars()
+            .count();
+        let separator_chars = usize::from(!current.is_empty());
+        if !current.is_empty()
+            && current_payload_chars + separator_chars + item_chars > maximum_payload_chars
+        {
+            batches.push(std::mem::take(&mut current));
+            current_payload_chars = 0;
+        }
+        current_payload_chars += usize::from(!current.is_empty()) + item_chars;
+        current.push(partial.clone());
+    }
+    if !current.is_empty() {
+        batches.push(current);
+    }
+    Ok(batches)
+}
+
+fn merge_partials_with<F>(
+    partials: &[AnalysisDraft],
+    template: Option<&AnalysisTemplate>,
+    mut merge_batch: F,
+) -> AppResult<AnalysisDraft>
+where
+    F: FnMut(&[AnalysisDraft], Option<&AnalysisTemplate>) -> AppResult<AnalysisDraft>,
+{
+    let mut current = partials.to_vec();
+    while current.len() > 1 {
+        let batches = plan_long_merge_batches(&current, template)?;
+        if batches.iter().all(|batch| batch.len() == 1) {
+            let mut reduced = deterministic_merge(&current);
+            normalize_custom_sections(&mut reduced, template);
+            current = vec![reduced];
+            continue;
+        }
+
+        let mut reduced = Vec::with_capacity(batches.len());
+        for batch in batches {
+            if batch.len() == 1 {
+                reduced.extend(batch);
+                continue;
+            }
+            let mut merged = merge_batch(&batch, template)?;
+            normalize_custom_sections(&mut merged, template);
+            reduced.push(merged);
+        }
+        current = reduced;
+    }
+
+    let Some(mut merged) = current.pop() else {
+        return Err(AppError::Analysis("没有可合并的分段分析结果".into()));
+    };
+    normalize_custom_sections(&mut merged, template);
+    Ok(merged)
+}
+
+fn append_quality_warning(draft: &mut AnalysisDraft, warning: Option<String>) {
+    let Some(warning) = warning else {
+        return;
+    };
+    draft.quality_warning = Some(match draft.quality_warning.take() {
+        Some(existing) if existing == warning => existing,
+        Some(existing) => format!("{existing}；{warning}"),
+        None => warning,
+    });
 }
 
 fn deterministic_merge(partials: &[AnalysisDraft]) -> AnalysisDraft {
@@ -973,6 +1079,25 @@ pub fn correct_transcript_with_library(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn merge_test_draft(summary: &str, point: &str) -> AnalysisDraft {
+        AnalysisDraft {
+            summary: summary.to_owned(),
+            key_points: vec![AnalysisItemDraft {
+                text: point.to_owned(),
+                citation_segment_ids: vec![format!("segment-{point}")],
+                owner: None,
+                quote_text: format!("与{point}相关的连续原文"),
+                start_ms: None,
+                end_ms: None,
+            }],
+            decisions: Vec::new(),
+            action_items: Vec::new(),
+            open_questions: Vec::new(),
+            custom_sections: Vec::new(),
+            quality_warning: None,
+        }
+    }
     #[test]
     fn ollama_base_url_defaults_and_accepts_ollama_host_variants() {
         // 环境变量是进程级状态，这里只验证默认分支；带 scheme 的分支由函数纯逻辑保证。
@@ -1215,6 +1340,76 @@ mod tests {
             let previous = pair[0].lines().collect::<HashSet<_>>();
             pair[1].lines().any(|line| previous.contains(line))
         }));
+    }
+
+    #[test]
+    fn long_merge_plan_bounds_model_requests_and_keeps_input_order() {
+        let partials = (0..40)
+            .map(|index| {
+                merge_test_draft(
+                    &format!(
+                        "第{index}段的独立摘要，包含该时间段的明确结论和背景信息。{}",
+                        "长录音分段分析内容。".repeat(60)
+                    ),
+                    &format!("第{index}段观点"),
+                )
+            })
+            .collect::<Vec<_>>();
+        let batches = plan_long_merge_batches(&partials, None).unwrap();
+        assert!(batches.len() > 1);
+        assert_eq!(
+            batches
+                .iter()
+                .flatten()
+                .map(|item| item.summary.as_str())
+                .collect::<Vec<_>>(),
+            partials
+                .iter()
+                .map(|item| item.summary.as_str())
+                .collect::<Vec<_>>()
+        );
+        for batch in batches.iter().filter(|batch| batch.len() > 1) {
+            let payload = serde_json::to_string(batch).unwrap();
+            assert!(
+                build_long_merge_prompt(&payload, None).chars().count() <= MAX_MERGE_PROMPT_CHARS
+            );
+        }
+    }
+
+    #[test]
+    fn hierarchical_merge_preserves_early_and_late_unique_content() {
+        let partials = (0..12)
+            .map(|index| {
+                merge_test_draft(
+                    &format!(
+                        "开头到结尾都出现的第{index}段独立摘要内容。{}",
+                        "用于验证分层合并不会超出模型上下文的逐字稿分析内容。".repeat(30)
+                    ),
+                    &format!("第{index}段唯一观点"),
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut request_sizes = Vec::new();
+        let merged = merge_partials_with(&partials, None, |batch, template| {
+            let payload = serde_json::to_string(batch)
+                .map_err(|error| AppError::Analysis(error.to_string()))?;
+            request_sizes.push(build_long_merge_prompt(&payload, template).chars().count());
+            let mut result = deterministic_merge(batch);
+            normalize_custom_sections(&mut result, template);
+            Ok(result)
+        })
+        .unwrap();
+
+        assert!(request_sizes.len() > 1);
+        assert!(request_sizes
+            .iter()
+            .all(|size| *size <= MAX_MERGE_PROMPT_CHARS));
+        assert!(merged.summary.contains("第0段独立摘要"));
+        assert!(merged.summary.contains("第11段独立摘要"));
+        assert!(merged
+            .key_points
+            .iter()
+            .any(|item| item.text == "第0段唯一观点"));
     }
 
     #[test]
