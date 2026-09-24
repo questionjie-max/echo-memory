@@ -10,8 +10,7 @@ use crate::error::{AppError, AppResult};
 use crate::transcript::{build_blocks, normalize_chinese, NORMALIZATION_VERSION};
 use crate::types::{
     AnalysisTemplate, McpAccessLog, McpStatus, ProcessingJob, Project, RecordBrief, SearchResult,
-    SpeakerSummary, StoredAnalysis, TranscriptBlock, TranscriptSegment, TranscriptSegmentInput,
-    TranscriptVersion,
+    StoredAnalysis, TranscriptBlock, TranscriptSegment, TranscriptSegmentInput, TranscriptVersion,
 };
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension, Row};
@@ -26,6 +25,7 @@ mod inbox;
 mod knowledge;
 mod memory_snapshots;
 mod settings;
+mod speakers;
 
 const RECORD_SELECT: &str = "SELECT records.id, records.title, records.project_id, projects.name, \
     records.audio_hash, records.audio_duration_ms, records.imported_at, records.processing_status, \
@@ -1556,44 +1556,5 @@ impl LibraryRepository {
         }
         transaction.commit()?;
         Ok(changed)
-    }
-    /* ------------------------------ v0.5.0：说话人 ------------------------------ */
-
-    pub fn list_record_speakers(&self, record_id: &str) -> AppResult<Vec<SpeakerSummary>> {
-        let connection = self.connect()?;
-        let mut statement = connection.prepare(
-            "SELECT segments.speaker_label, COUNT(*) FROM transcript_segments AS segments \
-             WHERE segments.transcript_version_id = ( \
-               SELECT versions.id FROM transcript_versions AS versions \
-               WHERE versions.record_id = ?1 ORDER BY versions.created_at DESC LIMIT 1 ) \
-             GROUP BY segments.speaker_label ORDER BY COUNT(*) DESC",
-        )?;
-        let rows = statement
-            .query_map(params![record_id], |row| {
-                Ok(SpeakerSummary {
-                    label: row.get(0)?,
-                    segment_count: row.get::<_, i64>(1)? as u32,
-                })
-            })?
-            .collect::<Result<Vec<_>, rusqlite::Error>>()?;
-        Ok(rows)
-    }
-
-    pub fn rename_record_speaker(
-        &self,
-        record_id: &str,
-        from_label: &str,
-        to_label: &str,
-    ) -> AppResult<u32> {
-        let to_label = to_label.trim();
-        if to_label.is_empty() || to_label.chars().count() > 24 {
-            return Err(crate::error::AppError::Invalid("说话人名称无效".to_owned()));
-        }
-        let changed = self.connect()?.execute(
-            "UPDATE transcript_segments SET speaker_label = ?3 \
-             WHERE record_id = ?1 AND speaker_label = ?2",
-            params![record_id, from_label, to_label],
-        )?;
-        Ok(changed as u32)
     }
 }
