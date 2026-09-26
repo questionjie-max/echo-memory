@@ -19,7 +19,7 @@
 
 ## Distribution status
 
-This source release is version `0.7.0`. The public test artifact is `回声记忆_0.7.0_aarch64.dmg`, SHA-256 `4fdd062e39ec41b883dbe1378ed0a23c3cf009022f5d552284d2fb784001f9ee`.
+This source release is version `0.7.0`. The public test artifact is `Echo-Memory_0.7.0_aarch64.dmg`, SHA-256 `4fdd062e39ec41b883dbe1378ed0a23c3cf009022f5d552284d2fb784001f9ee`.
 
 - `codesign --verify --deep --strict` passes for both the packaged application and the ad-hoc signed DMG.
 - `hdiutil verify` confirms the disk image is intact.
@@ -55,7 +55,7 @@ xattr -dr com.apple.quarantine "/Applications/回声记忆.app"
 
 ## 分发状态
 
-本源码版本为 `0.7.0`，公开测试安装包为 `回声记忆_0.7.0_aarch64.dmg`，SHA-256 为 `4fdd062e39ec41b883dbe1378ed0a23c3cf009022f5d552284d2fb784001f9ee`。
+本源码版本为 `0.7.0`，公开测试安装包为 `Echo-Memory_0.7.0_aarch64.dmg`，SHA-256 为 `4fdd062e39ec41b883dbe1378ed0a23c3cf009022f5d552284d2fb784001f9ee`。
 
 - 应用程序与 DMG 均已执行 ad-hoc 签名，`codesign --verify --deep --strict` 检查通过。
 - `hdiutil verify` 确认磁盘镜像完整。
