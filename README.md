@@ -47,7 +47,10 @@ The digital-twin direction is a product vision, not a claim that the current Alp
 - Imports `MP3`, `M4A`, and `WAV` audio with duplicate detection.
 - Imports `Markdown`, `TXT`, and `DOCX` documents into the same searchable library.
 - Transcribes audio locally with embedded Whisper or a local `whisper.cpp` command.
+- Optionally transcribes with a configured OpenAI-compatible third-party ASR provider. This requires a separate audio-upload consent, completed provider settings, and an API key; providers that return speaker fields can populate speaker labels without guessing.
 - Uses local Ollama models for summaries, key points, decisions, action items, and open questions.
+- Optionally sends transcript text to a separately configured OpenAI-compatible text model for structured analysis, subject to a distinct text-upload consent.
+- Archives records from the single-record context menu, alongside moving, renaming, opening management, and deletion.
 - Preserves timestamped transcript evidence and lets users return from a conclusion to its source.
 - Organizes records into project knowledge libraries with local full-text and vector retrieval.
 - Answers questions across indexed audio and documents with openable citations.
@@ -91,9 +94,9 @@ The screenshots use synthetic demonstration data.
 
 ## Local-first and user-controlled
 
-Audio, the SQLite library, local transcription, local analysis, retrieval, and MCP remain on the Mac by default.
+Audio, the SQLite library, local transcription, local analysis, retrieval, and MCP remain on the Mac by default. External processing is opt-in.
 
-External AI is disabled by default. If a user enables it and explicitly confirms a generation, Echo Memory sends only the selected scope's text and existing structured analysis to the configured OpenAI-compatible service. Original audio is never uploaded by this feature. API keys are stored in macOS Keychain.
+Third-party ASR requires a separate audio-upload consent, a selected provider, endpoint, model, API key, and the audio-upload setting. Echo Memory must fail before creating an upload connection when any of these is missing. Third-party text analysis has its own text-send consent and never includes the audio file. Both forms of consent are enforced by the service layer rather than only by the interface. API keys are stored in macOS Keychain.
 
 Generated cross-record memory is versioned, linked to sources, and can be confirmed or rejected. It does not overwrite original recordings, transcripts, or single-record analysis.
 
@@ -154,7 +157,7 @@ cargo test --features mcp-bin
 
 ## Project status
 
-Echo Memory is Alpha software. Source builds are supported. A notarized macOS installer is not currently published in GitHub Releases.
+Echo Memory v0.7.0 is the current public test release. Download the latest build from [GitHub Releases](https://github.com/questionjie-max/echo-memory/releases). Source builds are supported. Distribution artifacts must be labeled truthfully according to their actual signing and Apple notarization status; this repository does not claim notarization unless the artifact passes the documented verification commands.
 
 Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening an issue or pull request, and never attach real audio, transcripts, databases, credentials, or private customer material to a public issue. Security reports should follow [SECURITY.md](SECURITY.md).
 

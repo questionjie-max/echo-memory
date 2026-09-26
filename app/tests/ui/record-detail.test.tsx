@@ -2,7 +2,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import RecordDetail from "../../src/components/RecordDetail";
 import * as tauri from "../../src/lib/tauri";
-import type { RecordBrief } from "../../src/shared/types";
+import type { RecordBrief, StoredAnalysis } from "../../src/shared/types";
 import { engineStatusFixture, localAiStatusFixture } from "./settings-mocks";
 
 const eventMock = vi.hoisted(() => ({
@@ -44,11 +44,13 @@ function recordFixture(overrides: Partial<RecordBrief> = {}): RecordBrief {
     hasTranscript: true,
     hasAnalysis: false,
     analysisStatus: null,
+    analysisHasQualityWarning: false,
     lastAnalysisError: null,
     analysisTemplateId: null,
     processingStage: null,
     progressCurrent: 0,
     progressTotal: 0,
+    archivedAt: null,
     ...overrides,
   };
 }
@@ -57,6 +59,31 @@ function emit(name: string, payload: unknown) {
   act(() => {
     eventMock.handlers.get(name)?.forEach((handler) => handler({ payload }));
   });
+}
+
+function analysisFixture(qualityWarning: string): StoredAnalysis {
+  const content = {
+    summary: "这是一段完整的分析摘要，能够说明讨论主题与结论。",
+    key_points: [],
+    decisions: [],
+    action_items: [],
+    open_questions: [],
+    custom_sections: [],
+    quality_warning: qualityWarning,
+  };
+  return {
+    id: "analysis-1",
+    recordId: "record-1",
+    sourceTranscriptVersionId: "transcript-1",
+    status: "completed",
+    contentJson: JSON.stringify(content),
+    provider: "ollama",
+    model: "qwen",
+    templateVersion: "knowledge-v1",
+    templateId: "builtin-standard",
+    templateSnapshotJson: "{}",
+    createdAt: "2026-09-23T10:00:00.000Z",
+  };
 }
 
 function renderDetail(record = recordFixture()) {
@@ -131,6 +158,50 @@ describe("记录详情：事件刷新与轮询边界", () => {
 
     expect(interval).not.toHaveBeenCalledWith(expect.any(Function), 2_000);
     interval.mockRestore();
+  });
+});
+
+describe("记录详情：分析质量分级", () => {
+  it("建议性提醒完成分析并显示质量提醒", async () => {
+    const record = recordFixture({
+      hasAnalysis: true,
+      analysisStatus: "completed",
+      analysisHasQualityWarning: true,
+    });
+    vi.mocked(tauri.getRecord).mockResolvedValue(record);
+    vi.mocked(tauri.latestAnalysis).mockResolvedValue(
+      analysisFixture("摘要过短，无法充分说明谈话主题和结论"),
+    );
+    renderDetail(record);
+    await waitFor(() => expect(tauri.latestAnalysis).toHaveBeenCalledWith("record-1"));
+    await screen.findByText("录音详情 · 已完成 · 有质量提醒");
+
+    fireEvent.click(screen.getByRole("tab", { name: "内容分析" }));
+
+    await screen.findByText(
+      "质量提醒：摘要过短，无法充分说明谈话主题和结论",
+    );
+  });
+
+  it("阻断性问题保留分析不完整状态", async () => {
+    const record = recordFixture({
+      hasAnalysis: true,
+      analysisStatus: "incomplete",
+      analysisHasQualityWarning: true,
+    });
+    vi.mocked(tauri.getRecord).mockResolvedValue(record);
+    vi.mocked(tauri.latestAnalysis).mockResolvedValue(
+      analysisFixture("没有提取出带可靠出处的关键观点"),
+    );
+    renderDetail(record);
+    await waitFor(() => expect(tauri.latestAnalysis).toHaveBeenCalledWith("record-1"));
+    await screen.findByText("录音详情 · 分析不完整");
+
+    fireEvent.click(screen.getByRole("tab", { name: "内容分析" }));
+
+    await screen.findByText(
+      "分析不完整：没有提取出带可靠出处的关键观点",
+    );
   });
 });
 

@@ -8,17 +8,38 @@ use std::process::{Command, Stdio};
 
 const KEYCHAIN_SERVICE: &str = "com.soloplay.echo-memory.external-ai";
 const KEYCHAIN_ACCOUNT: &str = "default";
+const ASR_KEYCHAIN_ACCOUNT: &str = "asr";
 
 /// env 来源的 Key 被用户在 UI 清除后，本进程内不再回退读取 env。
 /// （重启后 env 仍然生效——那是运维层面的显式覆盖，UI 会在重启后如实显示已配置。）
 static ENV_API_KEY_SUPPRESSED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
+static ENV_ASR_API_KEY_SUPPRESSED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 pub fn get_api_key() -> AppResult<Option<String>> {
-    // 用户点过「清除」后 env 兜底失效，直到下次保存。
-    let env_suppressed = ENV_API_KEY_SUPPRESSED.load(std::sync::atomic::Ordering::SeqCst);
-    if !env_suppressed {
-        if let Ok(value) = std::env::var("ECHO_EXTERNAL_AI_API_KEY") {
+    get_key_with_account(
+        "ECHO_EXTERNAL_AI_API_KEY",
+        KEYCHAIN_ACCOUNT,
+        &ENV_API_KEY_SUPPRESSED,
+    )
+}
+
+pub fn get_asr_api_key() -> AppResult<Option<String>> {
+    get_key_with_account(
+        "ECHO_EXTERNAL_ASR_API_KEY",
+        ASR_KEYCHAIN_ACCOUNT,
+        &ENV_ASR_API_KEY_SUPPRESSED,
+    )
+}
+
+fn get_key_with_account(
+    env_name: &str,
+    account: &str,
+    env_suppressed: &std::sync::atomic::AtomicBool,
+) -> AppResult<Option<String>> {
+    if !env_suppressed.load(std::sync::atomic::Ordering::SeqCst) {
+        if let Ok(value) = std::env::var(env_name) {
             if !value.trim().is_empty() {
                 return Ok(Some(value));
             }
@@ -32,7 +53,7 @@ pub fn get_api_key() -> AppResult<Option<String>> {
                 "-s",
                 KEYCHAIN_SERVICE,
                 "-a",
-                KEYCHAIN_ACCOUNT,
+                account,
                 "-w",
             ])
             .output()
@@ -48,6 +69,18 @@ pub fn get_api_key() -> AppResult<Option<String>> {
 }
 
 pub fn set_api_key(api_key: &str) -> AppResult<()> {
+    set_key_with_account(api_key, KEYCHAIN_ACCOUNT, &ENV_API_KEY_SUPPRESSED)
+}
+
+pub fn set_asr_api_key(api_key: &str) -> AppResult<()> {
+    set_key_with_account(api_key, ASR_KEYCHAIN_ACCOUNT, &ENV_ASR_API_KEY_SUPPRESSED)
+}
+
+fn set_key_with_account(
+    api_key: &str,
+    account: &str,
+    env_suppressed: &std::sync::atomic::AtomicBool,
+) -> AppResult<()> {
     if api_key.trim().is_empty() {
         return Err(AppError::Invalid("API Key 不能为空".to_owned()));
     }
@@ -61,7 +94,7 @@ pub fn set_api_key(api_key: &str) -> AppResult<()> {
                 "-s",
                 KEYCHAIN_SERVICE,
                 "-a",
-                KEYCHAIN_ACCOUNT,
+                account,
             ])
             .stdin(Stdio::piped())
             .spawn()
@@ -80,7 +113,7 @@ pub fn set_api_key(api_key: &str) -> AppResult<()> {
             ));
         }
         // 重新保存即恢复 env 兜底的默认优先级语义。
-        ENV_API_KEY_SUPPRESSED.store(false, std::sync::atomic::Ordering::SeqCst);
+        env_suppressed.store(false, std::sync::atomic::Ordering::SeqCst);
         Ok(())
     }
     #[cfg(not(target_os = "macos"))]
@@ -88,6 +121,17 @@ pub fn set_api_key(api_key: &str) -> AppResult<()> {
 }
 
 pub fn clear_api_key() -> AppResult<()> {
+    clear_key_with_account(KEYCHAIN_ACCOUNT, &ENV_API_KEY_SUPPRESSED)
+}
+
+pub fn clear_asr_api_key() -> AppResult<()> {
+    clear_key_with_account(ASR_KEYCHAIN_ACCOUNT, &ENV_ASR_API_KEY_SUPPRESSED)
+}
+
+fn clear_key_with_account(
+    account: &str,
+    env_suppressed: &std::sync::atomic::AtomicBool,
+) -> AppResult<()> {
     #[cfg(target_os = "macos")]
     {
         let _ = Command::new("security")
@@ -96,27 +140,27 @@ pub fn clear_api_key() -> AppResult<()> {
                 "-s",
                 KEYCHAIN_SERVICE,
                 "-a",
-                KEYCHAIN_ACCOUNT,
+                account,
             ])
             .status();
     }
     // 清除必须权威：Key 来自环境变量时也要让「已清除」成为事实，
     // 否则界面显示已清除、实际仍在发送（UI 状态说谎）。
-    ENV_API_KEY_SUPPRESSED.store(true, std::sync::atomic::Ordering::SeqCst);
+    env_suppressed.store(true, std::sync::atomic::Ordering::SeqCst);
     Ok(())
 }
 
 pub fn external_settings(library: &ManagedLibrary) -> AppResult<ExternalAiSettings> {
     library
         .repository()
-        .external_ai_settings(get_api_key()?.is_some())
+        .external_ai_settings(get_api_key()?.is_some(), get_asr_api_key()?.is_some())
 }
 
 /// 所有外部 AI 外发入口的唯一隐私同意门禁。
 ///
 /// 必须在读取 API Key、访问外发材料、构造客户端或发起网络请求之前调用。
 pub fn require_external_ai_consent(library: &ManagedLibrary) -> AppResult<ExternalAiSettings> {
-    let settings = library.repository().external_ai_settings(false)?;
+    let settings = library.repository().external_ai_settings(false, false)?;
     if settings.privacy_consent_at.is_none() {
         return Err(AppError::Invalid(
             "使用外部 AI 前必须确认文本发送说明".to_owned(),
@@ -124,6 +168,36 @@ pub fn require_external_ai_consent(library: &ManagedLibrary) -> AppResult<Extern
     }
     Ok(ExternalAiSettings {
         has_api_key: get_api_key()?.is_some(),
+        transcription_has_api_key: get_asr_api_key()?.is_some(),
+        ..settings
+    })
+}
+
+/// 第三方 ASR 的独立音频上传门禁。
+///
+/// 必须在读取 ASR Key、打开音频、预处理或构造请求之前调用。门禁本身不读取
+/// Key，避免把“未同意”错误误报成“配置不完整”。
+pub fn require_external_asr_consent(library: &ManagedLibrary) -> AppResult<ExternalAiSettings> {
+    let settings = library.repository().external_ai_settings(false, false)?;
+    if settings.processing_mode != "external" {
+        return Err(AppError::Invalid(
+            "当前不是第三方处理模式，不能上传音频".to_owned(),
+        ));
+    }
+    if settings.audio_upload_consent_at.is_none() {
+        return Err(AppError::Invalid(
+            "使用第三方转写前必须确认音频上传说明".to_owned(),
+        ));
+    }
+    if settings.transcription_provider.trim().is_empty()
+        || settings.transcription_provider == "none"
+        || settings.transcription_base_url.trim().is_empty()
+        || settings.transcription_model.trim().is_empty()
+    {
+        return Err(AppError::Invalid("请先完整配置第三方转写服务".to_owned()));
+    }
+    Ok(ExternalAiSettings {
+        transcription_has_api_key: get_asr_api_key()?.is_some(),
         ..settings
     })
 }
@@ -143,6 +217,7 @@ impl ApiKeyEnvGuard {
 
         static LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
         let lock = LOCK.get_or_init(|| std::sync::Mutex::new(()));
+        let _lock = lock.lock().unwrap_or_else(|error| error.into_inner());
         let previous_value = std::env::var_os("ECHO_EXTERNAL_AI_API_KEY");
         let previous_suppressed = ENV_API_KEY_SUPPRESSED.load(Ordering::SeqCst);
         std::env::set_var("ECHO_EXTERNAL_AI_API_KEY", value);
@@ -150,7 +225,7 @@ impl ApiKeyEnvGuard {
         Self {
             previous_value,
             previous_suppressed,
-            _lock: lock.lock().unwrap_or_else(|error| error.into_inner()),
+            _lock,
         }
     }
 }
@@ -165,5 +240,46 @@ impl Drop for ApiKeyEnvGuard {
             None => std::env::remove_var("ECHO_EXTERNAL_AI_API_KEY"),
         }
         ENV_API_KEY_SUPPRESSED.store(self.previous_suppressed, Ordering::SeqCst);
+    }
+}
+
+#[cfg(test)]
+pub(crate) struct AsrApiKeyEnvGuard {
+    previous_value: Option<std::ffi::OsString>,
+    previous_suppressed: bool,
+    _lock: std::sync::MutexGuard<'static, ()>,
+}
+
+#[cfg(test)]
+impl AsrApiKeyEnvGuard {
+    pub(crate) fn set(value: &str) -> Self {
+        use std::sync::atomic::Ordering;
+        use std::sync::OnceLock;
+
+        static LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
+        let lock = LOCK.get_or_init(|| std::sync::Mutex::new(()));
+        let _lock = lock.lock().unwrap_or_else(|error| error.into_inner());
+        let previous_value = std::env::var_os("ECHO_EXTERNAL_ASR_API_KEY");
+        let previous_suppressed = ENV_ASR_API_KEY_SUPPRESSED.load(Ordering::SeqCst);
+        std::env::set_var("ECHO_EXTERNAL_ASR_API_KEY", value);
+        ENV_ASR_API_KEY_SUPPRESSED.store(false, Ordering::SeqCst);
+        Self {
+            previous_value,
+            previous_suppressed,
+            _lock,
+        }
+    }
+}
+
+#[cfg(test)]
+impl Drop for AsrApiKeyEnvGuard {
+    fn drop(&mut self) {
+        use std::sync::atomic::Ordering;
+
+        match &self.previous_value {
+            Some(value) => std::env::set_var("ECHO_EXTERNAL_ASR_API_KEY", value),
+            None => std::env::remove_var("ECHO_EXTERNAL_ASR_API_KEY"),
+        }
+        ENV_ASR_API_KEY_SUPPRESSED.store(self.previous_suppressed, Ordering::SeqCst);
     }
 }

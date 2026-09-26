@@ -301,11 +301,8 @@ fn process_file(library_root: &Path, seen: &InboxSeenFile) -> Result<String, (St
     let record_id = ingest.record_id;
 
     let _ = repository.update_seen_file_status(&seen.id, "importing", Some(&record_id), None);
-    if let Err(error) = crate::commands::transcribe_with_library(&library, &record_id) {
-        return Err(("failed".to_owned(), format!("转写失败：{error}")));
-    }
-    if let Err(error) = crate::commands::analyze_with_library(&library, &record_id) {
-        return Err(("failed".to_owned(), format!("分析失败：{error}")));
+    if let Err(error) = crate::commands::process_record_with_library(&library, &record_id) {
+        return Err(("failed".to_owned(), error.to_string()));
     }
     if repository
         .setting_value("transcript_correction_enabled")

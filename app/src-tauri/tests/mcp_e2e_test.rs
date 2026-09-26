@@ -58,6 +58,7 @@ fn mcp_returns_decisions_with_traceable_source() {
                 open_questions: vec![],
                 custom_sections: vec![],
                 quality_warning: None,
+                quality_severity: None,
             },
         )
         .unwrap();

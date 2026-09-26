@@ -1,8 +1,8 @@
 cff-version: 1.2.0
 message: "If you use Echo Memory in research, documentation, or an AI workflow, please cite it using this metadata."
 title: "Echo Memory"
-version: "0.5.1"
-date-released: 2026-09-18
+version: "0.7.0"
+date-released: 2026-09-26
 license: Apache-2.0
 repository-code: "https://github.com/questionjie-max/echo-memory"
 abstract: "A local-first Personal Memory OS that turns conversations and documents into traceable, evolving context for people and AI agents."

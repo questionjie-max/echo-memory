@@ -96,6 +96,14 @@ export function listRecords(projectId?: string | null, unfiledOnly = false): Pro
   return invoke<RecordBrief[]>("list_records", { projectId: projectId ?? null, unfiledOnly });
 }
 
+export function listArchivedRecords(projectId?: string | null, unfiledOnly = false): Promise<RecordBrief[]> {
+  return invoke<RecordBrief[]>("list_archived_records", { projectId: projectId ?? null, unfiledOnly });
+}
+
+export function setRecordArchived(recordId: string, archived: boolean): Promise<RecordBrief> {
+  return invoke<RecordBrief>("set_record_archived", { recordId, archived });
+}
+
 export function getRecord(id: string): Promise<RecordBrief> {
   return invoke<RecordBrief>("get_record", { id });
 }
@@ -255,6 +263,14 @@ export function setExternalAiApiKey(apiKey: string): Promise<ExternalAiSettings>
 
 export function clearExternalAiApiKey(): Promise<ExternalAiSettings> {
   return invoke<ExternalAiSettings>("clear_external_ai_api_key");
+}
+
+export function setExternalAsrApiKey(apiKey: string): Promise<ExternalAiSettings> {
+  return invoke<ExternalAiSettings>("set_external_asr_api_key", { apiKey });
+}
+
+export function clearExternalAsrApiKey(): Promise<ExternalAiSettings> {
+  return invoke<ExternalAiSettings>("clear_external_asr_api_key");
 }
 
 export function testExternalAiConnection(): Promise<void> {
