@@ -141,6 +141,15 @@ mod tests {
             )
             .unwrap();
         assert_eq!(memory_tables, 2);
+
+        let archived_column: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('records') WHERE name = 'archived_at'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(archived_column, 1, "records 必须包含 archived_at 归档字段");
     }
 
     /// 发布包里的迁移文件必须随 resources 一起分发：只靠编译机的源码路径，

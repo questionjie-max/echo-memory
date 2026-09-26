@@ -10,7 +10,6 @@ import type {
   LocalAiStatus,
   Project,
   RecordBrief,
-  RecordStatus,
   RelatedRecord,
   SpeakerSummary,
   TranscriptionEngineStatus,
@@ -536,7 +535,7 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
     <section className="detail-pane" aria-label={isDocument ? "文档详情" : "录音详情"}>
       <header className="detail-header">
         <div className="detail-title">
-          <span className={`status-dot status-${statusTone(currentRecord.status)}`} aria-hidden="true" />
+          <span className={`status-dot status-${statusTone(currentRecord)}`} aria-hidden="true" />
           <div>
             <p className="pane-eyebrow">{isDocument ? "文档详情" : "录音详情"} · {statusText(currentRecord)}</p>
             {editingTitle ? (
@@ -746,7 +745,7 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
             {currentRecord.lastAnalysisError && !isProcessing(currentRecord.status) && (
               <p className="analysis-error">{currentRecord.lastAnalysisError}</p>
             )}
-            {analysis ? <AnalysisView analysis={analysis} documentMode={isDocument} onSeek={(ms, segmentId) => {
+            {analysis ? <AnalysisView analysis={analysis} documentMode={isDocument} blocking={currentRecord.analysisStatus === "incomplete"} onSeek={(ms, segmentId) => {
               setHighlightedSegmentId(segmentId);
               setActiveTab("transcript");
               window.setTimeout(() => {
@@ -869,7 +868,7 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
   );
 }
 
-function AnalysisView({ analysis, documentMode, onSeek }: { analysis: AnalysisContent; documentMode: boolean; onSeek: (ms: number, segmentId: string) => void }) {
+function AnalysisView({ analysis, documentMode, blocking, onSeek }: { analysis: AnalysisContent; documentMode: boolean; blocking: boolean; onSeek: (ms: number, segmentId: string) => void }) {
   const groups: Array<[string, AnalysisResultItem[] | undefined, string]> = [
     ["关键观点", analysis.key_points, "未识别出足够可靠的关键观点。"],
     ["决策", analysis.decisions, "未识别出明确决策。"],
@@ -878,7 +877,9 @@ function AnalysisView({ analysis, documentMode, onSeek }: { analysis: AnalysisCo
   ];
   return (
     <div className="analysis-sections">
-      {analysis.quality_warning && <p className="analysis-warning">分析不完整：{analysis.quality_warning}</p>}
+      {analysis.quality_warning && (
+        <p className="analysis-warning">{blocking ? "分析不完整：" : "质量提醒："}{analysis.quality_warning}</p>
+      )}
       <section className="analysis-section">
         <h3>摘要</h3>
         <p>{analysis.summary || "暂未生成有效摘要。"}</p>
@@ -998,14 +999,16 @@ function statusText(record: RecordBrief) {
   if (record.lastAnalysisError && !record.hasAnalysis) return "分析失败";
   if (record.analysisStatus === "stale") return "分析需要更新";
   if (record.analysisStatus === "incomplete") return "分析不完整";
+  if (record.analysisStatus === "completed" && record.analysisHasQualityWarning) return "已完成 · 有质量提醒";
   if (!record.hasAnalysis) return "待分析";
   if (!record.projectId) return "待归档";
   return "已完成";
 }
 
-function statusTone(status: RecordStatus) {
-  if (status === "failed") return "error";
-  if (isProcessing(status)) return "progress";
+function statusTone(record: RecordBrief) {
+  if (record.status === "failed") return "error";
+  if (isProcessing(record.status)) return "progress";
+  if (record.analysisStatus === "completed" && record.analysisHasQualityWarning) return "attention";
   return "done";
 }
 

@@ -38,11 +38,13 @@ function record(id: string, title: string, overrides: Partial<RecordBrief> = {})
     hasTranscript: true,
     hasAnalysis: true,
     analysisStatus: "completed",
+    analysisHasQualityWarning: false,
     lastAnalysisError: null,
     analysisTemplateId: "builtin-standard",
     processingStage: null,
     progressCurrent: 0,
     progressTotal: 0,
+    archivedAt: null,
     ...overrides,
   };
 }
@@ -78,6 +80,7 @@ beforeEach(() => {
     { id: "p1", name: "产品研发", status: "active", createdAt: "", updatedAt: "" } as Project,
     { id: "p2", name: "客户与增长", status: "active", createdAt: "", updatedAt: "" } as Project,
   ]);
+  vi.mocked(tauri.listArchivedRecords).mockResolvedValue([]);
   vi.mocked(tauri.moveRecords).mockResolvedValue(2);
   vi.mocked(tauri.deleteRecords).mockResolvedValue({
     deletedCount: 2,
@@ -106,6 +109,23 @@ describe("工作区批量管理", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: "选择 季度产品评审" }));
     expect(tauri.getRecord).not.toHaveBeenCalled();
     await screen.findByText("已选 1 条");
+  });
+
+  it("区分完成提醒和阻断性分析状态", async () => {
+    vi.mocked(tauri.listRecords).mockResolvedValue([
+      record("advisory", "有质量提醒的录音", {
+        analysisHasQualityWarning: true,
+      }),
+      record("blocking", "分析不完整的录音", {
+        analysisStatus: "incomplete",
+        hasAnalysis: false,
+      }),
+    ]);
+
+    renderPanel();
+
+    await screen.findByText("已完成 · 有质量提醒");
+    await screen.findByText("分析不完整");
   });
 
   it("表头全选只作用于当前可见列表", async () => {

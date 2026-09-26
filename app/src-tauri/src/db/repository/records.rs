@@ -17,7 +17,12 @@ const RECORD_SELECT: &str = "SELECT records.id, records.title, records.project_i
     (SELECT stage FROM processing_jobs WHERE processing_jobs.record_id = records.id ORDER BY updated_at DESC LIMIT 1), \
     COALESCE((SELECT progress_current FROM processing_jobs WHERE processing_jobs.record_id = records.id ORDER BY updated_at DESC LIMIT 1), 0), \
     COALESCE((SELECT progress_total FROM processing_jobs WHERE processing_jobs.record_id = records.id ORDER BY updated_at DESC LIMIT 1), 0), \
-    records.source_type \
+    records.source_type, records.archived_at, \
+    COALESCE(( \
+        SELECT json_extract(content_json, '$.quality_warning') IS NOT NULL \
+        FROM analyses WHERE analyses.record_id = records.id \
+        ORDER BY created_at DESC LIMIT 1 \
+    ), 0) \
     FROM records LEFT JOIN projects ON projects.id = records.project_id";
 
 impl LibraryRepository {
@@ -50,11 +55,13 @@ impl LibraryRepository {
             has_transcript: false,
             has_analysis: false,
             analysis_status: None,
+            analysis_has_quality_warning: false,
             last_analysis_error: None,
             analysis_template_id: Some("builtin-standard".to_owned()),
             processing_stage: None,
             progress_current: 0,
             progress_total: 0,
+            archived_at: None,
         };
         self.connect()?.execute(
             "INSERT INTO records \
@@ -107,11 +114,13 @@ impl LibraryRepository {
             has_transcript: false,
             has_analysis: false,
             analysis_status: None,
+            analysis_has_quality_warning: false,
             last_analysis_error: None,
             analysis_template_id: Some("builtin-standard".to_owned()),
             processing_stage: None,
             progress_current: 0,
             progress_total: 0,
+            archived_at: None,
         };
         let job = ProcessingJob {
             id: Uuid::new_v4().to_string(),
@@ -247,11 +256,33 @@ impl LibraryRepository {
         project_id: Option<&str>,
         unfiled_only: bool,
     ) -> AppResult<Vec<RecordBrief>> {
+        self.list_record_scope(project_id, unfiled_only, false)
+    }
+
+    pub fn list_archived_records(
+        &self,
+        project_id: Option<&str>,
+        unfiled_only: bool,
+    ) -> AppResult<Vec<RecordBrief>> {
+        self.list_record_scope(project_id, unfiled_only, true)
+    }
+
+    fn list_record_scope(
+        &self,
+        project_id: Option<&str>,
+        unfiled_only: bool,
+        archived: bool,
+    ) -> AppResult<Vec<RecordBrief>> {
         let connection = self.connect()?;
+        let archived_condition = if archived {
+            "records.archived_at IS NOT NULL"
+        } else {
+            "records.archived_at IS NULL"
+        };
         let rows = match (project_id, unfiled_only) {
             (Some(pid), _) => {
                 let mut stmt = connection.prepare(&format!(
-                    "{RECORD_SELECT} WHERE records.project_id = ?1 ORDER BY records.updated_at DESC"
+                    "{RECORD_SELECT} WHERE {archived_condition} AND records.project_id = ?1 ORDER BY records.updated_at DESC"
                 ))?;
                 let records = stmt
                     .query_map(params![pid], Self::map_record)?
@@ -260,7 +291,7 @@ impl LibraryRepository {
             }
             (None, true) => {
                 let mut stmt = connection.prepare(&format!(
-                    "{RECORD_SELECT} WHERE records.project_id IS NULL ORDER BY records.updated_at DESC"
+                    "{RECORD_SELECT} WHERE {archived_condition} AND records.project_id IS NULL ORDER BY records.updated_at DESC"
                 ))?;
                 let records = stmt
                     .query_map([], Self::map_record)?
@@ -268,8 +299,9 @@ impl LibraryRepository {
                 records
             }
             (None, false) => {
-                let mut stmt = connection
-                    .prepare(&format!("{RECORD_SELECT} ORDER BY records.updated_at DESC"))?;
+                let mut stmt = connection.prepare(&format!(
+                    "{RECORD_SELECT} WHERE {archived_condition} ORDER BY records.updated_at DESC"
+                ))?;
                 let records = stmt
                     .query_map([], Self::map_record)?
                     .collect::<Result<Vec<_>, rusqlite::Error>>()?;
@@ -328,6 +360,19 @@ impl LibraryRepository {
         let affected = self.connect()?.execute(
             "UPDATE records SET processing_status = ?2, updated_at = ?3 WHERE id = ?1",
             params![id, status, now],
+        )?;
+        if affected == 0 {
+            return Err(AppError::NotFound(format!("record {id}")));
+        }
+        self.get_record(id)
+    }
+
+    pub fn set_record_archived(&self, id: &str, archived: bool) -> AppResult<RecordBrief> {
+        let now = Utc::now().to_rfc3339();
+        let archived_at: Option<&str> = archived.then_some(now.as_str());
+        let affected = self.connect()?.execute(
+            "UPDATE records SET archived_at = ?2, updated_at = ?3 WHERE id = ?1",
+            params![id, archived_at, now],
         )?;
         if affected == 0 {
             return Err(AppError::NotFound(format!("record {id}")));
@@ -470,12 +515,14 @@ impl LibraryRepository {
             has_transcript: row.get::<_, i64>(8)? != 0,
             has_analysis: analysis_status.as_deref() == Some("completed"),
             analysis_status,
+            analysis_has_quality_warning: row.get::<_, i64>(17)? != 0,
             last_analysis_error: row.get(10)?,
             analysis_template_id: row.get(11)?,
             processing_stage: row.get(12)?,
             progress_current: row.get(13)?,
             progress_total: row.get(14)?,
             source_type: row.get(15)?,
+            archived_at: row.get(16)?,
         })
     }
 }

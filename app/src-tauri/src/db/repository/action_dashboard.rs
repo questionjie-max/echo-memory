@@ -7,7 +7,7 @@ impl LibraryRepository {
     pub fn list_action_items_detailed(&self) -> AppResult<Vec<ActionDashboardItem>> {
         let connection = self.connect()?;
         let mut statement = connection.prepare(
-            "SELECT items.id, items.record_id, records.title, items.project_id, projects.name, items.title, items.owner_text, items.due_text, items.status, items.source_segment_id, records.imported_at              FROM action_items AS items              JOIN records ON records.id = items.record_id              LEFT JOIN projects ON projects.id = items.project_id              ORDER BY CASE items.status WHEN 'open' THEN 0 ELSE 1 END, records.imported_at DESC",
+            "SELECT items.id, items.record_id, records.title, items.project_id, projects.name, items.title, items.owner_text, items.due_text, items.status, items.source_segment_id, records.imported_at              FROM action_items AS items              JOIN records ON records.id = items.record_id              LEFT JOIN projects ON projects.id = items.project_id              WHERE records.archived_at IS NULL              ORDER BY CASE items.status WHEN 'open' THEN 0 ELSE 1 END, records.imported_at DESC",
         )?;
         let rows = statement
             .query_map([], |row| {
@@ -47,7 +47,7 @@ impl LibraryRepository {
     pub fn list_open_questions(&self, limit: u64) -> AppResult<Vec<OpenQuestionItem>> {
         let connection = self.connect()?;
         let mut statement = connection.prepare(
-            "SELECT records.id, records.title, records.imported_at, analyses.content_json              FROM records JOIN analyses ON analyses.id = (                 SELECT a2.id FROM analyses AS a2 WHERE a2.record_id = records.id ORDER BY a2.created_at DESC LIMIT 1             )              ORDER BY records.imported_at DESC LIMIT ?1",
+            "SELECT records.id, records.title, records.imported_at, analyses.content_json              FROM records JOIN analyses ON analyses.id = (                 SELECT a2.id FROM analyses AS a2 WHERE a2.record_id = records.id ORDER BY a2.created_at DESC LIMIT 1             )              WHERE records.archived_at IS NULL              ORDER BY records.imported_at DESC LIMIT ?1",
         )?;
         let rows = statement
             .query_map(params![limit as i64], |row| {

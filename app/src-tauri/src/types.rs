@@ -30,11 +30,13 @@ pub struct RecordBrief {
     pub has_transcript: bool,
     pub has_analysis: bool,
     pub analysis_status: Option<String>,
+    pub analysis_has_quality_warning: bool,
     pub last_analysis_error: Option<String>,
     pub analysis_template_id: Option<String>,
     pub processing_stage: Option<String>,
     pub progress_current: i64,
     pub progress_total: i64,
+    pub archived_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -282,13 +284,19 @@ pub struct KnowledgeChunkRecord {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExternalAiSettings {
+    /// 录音处理总通道：本机完成，或交给第三方 ASR + 文本模型。
+    pub processing_mode: String,
     pub enabled: bool,
     pub base_url: String,
     pub model: String,
     pub has_api_key: bool,
     pub privacy_consent_at: Option<String>,
-    /// Reserved for a future cloud transcription provider. Audio upload is not implemented.
+    /// 第三方 ASR 供应商标识；当前实现使用 OpenAI 兼容接口。
     pub transcription_provider: String,
+    pub transcription_base_url: String,
+    pub transcription_model: String,
+    pub transcription_has_api_key: bool,
+    pub audio_upload_consent_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

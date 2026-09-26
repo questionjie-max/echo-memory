@@ -93,8 +93,13 @@ impl LibraryRepository {
         self.knowledge_settings()
     }
 
-    pub fn external_ai_settings(&self, has_api_key: bool) -> AppResult<ExternalAiSettings> {
+    pub fn external_ai_settings(
+        &self,
+        has_api_key: bool,
+        transcription_has_api_key: bool,
+    ) -> AppResult<ExternalAiSettings> {
         Ok(ExternalAiSettings {
+            processing_mode: self.setting("processing_mode", "local")?,
             enabled: self.setting("external_ai_enabled", "false")? == "true",
             base_url: self.setting("external_ai_base_url", "https://api.openai.com/v1")?,
             model: self.setting("external_ai_model", "gpt-4.1-mini")?,
@@ -103,7 +108,21 @@ impl LibraryRepository {
                 value if value.is_empty() => None,
                 value => Some(value),
             },
-            transcription_provider: self.setting("cloud_transcription_provider", "none")?,
+            transcription_provider: self
+                .setting("cloud_transcription_provider", "openai-compatible")?,
+            transcription_base_url: self.setting(
+                "cloud_transcription_base_url",
+                "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            )?,
+            transcription_model: self.setting("cloud_transcription_model", "qwen3-asr-flash")?,
+            transcription_has_api_key,
+            audio_upload_consent_at: match self
+                .setting("cloud_audio_upload_consent_at", "")?
+                .as_str()
+            {
+                "" => None,
+                value => Some(value.to_owned()),
+            },
         })
     }
 
@@ -111,7 +130,11 @@ impl LibraryRepository {
         &self,
         settings: &ExternalAiSettings,
         has_api_key: bool,
+        transcription_has_api_key: bool,
     ) -> AppResult<ExternalAiSettings> {
+        if !matches!(settings.processing_mode.as_str(), "local" | "external") {
+            return Err(AppError::Invalid("录音处理通道无效".to_owned()));
+        }
         let base_url = settings.base_url.trim().trim_end_matches('/');
         let model = settings.model.trim();
         if base_url.is_empty() || base_url.len() > 500 {
@@ -128,11 +151,22 @@ impl LibraryRepository {
                 "启用外部 AI 前必须确认文本发送说明".to_owned(),
             ));
         }
+        let transcription_base_url = settings.transcription_base_url.trim().trim_end_matches('/');
+        let transcription_model = settings.transcription_model.trim();
+        if transcription_base_url.is_empty() || transcription_base_url.len() > 500 {
+            return Err(AppError::Invalid("第三方语音转文字地址无效".to_owned()));
+        }
+        crate::memory::validate_external_base_url(transcription_base_url)?;
+        if transcription_model.is_empty() || transcription_model.len() > 160 {
+            return Err(AppError::Invalid("第三方语音转文字模型名称无效".to_owned()));
+        }
         let mut connection = self.connect()?;
         let transaction = connection.transaction()?;
         let now = Utc::now().to_rfc3339();
         let consent = settings.privacy_consent_at.as_deref().unwrap_or("");
+        let audio_consent = settings.audio_upload_consent_at.as_deref().unwrap_or("");
         for (key, value) in [
+            ("processing_mode", settings.processing_mode.as_str()),
             (
                 "external_ai_enabled",
                 if settings.enabled { "true" } else { "false" },
@@ -140,7 +174,13 @@ impl LibraryRepository {
             ("external_ai_base_url", base_url),
             ("external_ai_model", model),
             ("external_ai_privacy_consent_at", consent),
-            ("cloud_transcription_provider", "none"),
+            (
+                "cloud_transcription_provider",
+                settings.transcription_provider.as_str(),
+            ),
+            ("cloud_transcription_base_url", transcription_base_url),
+            ("cloud_transcription_model", transcription_model),
+            ("cloud_audio_upload_consent_at", audio_consent),
         ] {
             transaction.execute(
                 "INSERT INTO app_settings (key, value, updated_at) VALUES (?1, ?2, ?3) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
@@ -148,7 +188,7 @@ impl LibraryRepository {
             )?;
         }
         transaction.commit()?;
-        self.external_ai_settings(has_api_key)
+        self.external_ai_settings(has_api_key, transcription_has_api_key)
     }
 
     fn setting(&self, key: &str, default: &str) -> AppResult<String> {
@@ -292,5 +332,74 @@ impl LibraryRepository {
             created_at: row.get(6)?,
             updated_at: row.get(7)?,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    fn temp_repository() -> (LibraryRepository, std::path::PathBuf) {
+        let root = std::env::temp_dir().join(format!("external-settings-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        (
+            LibraryRepository::new(root.join("library.db")).unwrap(),
+            root,
+        )
+    }
+
+    #[test]
+    fn processing_mode_and_independent_asr_settings_persist() {
+        let (repository, root) = temp_repository();
+        let defaults = repository.external_ai_settings(false, false).unwrap();
+        assert_eq!(defaults.processing_mode, "local");
+        assert!(!defaults.transcription_has_api_key);
+
+        let mut next = defaults;
+        next.processing_mode = "external".to_owned();
+        next.transcription_provider = "dashscope".to_owned();
+        next.transcription_base_url = "https://api.example.com/v1".to_owned();
+        next.transcription_model = "asr-model".to_owned();
+        next.audio_upload_consent_at = Some("2026-09-25T00:00:00Z".to_owned());
+        repository
+            .update_external_ai_settings(&next, false, true)
+            .unwrap();
+
+        let saved = repository.external_ai_settings(false, true).unwrap();
+        assert_eq!(saved.processing_mode, "external");
+        assert_eq!(saved.transcription_provider, "dashscope");
+        assert_eq!(saved.transcription_base_url, "https://api.example.com/v1");
+        assert_eq!(saved.transcription_model, "asr-model");
+        assert!(saved.transcription_has_api_key);
+        assert_eq!(
+            saved.audio_upload_consent_at.as_deref(),
+            Some("2026-09-25T00:00:00Z")
+        );
+
+        let mut invalid = saved;
+        invalid.processing_mode = "unknown".to_owned();
+        assert!(repository
+            .update_external_ai_settings(&invalid, false, true)
+            .is_err());
+        drop(repository);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn external_mode_persists_before_asr_provider_is_selected() {
+        let (repository, root) = temp_repository();
+        let mut next = repository.external_ai_settings(false, false).unwrap();
+        next.processing_mode = "external".to_owned();
+        next.transcription_provider = "none".to_owned();
+
+        let saved = repository
+            .update_external_ai_settings(&next, false, false)
+            .unwrap();
+
+        assert_eq!(saved.processing_mode, "external");
+        assert_eq!(saved.transcription_provider, "none");
+        drop(repository);
+        let _ = std::fs::remove_dir_all(root);
     }
 }

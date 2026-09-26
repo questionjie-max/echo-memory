@@ -33,7 +33,7 @@ impl LibraryRepository {
              LEFT JOIN transcript_segments AS citation_segments ON citation_segments.id = {citation_segment}"
         );
         let sql = format!(
-            "{} WHERE record_search MATCH ?1 AND (?2 IS NULL OR search.project_id = ?2) \
+             "{} WHERE records.archived_at IS NULL AND record_search MATCH ?1 AND (?2 IS NULL OR search.project_id = ?2) \
              AND (?3 = 0 OR search.project_id IS NULL) ORDER BY rank LIMIT ?4",
             common_select.replace(
                 "{snippet}",
@@ -41,7 +41,7 @@ impl LibraryRepository {
             )
         );
         let short_sql = format!(
-            "{} WHERE (search.title LIKE '%' || ?1 || '%' OR search.body LIKE '%' || ?1 || '%') \
+             "{} WHERE records.archived_at IS NULL AND (search.title LIKE '%' || ?1 || '%' OR search.body LIKE '%' || ?1 || '%') \
              AND (?2 IS NULL OR search.project_id = ?2) AND (?3 = 0 OR search.project_id IS NULL) \
              ORDER BY records.updated_at DESC LIMIT ?4",
             common_select.replace("{snippet}", "search.body")

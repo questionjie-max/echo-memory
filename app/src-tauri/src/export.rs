@@ -337,6 +337,7 @@ mod tests {
                         items: vec![],
                     }],
                     quality_warning: None,
+                    quality_severity: None,
                 },
             )
             .unwrap();

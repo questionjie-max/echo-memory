@@ -198,7 +198,7 @@ input::placeholder, textarea::placeholder { color: var(--em-ink-4); }
 /* 工具栏的版式契约是「四个固定角色」：品牌可压缩、导航不收缩、搜索吃剩余宽度、设置不收缩。
    关键约束：搜索框必须常驻 —— 它是唯一带 flex-grow 的元素，一旦按视图增减，
    space-between 会把剩余宽度重新分配，导航就会横着挪（此前「导航来回跳」的成因）。
-   另外副标题已收紧为一行隐私口径（见 lib/posture.ts），品牌区因此可以窄一些。 */
+   另外副标题使用一行产品价值文案（见 lib/posture.ts），品牌区因此可以窄一些。 */
 .brand-block h1 { margin: 0; font-size: 18px; line-height: 1.2; font-weight: 720; letter-spacing: 0; }
 .brand-block p { margin: 4px 0 0; color: var(--em-ink-3); font-size: 11px; line-height: 1.35; }
 .workspace-grid {
@@ -380,7 +380,7 @@ input::placeholder, textarea::placeholder { color: var(--em-ink-4); }
 .popover-empty { margin: 0; padding: 24px 12px; color: var(--em-ink-4); font-size: 12px; text-align: center; }
 
 .workspace-heading { margin-bottom: 12px; }
-.segmented-control { display: grid; grid-template-columns: 1fr 1fr; padding: 2px; border-radius: 7px; background: var(--em-soft-fill-2); }
+.segmented-control { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 2px; border-radius: 7px; background: var(--em-soft-fill-2); }
 .segmented-control button { padding: 5px 8px; border: 0; border-radius: 5px; background: transparent; color: var(--em-ink-3); cursor: pointer; font-size: 12px; font-weight: 600; }
 .segmented-control button.selected { background: var(--em-panel); color: var(--em-ink); box-shadow: var(--em-shadow-sm); }
 .segmented-control button span { margin-left: 3px; color: var(--em-ink-4); font-size: 10px; }
@@ -424,6 +424,63 @@ input::placeholder, textarea::placeholder { color: var(--em-ink-4); }
   white-space: nowrap;
 }
 .record-list li.selected .record-main .record-library { background: var(--em-accent-soft); color: var(--em-accent-ink); }
+.record-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.record-menu-button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--em-ink-3);
+  cursor: pointer;
+}
+.record-menu-button:hover, .record-menu-button:focus-visible { background: var(--em-soft-fill); color: var(--em-ink); }
+.record-context-menu {
+  position: fixed;
+  z-index: 80;
+  width: 216px;
+  padding: 7px;
+  border: 1px solid var(--em-input-border);
+  border-radius: var(--em-r-sm);
+  background: var(--em-elevated);
+  box-shadow: var(--em-shadow-float);
+}
+.record-context-header { display: grid; gap: 3px; padding: 3px 7px 8px; border-bottom: 1px solid var(--em-hairline-soft); }
+.record-context-header strong { overflow: hidden; color: var(--em-ink); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.record-context-header span { color: var(--em-ink-4); font-size: 10px; }
+.record-context-menu > button {
+  display: block;
+  width: 100%;
+  padding: 7px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--em-ink-2);
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+}
+.record-context-menu > button:hover, .record-context-menu > button:focus-visible { background: var(--em-soft-fill); }
+.record-context-editor { display: grid; gap: 9px; padding: 9px 7px 3px; }
+.record-context-editor label { display: grid; gap: 4px; color: var(--em-ink-3); font-size: 10px; }
+.record-context-editor input, .record-context-editor select {
+  min-width: 0;
+  width: 100%;
+  padding: 6px 7px;
+  border: 1px solid var(--em-input-border);
+  border-radius: 6px;
+  background: var(--em-input-bg);
+  color: var(--em-ink);
+  font-size: 12px;
+}
+.record-context-buttons { display: flex; justify-content: flex-end; gap: 6px; }
+.record-context-buttons button { padding: 5px 9px; border: 1px solid var(--em-input-border); border-radius: 6px; background: var(--em-select-bg); color: var(--em-ink-2); cursor: pointer; font-size: 11px; }
+.record-context-buttons button:disabled { opacity: 0.55; cursor: default; }
+.record-context-buttons .primary-button { border-color: var(--em-accent); }
+.record-context-error { margin: 7px 7px 2px; padding: 6px; border-radius: 5px; background: var(--em-err-soft); color: var(--em-err-ink); font-size: 10px; line-height: 1.4; }
 .status-pill { flex: 0 0 auto; max-width: 72px; padding: 3px 6px; border-radius: var(--em-r-xs); font-size: 10px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status-progress { background: var(--em-accent-soft); color: var(--em-accent-ink); }
 .status-attention { background: var(--em-warn-soft); color: var(--em-warn-ink); }
