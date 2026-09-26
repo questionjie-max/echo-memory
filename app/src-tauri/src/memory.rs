@@ -142,7 +142,7 @@ pub fn validate_external_base_url(base_url: &str) -> AppResult<String> {
 
 /// 请求前复校：域名可能在上次保存后被改解析到内网（DNS rebinding）。
 /// 解析失败时放行（网络抖动不该让请求失败），由超时兜底。
-fn assert_endpoint_still_safe(endpoint: &str) -> AppResult<()> {
+pub(crate) fn assert_endpoint_still_safe(endpoint: &str) -> AppResult<()> {
     let url =
         Url::parse(endpoint).map_err(|_| AppError::ExternalAi("外部 AI 地址无效".to_owned()))?;
     if let Some(Host::Domain(domain)) = url.host() {
@@ -974,7 +974,7 @@ fn parse_snapshot_result(content: &str) -> AppResult<MemorySnapshotResult> {
         .map_err(|_| AppError::ExternalAi("外部 AI 返回的记忆结构无效".to_owned()))
 }
 
-fn parse_json_object(content: &str) -> AppResult<Value> {
+pub(crate) fn parse_json_object(content: &str) -> AppResult<Value> {
     let trimmed = content.trim();
     if let Ok(value @ Value::Object(_)) = serde_json::from_str::<Value>(trimmed) {
         return Ok(value);

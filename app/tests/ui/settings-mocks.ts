@@ -43,12 +43,17 @@ export function localAiStatusFixture(overrides: Partial<LocalAiStatus> = {}): Lo
 
 export function externalAiSettingsFixture(overrides: Partial<ExternalAiSettings> = {}): ExternalAiSettings {
   return {
+    processingMode: "local",
     enabled: false,
     baseUrl: "https://api.openai.com/v1",
     model: "gpt-4.1-mini",
     hasApiKey: false,
     privacyConsentAt: null,
-    transcriptionProvider: "",
+    transcriptionProvider: "openai-compatible",
+    transcriptionBaseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    transcriptionModel: "qwen3-asr-flash",
+    transcriptionHasApiKey: false,
+    audioUploadConsentAt: null,
     ...overrides,
   };
 }
@@ -76,6 +81,10 @@ export function setupSettingsMocks(api: typeof Tauri) {
   );
   vi.mocked(api.setExternalAiApiKey).mockResolvedValue(externalAiSettingsFixture({ hasApiKey: true }));
   vi.mocked(api.clearExternalAiApiKey).mockResolvedValue(externalAiSettingsFixture());
+  vi.mocked(api.setExternalAsrApiKey).mockResolvedValue(
+    externalAiSettingsFixture({ transcriptionHasApiKey: true }),
+  );
+  vi.mocked(api.clearExternalAsrApiKey).mockResolvedValue(externalAiSettingsFixture());
   vi.mocked(api.testExternalAiConnection).mockResolvedValue(undefined);
   vi.mocked(api.updateKnowledgeSettings).mockImplementation((settings) => Promise.resolve(settings));
   vi.mocked(api.listAnalysisTemplates).mockResolvedValue([]);
@@ -94,7 +103,7 @@ export function setupSettingsMocks(api: typeof Tauri) {
   vi.mocked(api.listHotwords).mockResolvedValue([]);
   vi.mocked(api.getOutputStatus).mockResolvedValue({ folder: null, autoExportAnalysis: false, recentFiles: [] });
   vi.mocked(api.getTranscriptCorrectionEnabled).mockResolvedValue(false);
-  vi.mocked(api.getAppInfo).mockResolvedValue({ version: "0.5.1", libraryPath: "/tmp/echo-memory" });
+  vi.mocked(api.getAppInfo).mockResolvedValue({ version: "0.7.0", libraryPath: "/tmp/echo-memory" });
   vi.mocked(api.getTranscriptionEngineStatus).mockResolvedValue(engineStatusFixture());
   vi.mocked(api.setTranscriptionEngine).mockResolvedValue(undefined);
   vi.mocked(api.setHfToken).mockResolvedValue(undefined);

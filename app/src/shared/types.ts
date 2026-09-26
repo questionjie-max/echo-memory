@@ -47,11 +47,13 @@ export interface RecordBrief {
   hasTranscript: boolean;
   hasAnalysis: boolean;
   analysisStatus: "completed" | "incomplete" | "stale" | null;
+  analysisHasQualityWarning: boolean;
   lastAnalysisError: string | null;
   analysisTemplateId: string | null;
   processingStage: string | null;
   progressCurrent: number;
   progressTotal: number;
+  archivedAt: string | null;
 }
 
 export interface TranscriptSegment {
@@ -311,13 +313,18 @@ export interface DeleteRecordsResult {
 /* -------------------------- external memory views -------------------------- */
 
 export interface ExternalAiSettings {
+  processingMode: "local" | "external";
   enabled: boolean;
   baseUrl: string;
   model: string;
   hasApiKey: boolean;
   privacyConsentAt: string | null;
-  /** Reserved only; cloud audio transcription is not implemented. */
+  /** Third-party ASR provider identifier. */
   transcriptionProvider: string;
+  transcriptionBaseUrl: string;
+  transcriptionModel: string;
+  transcriptionHasApiKey: boolean;
+  audioUploadConsentAt: string | null;
 }
 
 export type MemoryViewKind = "timeline" | "map" | "evolution";

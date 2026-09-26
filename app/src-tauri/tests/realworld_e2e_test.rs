@@ -1,6 +1,6 @@
 // 真实环境端到端测试：需要 ECHO_E2E=1 + 真实 Whisper 模型（默认探测路径）+ 本机 Ollama。
 // 覆盖 v0.4.0 全链路：导入 → 本地转写 → 本地分析 → Dock 对话 → 模板草稿 → 产出文件夹导出。
-use echo_memory_lib::commands::{analyze_with_library, transcribe_with_library};
+use echo_memory_lib::commands::process_record_with_library;
 use echo_memory_lib::dock;
 use echo_memory_lib::library::ManagedLibrary;
 use std::path::PathBuf;
@@ -38,8 +38,8 @@ fn full_pipeline_from_real_speech_to_output_folder() {
         .expect("导入失败");
     assert!(!ingest.duplicate);
 
-    // 2) 真实 Whisper 转写（本地模型，默认探测路径）。
-    transcribe_with_library(&library, &ingest.record_id).expect("转写失败");
+    // 2) 统一编排：真实 Whisper 转写成功后必须继续执行本地分析。
+    process_record_with_library(&library, &ingest.record_id).expect("转写或分析失败");
     let segments = library
         .repository()
         .list_transcript_segments(&ingest.record_id)
@@ -56,8 +56,7 @@ fn full_pipeline_from_real_speech_to_output_folder() {
         transcript.chars().take(60).collect::<String>()
     );
 
-    // 3) 真实 Ollama 分析（qwen2.5:7b）。
-    analyze_with_library(&library, &ingest.record_id).expect("分析失败");
+    // 3) 分析结果必须已经由统一编排写入。
     let analysis = library
         .repository()
         .latest_analysis(&ingest.record_id)

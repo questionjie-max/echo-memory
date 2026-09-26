@@ -4,11 +4,21 @@ import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useMemo, useState } from "react";
 import type { InboxStatus, Project, RecordBrief, RecordStatus } from "../shared/types";
-import { importAudio, listRecords, transcribeRecord, listProjects, moveRecords, deleteRecords } from "../lib/tauri";
+import {
+  deleteRecords,
+  importAudio,
+  listArchivedRecords,
+  listProjects,
+  listRecords,
+  moveRecords,
+  setRecordArchived,
+  transcribeRecord,
+  updateRecordTitle,
+} from "../lib/tauri";
 import { formatMinutesSeconds as formatDuration, isProcessingStatus as isProcessing } from "../lib/format";
 import { getInboxStatus } from "../lib/tauri";
 import DocumentImportDialog from "./DocumentImportDialog";
-import { PlayIcon, InboxIcon } from "./icons";
+import { InboxIcon, MoreIcon, PlayIcon } from "./icons";
 
 interface Props {
   projectId: string | null;
@@ -20,7 +30,15 @@ interface Props {
   onPlay: (record: RecordBrief) => void;
 }
 
-type WorkspaceView = "pending" | "recent";
+type WorkspaceView = "pending" | "recent" | "archived";
+type RecordMenuMode = "menu" | "move" | "rename";
+
+interface RecordMenuState {
+  record: RecordBrief;
+  mode: RecordMenuMode;
+  x: number;
+  y: number;
+}
 
 const STATUS_LABEL: Record<RecordStatus, string> = {
   queued: "等待转写",
@@ -33,12 +51,18 @@ const STATUS_LABEL: Record<RecordStatus, string> = {
 
 export default function RecordPanel({ projectId, unfiledOnly, onImported, selectedId, onSelect, onPlay }: Props) {
   const [records, setRecords] = useState<RecordBrief[]>([]);
+  const [archivedRecords, setArchivedRecords] = useState<RecordBrief[]>([]);
   const [view, setView] = useState<WorkspaceView>("pending");
   const [inbox, setInbox] = useState<InboxStatus | null>(null);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [projects, setProjects] = useState<Project[]>([]);
   const [moveTarget, setMoveTarget] = useState("");
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [recordMenu, setRecordMenu] = useState<RecordMenuState | null>(null);
+  const [menuMoveTarget, setMenuMoveTarget] = useState("");
+  const [menuRenameValue, setMenuRenameValue] = useState("");
+  const [menuBusy, setMenuBusy] = useState(false);
+  const [menuError, setMenuError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -70,7 +94,12 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
 
   async function refresh() {
     try {
-      setRecords(await listRecords(projectId, unfiledOnly));
+      const [active, archived] = await Promise.all([
+        listRecords(projectId, unfiledOnly),
+        listArchivedRecords(projectId, unfiledOnly),
+      ]);
+      setRecords(active);
+      setArchivedRecords(archived);
     } catch (reason) {
       setError(String(reason));
     }
@@ -86,6 +115,25 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
       return next.size === current.size ? current : next;
     });
   }, [records]);
+
+  useEffect(() => {
+    if (!recordMenu) return;
+    const closeOnOutside = (event: MouseEvent) => {
+      const target = event.target;
+      if (target instanceof Element && !target.closest("[data-record-menu]")) {
+        setRecordMenu(null);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setRecordMenu(null);
+    };
+    document.addEventListener("mousedown", closeOnOutside);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeOnOutside);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [recordMenu]);
 
   useEffect(() => {
     let cancelled = false;
@@ -107,6 +155,7 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
     // 相当于旧版靠 key 重挂载做到的事，但不会连带清掉批量操作的结果提示。
     setView("pending");
     setSelected(new Set());
+    setRecordMenu(null);
     setMoveTarget("");
     setError("");
     setNotice("");
@@ -171,7 +220,11 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
   }
 
   const pending = useMemo(() => records.filter(isPending), [records]);
-  const visible = view === "pending" ? pending : records;
+  const visible = view === "pending"
+    ? pending
+    : view === "archived"
+      ? archivedRecords
+      : records;
 
   const selectedIds = useMemo(
     () => visible.filter((record) => selected.has(record.id)).map((record) => record.id),
@@ -246,6 +299,100 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
     }
   }
 
+  function openRecordMenu(record: RecordBrief, x: number, y: number) {
+    setRecordMenu({
+      record,
+      mode: "menu",
+      x: Math.max(8, Math.min(x, window.innerWidth - 224)),
+      y: Math.max(8, Math.min(y, window.innerHeight - 260)),
+    });
+    setMenuMoveTarget(record.projectId ?? "");
+    setMenuRenameValue(record.title);
+    setMenuError("");
+  }
+
+  async function runRecordAction(
+    action: () => Promise<unknown>,
+    successMessage: string,
+    afterSuccess?: () => void,
+  ) {
+    if (menuBusy) return;
+    setMenuBusy(true);
+    setMenuError("");
+    try {
+      await action();
+      await refresh();
+      onImported();
+      setNotice(successMessage);
+      afterSuccess?.();
+      setRecordMenu(null);
+    } catch (reason) {
+      setMenuError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setMenuBusy(false);
+    }
+  }
+
+  function archiveFromMenu(record: RecordBrief) {
+    const archived = record.archivedAt === null;
+    void runRecordAction(
+      () => setRecordArchived(record.id, archived),
+      archived ? `已归档“${record.title}”。` : `已恢复“${record.title}”。`,
+      () => {
+        if (selectedId === record.id && archived) onSelect(null);
+      },
+    );
+  }
+
+  function moveFromMenu(record: RecordBrief) {
+    void runRecordAction(
+      async () => {
+        await moveRecords([record.id], menuMoveTarget || null);
+      },
+      menuMoveTarget
+        ? `已将“${record.title}”转移到所选知识库。`
+        : `已将“${record.title}”移动到未归档。`,
+    );
+  }
+
+  function renameFromMenu(record: RecordBrief) {
+    const title = menuRenameValue.trim();
+    if (!title || title === record.title) {
+      setMenuError(title ? "新名称与当前名称相同。" : "名称不能为空。");
+      return;
+    }
+    void runRecordAction(
+      () => updateRecordTitle(record.id, title),
+      `已重命名为“${title}”。`,
+    );
+  }
+
+  function deleteFromMenu(record: RecordBrief) {
+    const confirmed = window.confirm(
+      `确定删除“${record.title}”吗？\n\n逐字稿、分析结果和知识索引会一起删除，原始文件也会从本机移除，且无法恢复。`,
+    );
+    if (!confirmed) return;
+    let cleanupFailureCount = 0;
+    void runRecordAction(
+      async () => {
+        const result = await deleteRecords([record.id]);
+        cleanupFailureCount = result.fileCleanupFailures.length;
+      },
+      `已删除“${record.title}”及其原始文件。`,
+      () => {
+        if (cleanupFailureCount > 0) {
+          setNotice(`已删除“${record.title}”，但有 ${cleanupFailureCount} 个文件遗留。`);
+        }
+        setSelected((current) => {
+          const next = new Set(current);
+          next.delete(record.id);
+          return next;
+        });
+        if (selectedId === record.id) onSelect(null);
+      },
+    );
+  }
+
   return (
     <section className="record-pane" aria-label="工作区">
       <header className="pane-heading workspace-heading">
@@ -253,7 +400,8 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
           <p className="pane-eyebrow">资料处理</p>
           <h2>工作区</h2>
         </div>
-        <label className="select-all-toggle" title="全选或取消全选当前列表">
+        {view !== "archived" && (
+          <label className="select-all-toggle" title="全选或取消全选当前列表">
           <input
             type="checkbox"
             checked={allSelected}
@@ -262,7 +410,8 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
             aria-label="全选当前列表"
           />
           <span>全选</span>
-        </label>
+          </label>
+        )}
         <span className="count-badge">{visible.length}</span>
       </header>
 
@@ -278,30 +427,33 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
       <div className="segmented-control" aria-label="工作区视图">
         <button type="button" className={view === "pending" ? "selected" : ""} onClick={() => setView("pending")}>待处理 <span>{pending.length}</span></button>
         <button type="button" className={view === "recent" ? "selected" : ""} onClick={() => setView("recent")}>最近 <span>{records.length}</span></button>
+        <button type="button" className={view === "archived" ? "selected" : ""} onClick={() => setView("archived")}>归档 <span>{archivedRecords.length}</span></button>
       </div>
 
-      <div className="import-actions-grid">
-        <div className="import-strip">
-          <div>
-            <strong>导入录音</strong>
-            <span>MP3、M4A、WAV，也可拖入窗口</span>
+      {view !== "archived" && (
+        <div className="import-actions-grid">
+          <div className="import-strip">
+            <div>
+              <strong>导入录音</strong>
+              <span>MP3、M4A、WAV，也可拖入窗口</span>
+            </div>
+            <button type="button" className="primary-button" onClick={() => void chooseFiles()} disabled={busy}>
+              {busy ? "处理中…" : "选择音频"}
+            </button>
           </div>
-          <button type="button" className="primary-button" onClick={() => void chooseFiles()} disabled={busy}>
-            {busy ? "处理中…" : "选择音频"}
-          </button>
-        </div>
-        <div className="import-strip document-import-entry">
-          <div>
-            <strong>导入文档</strong>
-            <span>Markdown、TXT、Word 文档</span>
+          <div className="import-strip document-import-entry">
+            <div>
+              <strong>导入文档</strong>
+              <span>Markdown、TXT、Word 文档</span>
+            </div>
+            <button type="button" className="secondary-button" onClick={() => { setDocumentImportChanged(false); setDocumentImportOpen(true); }} disabled={busy}>
+              选择文档
+            </button>
           </div>
-          <button type="button" className="secondary-button" onClick={() => { setDocumentImportChanged(false); setDocumentImportOpen(true); }} disabled={busy}>
-            选择文档
-          </button>
         </div>
-      </div>
+      )}
 
-      {someSelected && (
+      {view !== "archived" && someSelected && (
         <div className="bulk-bar" role="group" aria-label="批量操作">
           <span className="bulk-count">已选 {selectedIds.length} 条</span>
           <label className="bulk-move">
@@ -334,15 +486,24 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
         {visible.map((record) => {
           const label = statusLabel(record);
           return (
-            <li key={record.id} className={selectedId === record.id ? "selected" : ""}>
-              <label className="record-check" onClick={(event) => event.stopPropagation()}>
-                <input
-                  type="checkbox"
-                  checked={selected.has(record.id)}
-                  onChange={() => toggleOne(record.id)}
-                  aria-label={`选择 ${record.title}`}
-                />
-              </label>
+            <li
+              key={record.id}
+              className={selectedId === record.id ? "selected" : ""}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                openRecordMenu(record, event.clientX, event.clientY);
+              }}
+            >
+              {view !== "archived" && (
+                <label className="record-check" onClick={(event) => event.stopPropagation()}>
+                  <input
+                    type="checkbox"
+                    checked={selected.has(record.id)}
+                    onChange={() => toggleOne(record.id)}
+                    aria-label={`选择 ${record.title}`}
+                  />
+                </label>
+              )}
               {record.sourceType !== "document" && (
                 <button
                   type="button"
@@ -359,16 +520,134 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
                 <span>{new Date(record.importedAt).toLocaleString()} · {record.sourceType === "document" ? "文字文档" : formatDuration(record.audioDurationMs, true)}</span>
                 <span className="record-library">{record.projectName ?? "未归档"}</span>
               </button>
-              <span className={`status-pill status-${statusTone(record)}`}>{label}</span>
+              <div className="record-actions">
+                <span className={`status-pill status-${view === "archived" ? "attention" : statusTone(record)}`}>
+                  {view === "archived" ? "已归档" : label}
+                </span>
+                <button
+                  type="button"
+                  className="record-menu-button"
+                  aria-label={`${record.title}操作`}
+                  title="更多操作"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    openRecordMenu(record, rect.right - 216, rect.bottom + 4);
+                  }}
+                >
+                  <MoreIcon size={16} />
+                </button>
+              </div>
             </li>
           );
         })}
         {visible.length === 0 && (
           <li className="record-empty">
-            {view === "pending" ? "当前没有待处理资料。" : "尚未导入录音或文档。"}
+            {view === "archived"
+              ? "没有已归档资料。"
+              : view === "pending"
+                ? "当前没有待处理资料。"
+                : "尚未导入录音或文档。"}
           </li>
         )}
       </ul>
+
+      {recordMenu && (
+        <div
+          className="record-context-menu"
+          data-record-menu
+          role="menu"
+          aria-label={`${recordMenu.record.title}操作菜单`}
+          style={{ left: recordMenu.x, top: recordMenu.y }}
+        >
+          <div className="record-context-header">
+            <strong>{recordMenu.record.title}</strong>
+            <span>{recordMenu.record.archivedAt ? "已归档" : recordMenu.record.projectName ?? "未归档"}</span>
+          </div>
+          {recordMenu.mode === "menu" && (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  onSelect(recordMenu.record);
+                  setRecordMenu(null);
+                }}
+              >
+                打开管理
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setRecordMenu({ ...recordMenu, mode: "move" });
+                  setMenuError("");
+                }}
+              >
+                转移知识库
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setRecordMenu({ ...recordMenu, mode: "rename" });
+                  setMenuError("");
+                }}
+              >
+                重命名
+              </button>
+              <button type="button" disabled={menuBusy} onClick={() => archiveFromMenu(recordMenu.record)}>
+                {recordMenu.record.archivedAt ? "恢复" : "归档"}
+              </button>
+              <button type="button" className="danger-text" disabled={menuBusy} onClick={() => deleteFromMenu(recordMenu.record)}>
+                删除
+              </button>
+            </>
+          )}
+          {recordMenu.mode === "move" && (
+            <div className="record-context-editor">
+              <label>
+                <span>目标知识库</span>
+                <select
+                  value={menuMoveTarget}
+                  onChange={(event) => setMenuMoveTarget(event.target.value)}
+                  disabled={menuBusy}
+                  aria-label="单条记录目标知识库"
+                >
+                  <option value="">未归档</option>
+                  {projects.map((project) => (
+                    <option key={project.id} value={project.id}>{project.name}</option>
+                  ))}
+                </select>
+              </label>
+              <div className="record-context-buttons">
+                <button type="button" disabled={menuBusy} onClick={() => setRecordMenu({ ...recordMenu, mode: "menu" })}>返回</button>
+                <button type="button" className="primary-button" disabled={menuBusy} onClick={() => moveFromMenu(recordMenu.record)}>
+                  {menuBusy ? "处理中…" : "移动"}
+                </button>
+              </div>
+            </div>
+          )}
+          {recordMenu.mode === "rename" && (
+            <div className="record-context-editor">
+              <label>
+                <span>记录名称</span>
+                <input
+                  value={menuRenameValue}
+                  onChange={(event) => setMenuRenameValue(event.target.value)}
+                  disabled={menuBusy}
+                  aria-label="记录名称"
+                  autoFocus
+                />
+              </label>
+              <div className="record-context-buttons">
+                <button type="button" disabled={menuBusy} onClick={() => setRecordMenu({ ...recordMenu, mode: "menu" })}>返回</button>
+                <button type="button" className="primary-button" disabled={menuBusy} onClick={() => renameFromMenu(recordMenu.record)}>
+                  {menuBusy ? "保存中…" : "保存"}
+                </button>
+              </div>
+            </div>
+          )}
+          {menuError && <p className="record-context-error" role="alert">{menuError}</p>}
+        </div>
+      )}
 
       <div className="pane-messages">
         {notice && <p className="inline-notice">{notice}</p>}
@@ -407,6 +686,7 @@ function statusLabel(record: RecordBrief) {
   if (!record.hasAnalysis && record.lastAnalysisError) return "分析失败";
   if (record.analysisStatus === "stale") return "分析需要更新";
   if (record.analysisStatus === "incomplete") return "分析不完整";
+  if (record.analysisStatus === "completed" && record.analysisHasQualityWarning) return "已完成 · 有质量提醒";
   if (!record.hasAnalysis) return "待分析";
   if (!record.projectId) return "待归档";
   return "已完成";
@@ -415,6 +695,7 @@ function statusLabel(record: RecordBrief) {
 function statusTone(record: RecordBrief) {
   if (record.status === "failed" || (!record.hasAnalysis && record.lastAnalysisError)) return "error";
   if (isProcessing(record.status)) return "progress";
+  if (record.analysisStatus === "completed" && record.analysisHasQualityWarning) return "attention";
   if (isPending(record)) return "attention";
   return "done";
 }

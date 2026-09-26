@@ -16,11 +16,11 @@
 .em-rail-spacer { flex: 1 1 auto; }
 .em-rail-note { padding: 10px; color: var(--em-ink-4); font-size: 10px; line-height: 1.5; }
 
-.em-main { min-width: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); }
+.em-main { min-width: 0; min-height: 0; height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
 .em-main-head { position: relative; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 18px 22px 12px; }
 .em-main-head h2 { margin: 0; font-size: var(--em-text-title); font-weight: 680; letter-spacing: -0.02em; }
 .em-main-head p { margin: 3px 0 0; color: var(--em-ink-3); font-size: var(--em-text-xs); line-height: 1.5; }
-.em-main-body { min-height: 0; overflow: auto; padding: 2px 22px 22px; }
+.em-main-body { min-width: 0; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; -webkit-overflow-scrolling: touch; scrollbar-gutter: stable; padding: 2px 22px 22px; }
 .em-close { position: absolute; top: 16px; right: 16px; display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: var(--em-r-pill); background: var(--em-soft-fill-2); color: var(--em-ink-2); cursor: pointer; font-size: 16px; line-height: 1; }
 
 /* ---------------- 卡片 ---------------- */
@@ -118,6 +118,11 @@
 .em-collapsible > summary::before { content: ""; width: 10px; height: 6px; flex: 0 0 auto; background-image: var(--em-chevron); background-repeat: no-repeat; background-position: center; background-size: contain; transform: rotate(-90deg); transition: transform 180ms var(--em-motion); }
 .em-collapsible[open] > summary::before { transform: rotate(0deg); }
 .em-collapsible-body { display: grid; gap: 12px; padding: 4px 0 2px; }
+.whisperx-setup-steps { display: grid; gap: 14px; margin: 0; padding-left: 22px; }
+.whisperx-setup-steps > li { display: grid; gap: 8px; }
+.whisperx-setup-steps code { overflow-wrap: anywhere; }
+.whisperx-model-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; }
+.whisperx-model-row code { min-width: 0; }
 
 /* ---------------- 行内提示 ---------------- */
 .em-hint { margin: 0; color: var(--em-ink-3); font-size: var(--em-text-xs); line-height: 1.55; }

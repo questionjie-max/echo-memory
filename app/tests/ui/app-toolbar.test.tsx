@@ -55,7 +55,7 @@ describe("顶栏版式契约", () => {
   it("品牌区副标题使用收紧后的隐私口径", () => {
     render(<AppToolbar mainView="library" onSelectView={() => undefined} projectId={null} unfiledOnly={false} onOpenSearchResult={() => undefined} onOpenSettings={() => undefined} />);
     // 旧口径过度承诺「全部本地」；新口径区分硬承诺与选择权。
-    expect(screen.getByText("音频永不上传 · 外部 AI 只发文本")).toBeTruthy();
+    expect(screen.getByText("让每次对话，都沉淀为长期记忆")).toBeTruthy();
     expect(screen.queryByText(/默认本地处理/)).toBeNull();
   });
 });

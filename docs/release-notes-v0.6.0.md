@@ -21,8 +21,8 @@
 ## Known boundaries
 
 - Environment-dependent ignored tests still require a local Whisper model, real recordings, Ollama/model settings, Hugging Face credentials where applicable, and an isolated test library.
-- The macOS DMG is built with ad-hoc signing only, is not Apple-notarized, and is intended for Alpha evaluation rather than a formally signed production release.
-- The large Rust command, repository, and memory modules remain a follow-up refactoring item; splitting them is intentionally deferred until after this release stabilization.
+- The previously archived macOS DMG uses ad-hoc signing only and is not Apple-notarized. The Developer ID signing and notarization script is ready, but no formally signed DMG has been produced because the current machine lacks the required identity and credentials.
+- Repository persistence was split into domain modules. The large Rust command and memory modules remain follow-up refactoring items; further splitting is deferred until after this release stabilization.
 
 ---
 
@@ -49,5 +49,5 @@
 ## 已知边界
 
 - 依赖真实环境的 `#[ignore]` 测试仍需要本机 Whisper 模型、真实录音、Ollama/分析模型配置、按需的 Hugging Face 凭证和隔离测试资料库。
-- macOS DMG 仅采用 ad-hoc 签名，未进行 Apple 公证，定位为 Alpha 评估安装包，不是正式签名生产版本。
-- `commands.rs`、`db/repository.rs` 和 `memory.rs` 仍是后续拆分对象；为避免混入本版稳定化变更，模块拆分有意延后处理。
+- 已归档的 macOS DMG 仅采用 ad-hoc 签名，未进行 Apple 公证。Developer ID 签名与公证脚本已就绪，但当前机器缺少所需身份和凭据，尚未产出正式签名 DMG。
+- Repository 已按领域拆成模块；`commands.rs` 和 `memory.rs` 仍是后续拆分对象，进一步拆分有意延后，避免混入本版稳定化变更。
