@@ -39,6 +39,7 @@ import {
   addHotword,
   addInboxWatchFolder,
   clearExternalAiApiKey,
+  clearExternalAsrApiKey,
   clearHfToken,
   createAnalysisTemplate,
   deleteAnalysisTemplate,
@@ -58,6 +59,7 @@ import {
   rescanInbox,
   setAutoExportAnalysis,
   setExternalAiApiKey,
+  setExternalAsrApiKey,
   setHfToken,
   setInboxUsbDetection,
   setOutputFolder,
@@ -142,16 +144,18 @@ export default function SettingsPanel({ open: visible, onClose, onOpenKnowledge 
   async function refresh() {
     setError("");
     try {
-      const [ai, audio, items, externalSettings] = await Promise.all([
+      const [ai, audio, items, externalSettings, transcriptionEngine] = await Promise.all([
         getLocalAiStatus(),
         getAudioPreprocessorStatus(),
         listAnalysisTemplates(),
         getExternalAiSettings(),
+        getTranscriptionEngineStatus(),
       ]);
       applyStatus(ai);
       setPreprocessor(audio);
       setTemplates(items);
       applyExternal(externalSettings);
+      setEngineStatus(transcriptionEngine);
     } catch (reason) {
       setError(String(reason));
     }
@@ -160,8 +164,7 @@ export default function SettingsPanel({ open: visible, onClose, onOpenKnowledge 
   useEffect(() => {
     if (!visible) return;
     if (!appInfo) void getAppInfo().then(setAppInfo).catch(() => setAppInfo(null));
-    void getTranscriptionEngineStatus().then(setEngineStatus).catch(() => setEngineStatus(null));
-    // 打开设置或切换 tab 都要加载数据：核心四项随面板刷新，
+    // 打开设置或切换 tab 都要加载数据：核心状态随面板刷新，
     // 收件箱/词汇库/产出按 tab 按需加载（此前依赖只看 visible，切 tab 永远不加载）。
     void refresh();
     if (tab === "output") {
@@ -287,6 +290,15 @@ export default function SettingsPanel({ open: visible, onClose, onOpenKnowledge 
     await report(() => clearExternalAiApiKey(), "API Key 已清除", applyExternal);
   }
 
+  async function saveExternalAsrKey(key: string) {
+    await report(() => setExternalAsrApiKey(key), "语音转文字 API Key 已保存到钥匙串", applyExternal);
+  }
+
+  async function removeExternalAsrKey() {
+    if (!window.confirm("清除语音转文字 API Key？第三方录音转写将无法执行。")) return;
+    await report(() => clearExternalAsrApiKey(), "语音转文字 API Key 已清除", applyExternal);
+  }
+
   async function checkExternal() {
     setBusy(true);
     setError("");
@@ -394,6 +406,8 @@ export default function SettingsPanel({ open: visible, onClose, onOpenKnowledge 
               onSaveExternal={(patch) => void saveExternal(patch)}
               onSaveExternalKey={(key) => void saveExternalKey(key)}
               onClearExternalKey={() => void removeExternalKey()}
+              onSaveExternalAsrKey={(key) => void saveExternalAsrKey(key)}
+              onClearExternalAsrKey={() => void removeExternalAsrKey()}
               onTestExternal={() => void checkExternal()}
               onRefresh={() => void refresh()}
               onOpenKnowledge={() => {
@@ -784,6 +798,17 @@ function TemplateEditor({
 }) {
   const [draft, setDraft] = useState(template);
   const [saving, setSaving] = useState(false);
+  const [latestSectionIndex, setLatestSectionIndex] = useState<number | null>(null);
+  const latestSectionRef = useRef<HTMLDivElement | null>(null);
+  const maxSections = 10;
+
+  useEffect(() => {
+    if (latestSectionIndex === null) return;
+    const frame = window.requestAnimationFrame(() => {
+      latestSectionRef.current?.scrollIntoView({ block: "nearest" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [latestSectionIndex, draft.customSections.length]);
 
   async function save() {
     setSaving(true);
@@ -812,6 +837,22 @@ function TemplateEditor({
         current === index ? { ...section, ...patch } : section,
       ),
     });
+  }
+
+  function addSection() {
+    if (draft.customSections.length >= maxSections) return;
+    const nextIndex = draft.customSections.length;
+    setDraft((current) => {
+      if (current.customSections.length >= maxSections) return current;
+      return {
+        ...current,
+        customSections: [
+          ...current.customSections,
+          newSection(current.customSections),
+        ],
+      };
+    });
+    setLatestSectionIndex(nextIndex);
   }
 
   return (
@@ -860,21 +901,22 @@ function TemplateEditor({
         description="每个栏目会在分析结果里单独成段。"
         actions={
           <Button
-            disabled={draft.customSections.length >= 10}
-            onClick={() =>
-              setDraft({
-                ...draft,
-                customSections: [...draft.customSections, newSection(draft.customSections.length)],
-              })
-            }
+            disabled={draft.customSections.length >= maxSections}
+            onClick={addSection}
           >
-            添加栏目
+            {draft.customSections.length >= maxSections
+              ? "最多 10 个栏目"
+              : "添加栏目"}
           </Button>
         }
       >
         {draft.customSections.length === 0 && <p className="em-empty">还没有自定义栏目。</p>}
         {draft.customSections.map((section, index) => (
-          <div className="em-field-row" key={`${section.key}-${index}`}>
+          <div
+            className="em-field-row"
+            key={`${draft.id}-section-${index}`}
+            ref={index === latestSectionIndex ? latestSectionRef : undefined}
+          >
             <input
               className="em-input"
               aria-label="栏目标题"
@@ -903,12 +945,13 @@ function TemplateEditor({
             <Button
               variant="danger"
               title="删除栏目"
-              onClick={() =>
+              onClick={() => {
+                setLatestSectionIndex(null);
                 setDraft({
                   ...draft,
                   customSections: draft.customSections.filter((_, current) => current !== index),
-                })
-              }
+                });
+              }}
             >
               ×
             </Button>
@@ -944,8 +987,11 @@ function emptyTemplate(): AnalysisTemplate {
   };
 }
 
-function newSection(index: number): TemplateSection {
-  return { key: `section_${index + 1}`, title: "", format: "list", instruction: "" };
+function newSection(existing: TemplateSection[]): TemplateSection {
+  const keys = new Set(existing.map((section) => section.key));
+  let index = 1;
+  while (keys.has(`section_${index}`)) index += 1;
+  return { key: `section_${index}`, title: "", format: "list", instruction: "" };
 }
 
 function slugKey(title: string, index: number) {

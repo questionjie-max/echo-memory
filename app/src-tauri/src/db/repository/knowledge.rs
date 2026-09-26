@@ -40,7 +40,7 @@ impl LibraryRepository {
         let mut statement = connection.prepare(
             "SELECT chunks.id, chunks.record_id, records.title, chunks.project_id, chunks.segment_ids_json, chunks.body, chunks.start_ms, chunks.end_ms, chunks.embedding_model, chunks.embedding_dimensions, chunks.embedding_blob \
              FROM knowledge_chunks AS chunks JOIN records ON records.id = chunks.record_id \
-             WHERE chunks.embedding_model = ?1 AND (?2 IS NULL OR chunks.project_id = ?2) AND (?3 = 0 OR chunks.project_id IS NULL)",
+             WHERE records.archived_at IS NULL AND chunks.embedding_model = ?1 AND (?2 IS NULL OR chunks.project_id = ?2) AND (?3 = 0 OR chunks.project_id IS NULL)",
         )?;
         let rows = statement
             .query_map(
@@ -189,7 +189,7 @@ impl LibraryRepository {
             };
             let (total_records, processed_records, chunk_count): (i64, i64, i64) = transaction
                 .query_row(
-                    "SELECT COUNT(*), COALESCE(SUM(EXISTS(SELECT 1 FROM knowledge_chunks AS chunks WHERE chunks.record_id = records.id AND chunks.embedding_model = ?3)), 0), COALESCE((SELECT COUNT(*) FROM knowledge_chunks AS chunks WHERE chunks.embedding_model = ?3 AND (?1 IS NULL OR chunks.project_id = ?1) AND (?2 = 0 OR chunks.project_id IS NULL)), 0) FROM records WHERE EXISTS(SELECT 1 FROM transcript_versions WHERE transcript_versions.record_id = records.id AND transcript_versions.status = 'completed') AND (?1 IS NULL OR records.project_id = ?1) AND (?2 = 0 OR records.project_id IS NULL)",
+                    "SELECT COUNT(*), COALESCE(SUM(EXISTS(SELECT 1 FROM knowledge_chunks AS chunks WHERE chunks.record_id = records.id AND chunks.embedding_model = ?3)), 0), COALESCE((SELECT COUNT(*) FROM knowledge_chunks AS chunks JOIN records AS chunk_records ON chunk_records.id = chunks.record_id WHERE chunk_records.archived_at IS NULL AND chunks.embedding_model = ?3 AND (?1 IS NULL OR chunks.project_id = ?1) AND (?2 = 0 OR chunks.project_id IS NULL)), 0) FROM records WHERE records.archived_at IS NULL AND EXISTS(SELECT 1 FROM transcript_versions WHERE transcript_versions.record_id = records.id AND transcript_versions.status = 'completed') AND (?1 IS NULL OR records.project_id = ?1) AND (?2 = 0 OR records.project_id IS NULL)",
                     params![project_id, i64::from(unfiled_only), embedding_model],
                     |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
                 )?;
@@ -214,7 +214,7 @@ impl LibraryRepository {
     ) -> AppResult<crate::types::KnowledgeOverview> {
         let connection = self.connect()?;
         let (record_count, transcript_count, analyzed_count) = connection.query_row(
-            "SELECT COUNT(*), SUM(EXISTS(SELECT 1 FROM transcript_versions WHERE transcript_versions.record_id = records.id AND status = 'completed')), SUM(EXISTS(SELECT 1 FROM analyses WHERE analyses.record_id = records.id AND status = 'completed' AND analyses.id = (SELECT id FROM analyses AS latest WHERE latest.record_id = records.id ORDER BY created_at DESC LIMIT 1))) FROM records WHERE (?1 IS NULL OR project_id = ?1) AND (?2 = 0 OR project_id IS NULL)",
+            "SELECT COUNT(*), SUM(EXISTS(SELECT 1 FROM transcript_versions WHERE transcript_versions.record_id = records.id AND status = 'completed')), SUM(EXISTS(SELECT 1 FROM analyses WHERE analyses.record_id = records.id AND status = 'completed' AND analyses.id = (SELECT id FROM analyses AS latest WHERE latest.record_id = records.id ORDER BY created_at DESC LIMIT 1))) FROM records WHERE records.archived_at IS NULL AND (?1 IS NULL OR project_id = ?1) AND (?2 = 0 OR project_id IS NULL)",
             params![project_id, i64::from(unfiled_only)],
             |row| Ok((row.get(0)?, row.get::<_, Option<i64>>(1)?.unwrap_or(0), row.get::<_, Option<i64>>(2)?.unwrap_or(0))),
         )?;
@@ -241,7 +241,7 @@ impl LibraryRepository {
             })
             .collect();
         let mut statement = connection.prepare(
-            "SELECT items.record_id, records.title, items.title, COALESCE(segments.edited_text, segments.normalized_text, segments.original_text, ''), items.source_segment_id, segments.start_ms, segments.end_ms FROM action_items AS items JOIN records ON records.id = items.record_id LEFT JOIN transcript_segments AS segments ON segments.id = items.source_segment_id WHERE (?1 IS NULL OR items.project_id = ?1) AND (?2 = 0 OR items.project_id IS NULL) ORDER BY items.rowid DESC LIMIT 8",
+            "SELECT items.record_id, records.title, items.title, COALESCE(segments.edited_text, segments.normalized_text, segments.original_text, ''), items.source_segment_id, segments.start_ms, segments.end_ms FROM action_items AS items JOIN records ON records.id = items.record_id LEFT JOIN transcript_segments AS segments ON segments.id = items.source_segment_id WHERE records.archived_at IS NULL AND (?1 IS NULL OR items.project_id = ?1) AND (?2 = 0 OR items.project_id IS NULL) ORDER BY items.rowid DESC LIMIT 8",
         )?;
         let action_items = statement
             .query_map(params![project_id, i64::from(unfiled_only)], |row| {

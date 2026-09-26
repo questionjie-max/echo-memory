@@ -1,5 +1,5 @@
 use super::LibraryRepository;
-use crate::analysis::AnalysisDraft;
+use crate::analysis::{analysis_is_blocking, AnalysisDraft};
 use crate::error::{AppError, AppResult};
 use crate::types::{AnalysisTemplate, StoredAnalysis, TranscriptVersion};
 use chrono::Utc;
@@ -33,6 +33,21 @@ impl LibraryRepository {
         draft: &AnalysisDraft,
         template: &AnalysisTemplate,
     ) -> AppResult<StoredAnalysis> {
+        self.save_analysis_with_provider_and_template(
+            record_id, version_id, "ollama", model, draft, template,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn save_analysis_with_provider_and_template(
+        &self,
+        record_id: &str,
+        version_id: &str,
+        provider: &str,
+        model: &str,
+        draft: &AnalysisDraft,
+        template: &AnalysisTemplate,
+    ) -> AppResult<StoredAnalysis> {
         let content_json = serde_json::to_string(draft)
             .map_err(|error| AppError::Invalid(format!("分析序列化失败: {error}")))?;
         let template_snapshot_json = serde_json::to_string(template)
@@ -41,13 +56,13 @@ impl LibraryRepository {
             id: Uuid::new_v4().to_string(),
             record_id: record_id.to_owned(),
             source_transcript_version_id: version_id.to_owned(),
-            status: if draft.quality_warning.is_some() {
+            status: if analysis_is_blocking(draft) {
                 "incomplete".to_owned()
             } else {
                 "completed".to_owned()
             },
             content_json,
-            provider: "ollama".to_owned(),
+            provider: provider.to_owned(),
             model: model.to_owned(),
             template_version: "knowledge-v1".to_owned(),
             template_id: Some(template.id.clone()),
@@ -169,7 +184,7 @@ impl LibraryRepository {
         status: Option<&str>,
     ) -> AppResult<Vec<crate::types::ActionItem>> {
         let connection = self.connect()?;
-        let mut statement = connection.prepare("SELECT id, record_id, COALESCE(project_id, ''), title, status, source_segment_id, analysis_id FROM action_items WHERE (?1 IS NULL OR project_id = ?1) AND (?2 IS NULL OR status = ?2) ORDER BY rowid DESC")?;
+        let mut statement = connection.prepare("SELECT items.id, items.record_id, COALESCE(items.project_id, ''), items.title, items.status, items.source_segment_id, items.analysis_id FROM action_items AS items JOIN records ON records.id = items.record_id WHERE records.archived_at IS NULL AND (?1 IS NULL OR items.project_id = ?1) AND (?2 IS NULL OR items.status = ?2) ORDER BY items.rowid DESC")?;
         let items = statement
             .query_map(params![project_id, status], |row| {
                 Ok(crate::types::ActionItem {
@@ -196,7 +211,7 @@ impl LibraryRepository {
             let mut statement = connection.prepare(
                 "SELECT analyses.content_json, analyses.record_id, records.title \
                  FROM analyses JOIN records ON records.id = analyses.record_id \
-                 WHERE (?1 IS NULL OR records.project_id = ?1) AND analyses.status = 'completed' \
+                 WHERE records.archived_at IS NULL AND (?1 IS NULL OR records.project_id = ?1) AND analyses.status = 'completed' \
                  AND analyses.id = (SELECT latest.id FROM analyses AS latest WHERE latest.record_id = records.id ORDER BY latest.created_at DESC LIMIT 1) \
                  ORDER BY analyses.created_at DESC LIMIT ?2",
             )?;

@@ -3,7 +3,7 @@
  * 回归背景：v0.3.0 曾误删初始加载语句，v0.4.2 才修复——“正在读取…”永久停留。
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import SettingsPanel from "../../src/components/SettingsPanel";
 import * as tauri from "../../src/lib/tauri";
 import { setupSettingsMocks } from "./settings-mocks";
@@ -41,5 +41,46 @@ describe("SettingsPanel 数据加载（0.4.2 回归防护）", () => {
     }
     expect(screen.queryByText("本机 AI", { selector: "button" })).toBeNull();
     expect(screen.queryByText("外部 AI", { selector: "button" })).toBeNull();
+  });
+
+  it("模板栏目可连续添加到上限，删除后恢复且新增项自动可见", async () => {
+    const originalScrollIntoView = Element.prototype.scrollIntoView;
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+
+    try {
+      render(<SettingsPanel open onClose={() => undefined} />);
+      fireEvent.click(await screen.findByText("分析模板", { selector: "button" }));
+      fireEvent.click(await screen.findByText("新建模板", { selector: "button" }));
+      fireEvent.change(await screen.findByLabelText("名称"), {
+        target: { value: "连续添加测试" },
+      });
+      const focusLabel = screen.getByText("分析重点").closest("label");
+      const focusInput = focusLabel?.querySelector("textarea");
+      expect(focusInput).toBeTruthy();
+      fireEvent.change(focusInput as HTMLTextAreaElement, {
+        target: { value: "验证栏目上限与滚动。" },
+      });
+
+      for (let index = 0; index < 10; index += 1) {
+        fireEvent.click(screen.getByRole("button", { name: "添加栏目" }));
+      }
+
+      expect(screen.getAllByLabelText("栏目标题")).toHaveLength(10);
+      expect(screen.getByRole("button", { name: "最多 10 个栏目" }).disabled).toBe(true);
+      await waitFor(() =>
+        expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" }),
+      );
+
+      fireEvent.click(screen.getAllByTitle("删除栏目")[0]);
+      expect(screen.getAllByLabelText("栏目标题")).toHaveLength(9);
+      expect(screen.getByRole("button", { name: "添加栏目" }).disabled).toBe(false);
+    } finally {
+      if (originalScrollIntoView) {
+        Element.prototype.scrollIntoView = originalScrollIntoView;
+      } else {
+        Reflect.deleteProperty(Element.prototype, "scrollIntoView");
+      }
+    }
   });
 });

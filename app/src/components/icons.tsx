@@ -221,6 +221,16 @@ export function PlayIcon({ size = 14 }: { size?: number }) {
   );
 }
 
+export function MoreIcon({ size = 16 }: { size?: number }) {
+  return (
+    <Icon size={size}>
+      <circle cx="5" cy="12" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="19" cy="12" r="1.5" fill="currentColor" stroke="none" />
+    </Icon>
+  );
+}
+
 export function PauseIcon({ size = 14 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">

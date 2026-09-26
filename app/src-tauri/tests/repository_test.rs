@@ -44,6 +44,7 @@ fn cited_draft(segment_id: &str, quote: &str) -> AnalysisDraft {
         open_questions: vec![],
         custom_sections: vec![],
         quality_warning: None,
+        quality_severity: None,
     }
 }
 
@@ -691,6 +692,7 @@ fn analysis_persists_citations_and_action_items() {
         open_questions: vec![],
         custom_sections: vec![],
         quality_warning: None,
+        quality_severity: None,
     };
     repository
         .save_analysis(&record.id, &version.id, "qwen", &draft)
@@ -747,6 +749,7 @@ fn incomplete_latest_analysis_stays_in_pending_workflow() {
                 open_questions: vec![],
                 custom_sections: vec![],
                 quality_warning: Some("关键观点不足".into()),
+                quality_severity: None,
             },
         )
         .unwrap();
@@ -754,6 +757,57 @@ fn incomplete_latest_analysis_stays_in_pending_workflow() {
     assert_eq!(stored.status, "incomplete");
     assert!(!refreshed.has_analysis);
     assert_eq!(refreshed.analysis_status.as_deref(), Some("incomplete"));
+}
+
+#[test]
+fn advisory_quality_warning_completes_analysis_and_stays_visible() {
+    let repository = LibraryRepository::new(database_path()).unwrap();
+    let record = repository
+        .create_record(
+            "建议提醒分析",
+            None,
+            Path::new("audio/advisory.wav"),
+            "advisory-analysis-hash",
+            1,
+        )
+        .unwrap();
+    let (version, _) = repository
+        .save_transcript(
+            &record.id,
+            "whisper.cpp",
+            "base",
+            &[TranscriptSegmentInput {
+                start_ms: 0,
+                end_ms: 1,
+                speaker_label: None,
+                original_text: "这是一段测试逐字稿".into(),
+            }],
+        )
+        .unwrap();
+    let stored = repository
+        .save_analysis(
+            &record.id,
+            &version.id,
+            "qwen",
+            &AnalysisDraft {
+                summary: "分析结果完整，但存在一条非阻断的质量提醒".into(),
+                key_points: vec![],
+                decisions: vec![],
+                action_items: vec![],
+                open_questions: vec![],
+                custom_sections: vec![],
+                quality_warning: Some("部分原文引述较短".into()),
+                quality_severity: Some(
+                    echo_memory_lib::analysis::AnalysisQualitySeverity::Advisory,
+                ),
+            },
+        )
+        .unwrap();
+    let refreshed = repository.get_record(&record.id).unwrap();
+    assert_eq!(stored.status, "completed");
+    assert!(refreshed.has_analysis);
+    assert_eq!(refreshed.analysis_status.as_deref(), Some("completed"));
+    assert!(refreshed.analysis_has_quality_warning);
 }
 
 #[test]
@@ -800,6 +854,166 @@ fn record_status_transitions_and_filter() {
     assert_eq!(updated.status, "transcribing");
     // 非法状态被拒
     assert!(repo.update_record_status(&r1.id, "bogus").is_err());
+}
+
+#[test]
+fn record_archive_and_restore_preserves_scope_and_hides_active_surfaces() {
+    let repository = LibraryRepository::new(database_path()).unwrap();
+    let project = repository.create_project("归档项目").unwrap();
+    let record = repository
+        .create_record(
+            "归档前后保持完整",
+            Some(&project.id),
+            Path::new("audio/archive.wav"),
+            "archive-hash",
+            4_200,
+        )
+        .unwrap();
+    let (version, segments) = repository
+        .save_transcript(
+            &record.id,
+            "whisper.cpp",
+            "small",
+            &[TranscriptSegmentInput {
+                start_ms: 0,
+                end_ms: 1_000,
+                speaker_label: None,
+                original_text: "归档记录的可检索正文".into(),
+            }],
+        )
+        .unwrap();
+    let mut draft = cited_draft(&segments[0].id, "归档记录的可检索正文");
+    draft.open_questions.push(AnalysisItemDraft {
+        owner: None,
+        text: "恢复后是否仍需跟进".into(),
+        citation_segment_ids: vec![segments[0].id.clone()],
+        quote_text: "归档记录的可检索正文".into(),
+        start_ms: Some(0),
+        end_ms: Some(1_000),
+    });
+    repository
+        .save_analysis(&record.id, &version.id, "qwen", &draft)
+        .unwrap();
+    repository
+        .replace_knowledge_chunks(
+            &record.id,
+            &[KnowledgeChunkInput {
+                id: "archive-chunk".into(),
+                record_id: record.id.clone(),
+                project_id: Some(project.id.clone()),
+                transcript_version_id: version.id.clone(),
+                segment_ids: vec![segments[0].id.clone()],
+                body: "归档记录的可检索正文".into(),
+                start_ms: 0,
+                end_ms: 1_000,
+                speaker_label: None,
+                content_hash: "archive-content".into(),
+                embedding_model: "embedding-test".into(),
+                embedding: vec![0.1, 0.2],
+            }],
+        )
+        .unwrap();
+    repository
+        .save_knowledge_index_status(&KnowledgeIndexStatus {
+            scope_key: format!("project:{}", project.id),
+            status: "completed".into(),
+            total_records: 1,
+            processed_records: 1,
+            chunk_count: 1,
+            embedding_model: "embedding-test".into(),
+            last_error: None,
+            updated_at: "2026-01-01".into(),
+        })
+        .unwrap();
+
+    let archived = repository.set_record_archived(&record.id, true).unwrap();
+    assert!(archived.archived_at.is_some());
+    assert!(repository.list_records(None, false).unwrap().is_empty());
+    assert_eq!(
+        repository
+            .list_archived_records(Some(&project.id), false)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        repository.get_record(&record.id).unwrap().title,
+        record.title
+    );
+    assert!(repository
+        .find_record_by_hash("archive-hash")
+        .unwrap()
+        .is_some());
+    assert!(repository
+        .search("归档记录", Some(&project.id), false, 10)
+        .unwrap()
+        .is_empty());
+    assert!(repository
+        .list_knowledge_chunks(Some(&project.id), false, "embedding-test")
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        repository
+            .knowledge_overview(Some(&project.id), false)
+            .unwrap()
+            .record_count,
+        0
+    );
+    assert!(repository
+        .list_action_items(Some(&project.id), None)
+        .unwrap()
+        .is_empty());
+    assert!(repository.list_action_items_detailed().unwrap().is_empty());
+    assert!(repository
+        .list_decisions(Some(&project.id), 10)
+        .unwrap()
+        .is_empty());
+    assert!(repository.list_open_questions(30).unwrap().is_empty());
+    repository
+        .refresh_knowledge_index_counts("embedding-test")
+        .unwrap();
+    let index_status = repository
+        .get_knowledge_index_status(&format!("project:{}", project.id), "embedding-test")
+        .unwrap();
+    assert_eq!(index_status.total_records, 0);
+    assert_eq!(index_status.chunk_count, 0);
+
+    let restored = repository.set_record_archived(&record.id, false).unwrap();
+    assert!(restored.archived_at.is_none());
+    assert_eq!(restored.project_id, Some(project.id.clone()));
+    assert_eq!(restored.title, record.title);
+    assert_eq!(restored.audio_duration_ms, record.audio_duration_ms);
+    assert_eq!(
+        repository
+            .list_records(Some(&project.id), false)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(!repository
+        .search("归档记录", Some(&project.id), false, 10)
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        repository
+            .knowledge_overview(Some(&project.id), false)
+            .unwrap()
+            .record_count,
+        1
+    );
+    assert_eq!(
+        repository
+            .list_action_items(Some(&project.id), None)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(repository.list_open_questions(30).unwrap().len(), 1);
+
+    assert!(matches!(
+        repository.set_record_archived("missing-record", true),
+        Err(AppError::NotFound(_))
+    ));
 }
 
 #[test]
@@ -904,6 +1118,7 @@ fn moving_record_updates_search_and_action_item_scope_atomically() {
                 open_questions: vec![],
                 custom_sections: vec![],
                 quality_warning: None,
+                quality_severity: None,
             },
         )
         .unwrap();

@@ -14,6 +14,7 @@ import * as tauri from "../../src/lib/tauri";
 import {
   downloadProgressFixture,
   engineStatusFixture,
+  externalAiSettingsFixture,
   localAiStatusFixture,
   setupSettingsMocks,
 } from "./settings-mocks";
@@ -236,30 +237,94 @@ describe("AI 模型：下载状态长在模型行上", () => {
 describe("AI 模型：本地与外部是同一个决策", () => {
   it("默认在本机渠道，看不到 API Key 字段", async () => {
     await renderPanel();
-    const analysis = card("分析");
-    expect(within(analysis).getByText("本机 Ollama", { selector: "button" })).toBeTruthy();
-    expect(within(analysis).queryByText("API Key")).toBeNull();
+    const channel = card("录音处理通道");
+    expect(within(channel).getByText("本机处理", { selector: "button" })).toBeTruthy();
+    expect(within(card("分析")).queryByText("接口地址")).toBeNull();
+    expect(within(card("转写")).queryByText("语音转文字 API Key")).toBeNull();
   });
 
   it("切到外部渠道才出现凭据字段和隐私说明", async () => {
     await renderPanel();
-    fireEvent.click(within(card("分析")).getByText("外部 API", { selector: "button" }));
+    fireEvent.click(within(card("录音处理通道")).getByText("第三方处理", { selector: "button" }));
 
-    const analysis = card("分析");
-    expect(await within(analysis).findByText("接口地址")).toBeTruthy();
-    expect(within(analysis).getByText("API Key")).toBeTruthy();
-    expect(within(analysis).getByText(/原始音频永不上传/)).toBeTruthy();
-    expect(within(analysis).getByText(/我已了解/)).toBeTruthy();
+    expect(await within(card("转写")).findByText("接口地址")).toBeTruthy();
+    expect(within(card("转写")).getByText("语音转文字 API Key")).toBeTruthy();
+    expect(within(card("转写")).getByText(/原始音频会上传/)).toBeTruthy();
+    expect(within(card("分析")).getByText("API Key")).toBeTruthy();
+    expect(within(card("分析")).getAllByText(/逐字稿全文/).length).toBeGreaterThan(0);
+    expect(await waitFor(() =>
+      expect(tauri.updateExternalAiSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ processingMode: "external" }),
+      ),
+    ));
+  });
+
+  it("第三方服务未选择时仍可进入配置，状态保持待配置", async () => {
+    vi.mocked(tauri.getExternalAiSettings).mockResolvedValue(
+      externalAiSettingsFixture({ transcriptionProvider: "none" }),
+    );
+    await renderPanel();
+    fireEvent.click(within(card("录音处理通道")).getByText("第三方处理", { selector: "button" }));
+
+    const transcription = card("转写");
+    const providerLabel = await within(transcription).findByText("服务类型");
+    const provider = providerLabel.closest("label")?.querySelector("select");
+    expect(provider).toBeTruthy();
+    expect((provider as HTMLSelectElement).value).toBe("");
+    expect(within(transcription).getByText("请选择语音转文字服务")).toBeTruthy();
+    expect(within(transcription).getByText("语音转文字 API Key")).toBeTruthy();
+    expect(within(transcription).getByText("待配置")).toBeTruthy();
+    expect(screen.queryByText(/第三方处理需要选择语音转文字服务/)).toBeNull();
+  });
+
+  it("第三方转写缺少地址或模型时不谎报可用", async () => {
+    vi.mocked(tauri.getExternalAiSettings).mockResolvedValue(
+      externalAiSettingsFixture({
+        processingMode: "external",
+        transcriptionBaseUrl: "",
+        transcriptionModel: "",
+        transcriptionHasApiKey: true,
+        audioUploadConsentAt: "2026-09-26T00:00:00Z",
+      }),
+    );
+    await renderPanel();
+
+    const transcription = card("转写");
+    expect(within(transcription).getByText("待配置")).toBeTruthy();
+    expect(within(transcription).queryByText("可用")).toBeNull();
+    expect(screen.getByText(/第三方通道待完成：第三方转写/)).toBeTruthy();
+  });
+
+  it("第三方摘要显示实际转写和理解链路，不再误报本机 Ollama", async () => {
+    vi.mocked(tauri.getExternalAiSettings).mockResolvedValue(
+      externalAiSettingsFixture({
+        processingMode: "external",
+        enabled: true,
+        hasApiKey: true,
+        privacyConsentAt: "2026-09-26T00:00:00Z",
+        transcriptionHasApiKey: true,
+        audioUploadConsentAt: "2026-09-26T00:00:00Z",
+      }),
+    );
+    await renderPanel();
+
+    expect(
+      screen.getByText(
+        /转写 openai-compatible · qwen3-asr-flash ｜ 分析 外部模型 · gpt-4.1-mini/,
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText(/本机 Ollama/)).toBeNull();
   });
 
   it("地址在失焦时才写库，敲到一半不会保存", async () => {
     await renderPanel();
-    fireEvent.click(within(card("分析")).getByText("外部 API", { selector: "button" }));
+    fireEvent.click(within(card("录音处理通道")).getByText("第三方处理", { selector: "button" }));
     const input = await screen.findByDisplayValue("https://api.openai.com/v1");
+    const callsAfterChannelSwitch = vi.mocked(tauri.updateExternalAiSettings).mock.calls.length;
 
     fireEvent.change(input, { target: { value: "https://api.op" } });
     await new Promise((resolve) => setTimeout(resolve, 700));
-    expect(tauri.updateExternalAiSettings).not.toHaveBeenCalled();
+    expect(vi.mocked(tauri.updateExternalAiSettings).mock.calls.length).toBe(callsAfterChannelSwitch);
 
     fireEvent.change(input, { target: { value: "https://api.example.com/v1" } });
     fireEvent.blur(input);
@@ -278,7 +343,55 @@ describe("AI 模型：转写引擎", () => {
     fireEvent.click(within(card("转写")).getByText(/whisperX/));
 
     expect(await screen.findByText(/pip install whisperx/)).toBeTruthy();
+    expect(screen.getByText("1. 安装并检测 WhisperX")).toBeTruthy();
+    expect(screen.getByText("2. 授权三个模型")).toBeTruthy();
+    expect(screen.getByText("3. 保存 HuggingFace Token")).toBeTruthy();
+    expect(screen.getAllByText("未完成").length).toBeGreaterThanOrEqual(2);
+    expect(
+      within(card("转写")).getAllByText("重新检测", { selector: "button" }).length,
+    ).toBeGreaterThan(0);
+    expect(tauri.getTranscriptionEngineStatus).toHaveBeenCalled();
     expect(tauri.setTranscriptionEngine).not.toHaveBeenCalled();
+  });
+
+  it("重新检测会刷新转写引擎状态", async () => {
+    await renderPanel();
+    fireEvent.click(within(card("转写")).getByText(/whisperX/));
+    await screen.findByText("1. 安装并检测 WhisperX");
+    const before = vi.mocked(tauri.getTranscriptionEngineStatus).mock.calls.length;
+
+    fireEvent.click(
+      within(card("转写")).getByRole("button", { name: "重新检测" }),
+    );
+
+    await waitFor(() =>
+      expect(vi.mocked(tauri.getTranscriptionEngineStatus).mock.calls.length).toBeGreaterThan(before),
+    );
+  });
+
+  it("HuggingFace Token 用密码框保存，保存后清空并显示完成状态", async () => {
+    vi.mocked(tauri.getTranscriptionEngineStatus)
+      .mockResolvedValueOnce(engineStatusFixture())
+      .mockResolvedValue(engineStatusFixture({ hfTokenSet: true }));
+    await renderPanel();
+    fireEvent.click(within(card("转写")).getByText(/whisperX/));
+    const tokenLabel = await screen.findByText("HuggingFace Token");
+    const tokenInput = tokenLabel.closest("label")?.querySelector("input");
+    expect(tokenInput).toBeTruthy();
+    expect((tokenInput as HTMLInputElement).type).toBe("password");
+
+    fireEvent.change(tokenInput as HTMLInputElement, { target: { value: "hf_secret" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(tauri.setHfToken).toHaveBeenCalledWith("hf_secret"));
+    await waitFor(() =>
+      expect((tokenInput as HTMLInputElement).value).toBe(""),
+    );
+    expect(screen.queryByText("hf_secret")).toBeNull();
+    const tokenStep = screen
+      .getByText("3. 保存 HuggingFace Token")
+      .closest("li") as HTMLElement;
+    expect(await within(tokenStep).findByText("已完成")).toBeTruthy();
   });
 
   it("已装 whisperX 时切换立刻生效，且不显示「没找到」的警告", async () => {
@@ -286,8 +399,9 @@ describe("AI 模型：转写引擎", () => {
       engineStatusFixture({ engine: "whisperx", whisperxAvailable: true, whisperxPath: "/usr/local/bin/whisperx" }),
     );
     await renderPanel();
-    // 已经在新引擎上，说明状态被尊重；同时不该出现安装指引。
-    expect(screen.queryByText(/pip install whisperx/)).toBeNull();
+    // 已经在新引擎上，说明状态被尊重，同时安装步骤明确显示已检测。
+    expect(screen.queryByText(/未检测到 whisperx/)).toBeNull();
+    expect(screen.getByText(/已检测到 whisperx/)).toBeTruthy();
 
     fireEvent.click(within(card("转写")).getByText("内嵌引擎"));
     await waitFor(() => expect(tauri.setTranscriptionEngine).toHaveBeenCalledWith("embedded"));

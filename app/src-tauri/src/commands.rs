@@ -1,4 +1,7 @@
-use crate::analysis::{resolve_citation_aliases, verify_citations, OllamaAdapter};
+use crate::analysis::{
+    analyze_with_generator_progress, resolve_citation_aliases, verify_citations,
+    AnalysisTextGenerator, OllamaAdapter,
+};
 use crate::audio::{
     is_overlap_duplicate, merge_overlap_continuation, normalize_segment_timestamps, plan_chunks,
     preprocess, preprocessor_status, read_normalized_wav, AudioPreprocessorStatus,
@@ -6,7 +9,8 @@ use crate::audio::{
 use crate::db::repository::LibraryRepository;
 use crate::error::AppResult;
 use crate::external_ai_gate::{
-    clear_api_key, external_settings, get_api_key, require_external_ai_consent, set_api_key,
+    clear_api_key, clear_asr_api_key, external_settings, get_api_key, get_asr_api_key,
+    require_external_ai_consent, require_external_asr_consent, set_api_key, set_asr_api_key,
 };
 use crate::library::ManagedLibrary;
 use crate::memory::{self, OpenAiCompatibleClient};
@@ -673,6 +677,36 @@ pub fn list_records(
 }
 
 #[tauri::command]
+pub fn list_archived_records(
+    state: State<AppState>,
+    project_id: Option<String>,
+    unfiled_only: bool,
+) -> Result<Vec<RecordBrief>, String> {
+    state
+        .library
+        .repository()
+        .list_archived_records(project_id.as_deref(), unfiled_only)
+        .map_err(|e| e.to_frontend())
+}
+
+#[tauri::command]
+pub fn set_record_archived(
+    app: AppHandle,
+    state: State<AppState>,
+    record_id: String,
+    archived: bool,
+) -> Result<RecordBrief, String> {
+    let updated = state
+        .library
+        .repository()
+        .set_record_archived(&record_id, archived)
+        .map_err(|e| e.to_frontend())?;
+    spawn_index_metadata_refresh(app, state.library.root().to_path_buf());
+    schedule_memory_update(state.inner().clone());
+    Ok(updated)
+}
+
+#[tauri::command]
 pub fn search_records(
     state: State<AppState>,
     query: String,
@@ -1138,13 +1172,12 @@ pub fn transcribe_record(
         let _permit = heavy_jobs.acquire();
         match ManagedLibrary::open(library_root.clone()) {
             Ok(library) => {
-                if run_transcription(
+                if process_record_with_transcription_job(
                     Some(&progress_app),
                     &library,
                     &record_id,
                     &job,
-                    &settings.transcription_language,
-                    Some(&settings.whisper_model_path),
+                    &settings,
                 )
                 .is_ok()
                 {
@@ -1179,6 +1212,72 @@ pub fn transcribe_with_library(library: &ManagedLibrary, record_id: &str) -> App
         &settings.transcription_language,
         Some(&settings.whisper_model_path),
     )
+}
+
+/// Executes the complete ingest pipeline for a newly imported audio record.
+/// Manual imports and watched folders share this entry point so their final state
+/// cannot diverge when a later processing stage changes.
+pub fn process_record_with_library(library: &ManagedLibrary, record_id: &str) -> AppResult<()> {
+    let job = reserve_transcription(library, record_id)?;
+    let settings = library.repository().knowledge_settings()?;
+    process_record_with_transcription_job(None, library, record_id, &job, &settings)
+}
+
+fn process_record_with_transcription_job(
+    progress_app: Option<&AppHandle>,
+    library: &ManagedLibrary,
+    record_id: &str,
+    job: &ProcessingJob,
+    settings: &crate::types::KnowledgeSettings,
+) -> AppResult<()> {
+    if let Err(error) = require_external_import_pipeline(library) {
+        let message = error.to_string();
+        let _ = library
+            .repository()
+            .update_job_status(&job.id, "failed", Some(&message));
+        let _ = library
+            .repository()
+            .update_record_status(record_id, "failed");
+        if let Some(app) = progress_app {
+            emit_processing_progress(app, record_id);
+        }
+        return Err(error);
+    }
+    run_transcription(
+        progress_app,
+        library,
+        record_id,
+        job,
+        &settings.transcription_language,
+        Some(&settings.whisper_model_path),
+    )?;
+    analyze_with_library(library, record_id)
+}
+
+/// Complete imports must have both third-party stages ready before any audio upload.
+fn require_external_import_pipeline(library: &ManagedLibrary) -> AppResult<()> {
+    let settings = library.repository().external_ai_settings(false, false)?;
+    if settings.processing_mode != "external" {
+        return Ok(());
+    }
+    let asr = require_external_asr_consent(library)?;
+    if !asr.transcription_has_api_key {
+        return Err(crate::error::AppError::Invalid(
+            "请先配置第三方转写 API Key".to_owned(),
+        ));
+    }
+    let settings = require_external_ai_consent(library)?;
+    if !settings.enabled {
+        return Err(crate::error::AppError::Invalid(
+            "请先启用第三方文本理解服务".to_owned(),
+        ));
+    }
+    if !settings.has_api_key {
+        return Err(crate::error::AppError::Invalid(
+            "请先配置第三方文本理解 API Key".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1395,6 +1494,14 @@ fn run_transcription_with_engine(
     engine_override: Option<&str>,
 ) -> AppResult<()> {
     let repository = library.repository();
+    if engine_override.is_none()
+        && repository
+            .external_ai_settings(false, false)?
+            .processing_mode
+            == "external"
+    {
+        return run_external_transcription(progress_app, library, record_id, job, language);
+    }
     let preprocessed = library
         .root()
         .join("raw")
@@ -1579,6 +1686,107 @@ fn run_transcription_with_engine(
     Ok(())
 }
 
+fn run_external_transcription(
+    progress_app: Option<&AppHandle>,
+    library: &ManagedLibrary,
+    record_id: &str,
+    job: &ProcessingJob,
+    language: &str,
+) -> AppResult<()> {
+    let repository = library.repository();
+    let preprocessed = library
+        .root()
+        .join("raw")
+        .join(record_id)
+        .join(format!("{}-external.wav", job.id));
+    let result = (|| {
+        let audio_path = repository.audio_path_for_record(record_id)?;
+        let record = repository.get_record(record_id)?;
+        let external_result = crate::external_asr::transcribe_with_transport(
+            library,
+            &audio_path,
+            language,
+            record.audio_duration_ms,
+            |mut request| {
+                repository.update_job_progress(&job.id, "preprocessing", 0, 1)?;
+                let metadata = preprocess(&request.audio_path, &preprocessed)?;
+                request.audio_path = preprocessed.clone();
+                repository.update_job_progress(&job.id, "transcribing", 0, 1)?;
+                repository.update_job_status(&job.id, "transcribing", None)?;
+                repository.update_record_status(record_id, "transcribing")?;
+                if let Some(app) = progress_app {
+                    emit_processing_progress(app, record_id);
+                }
+                let segments = crate::external_asr::send_transcription_request(&request)?;
+                let preprocessing_json = serde_json::to_string(&metadata).map_err(|error| {
+                    crate::error::AppError::Import(format!("预处理信息无效：{error}"))
+                })?;
+                Ok(crate::external_asr::ExternalAsrResult {
+                    segments,
+                    preprocessing_json,
+                })
+            },
+        )?;
+        if external_result.segments.is_empty() {
+            return Err(crate::error::AppError::Import(
+                "第三方转写没有生成可用片段".to_owned(),
+            ));
+        }
+        let degeneration = crate::degeneration::assess_transcript_degeneration(
+            &external_result
+                .segments
+                .iter()
+                .map(|segment| segment.original_text.clone())
+                .collect::<Vec<_>>(),
+            language,
+        );
+        if degeneration.degenerate {
+            return Err(crate::error::AppError::Import(format!(
+                "转写质量异常（{}），已保留此前的转写版本。如反复出现，请更换转写模型或切换语言后重试。",
+                degeneration.reasons.join("；")
+            )));
+        }
+        let external_settings = repository.external_ai_settings(false, false)?;
+        repository.update_job_progress(&job.id, "saving", 1, 1)?;
+        repository.save_transcript_with_metadata(
+            record_id,
+            &external_settings.transcription_provider,
+            &external_settings.transcription_model,
+            language,
+            "external-asr-v1",
+            &external_result.preprocessing_json,
+            &external_result.segments,
+        )?;
+        repository.update_job_status(&job.id, "completed", None)?;
+        repository.update_record_status(record_id, "completed")?;
+        if let Some(app) = progress_app {
+            emit_processing_progress(app, record_id);
+            spawn_incremental_index(
+                app.clone(),
+                library.root().to_path_buf(),
+                record_id.to_owned(),
+            );
+        }
+        Ok::<(), crate::error::AppError>(())
+    })();
+    let _ = std::fs::remove_file(&preprocessed);
+    if let Err(error) = result {
+        let message = error.to_string();
+        let _ = repository.update_job_status(&job.id, "failed", Some(&message));
+        let fallback_status = if repository.latest_transcript_version(record_id).is_ok() {
+            "completed"
+        } else {
+            "failed"
+        };
+        let _ = repository.update_record_status(record_id, fallback_status);
+        if let Some(app) = progress_app {
+            emit_processing_progress(app, record_id);
+        }
+        return Err(error);
+    }
+    Ok(())
+}
+
 fn mark_processing_failed(
     library_root: &Path,
     record_id: &str,
@@ -1718,9 +1926,10 @@ pub fn revalidate_analysis_with_library(
     let mut draft: crate::analysis::AnalysisDraft = serde_json::from_str(&stored.content_json)
         .map_err(|error| crate::error::AppError::Analysis(format!("分析 JSON 无效: {error}")))?;
     draft.quality_warning = None;
+    draft.quality_severity = None;
     resolve_citation_aliases(&mut draft, &segments);
     let verified = verify_citations(&draft, &segments);
-    if verified.quality_warning.is_some() {
+    if crate::analysis::analysis_is_blocking(&verified) {
         return Err(crate::error::AppError::Analysis(
             "仍有分析条目无法匹配可靠出处".to_owned(),
         ));
@@ -1731,9 +1940,10 @@ pub fn revalidate_analysis_with_library(
         .and_then(|id| repository.get_analysis_template(id).ok())
         .or_else(|| serde_json::from_str(&stored.template_snapshot_json).ok())
         .unwrap_or(repository.get_analysis_template("builtin-standard")?);
-    repository.save_analysis_with_template(
+    repository.save_analysis_with_provider_and_template(
         &stored.record_id,
         &stored.source_transcript_version_id,
+        &stored.provider,
         &stored.model,
         &verified,
         &template,
@@ -1773,6 +1983,27 @@ fn run_analysis(
     let repository = library.repository();
     let result = (|| {
         repository.update_job_progress(&job.id, "analyzing", 0, 1)?;
+        let processing_mode = repository
+            .external_ai_settings(false, false)?
+            .processing_mode;
+        let external_client = if processing_mode == "external" {
+            let settings = require_external_ai_consent(library)?;
+            if !settings.enabled {
+                return Err(crate::error::AppError::Invalid(
+                    "请先启用第三方文本理解服务".to_owned(),
+                ));
+            }
+            let api_key = get_api_key()?.ok_or_else(|| {
+                crate::error::AppError::Invalid("请先配置第三方文本理解 API Key".to_owned())
+            })?;
+            Some(OpenAiCompatibleClient::new(
+                &settings.base_url,
+                &settings.model,
+                &api_key,
+            )?)
+        } else {
+            None
+        };
         let version = repository.latest_transcript_version(record_id)?;
         let segments = repository.list_transcript_segments(record_id)?;
         let transcript = segments
@@ -1799,27 +2030,44 @@ fn run_analysis(
                 .as_deref()
                 .unwrap_or("builtin-standard"),
         )?;
-        let model = repository.knowledge_settings()?.analysis_model;
-        let mut draft = OllamaAdapter::detect(&model)?.analyze_with_template_progress(
-            &transcript,
-            Some(&template),
-            |current, total| {
-                repository.update_job_progress(
-                    &job.id,
-                    "analyzing",
-                    current as i64,
-                    total as i64,
-                )?;
-                Ok(())
-            },
-        )?;
+        let progress_job_id = job.id.clone();
+        let progress_repository = library.repository();
+        let progress = |current: usize, total: usize| {
+            progress_repository.update_job_progress(
+                &progress_job_id,
+                "analyzing",
+                current as i64,
+                total as i64,
+            )?;
+            Ok(())
+        };
+        let (provider, model, mut draft) = if let Some(client) = external_client {
+            let generator = ExternalAnalysisGenerator { client: &client };
+            let draft = analyze_with_generator_progress(
+                &generator,
+                &transcript,
+                Some(&template),
+                progress,
+            )?;
+            let external_settings = repository.external_ai_settings(false, false)?;
+            ("external-openai-compatible", external_settings.model, draft)
+        } else {
+            let model = repository.knowledge_settings()?.analysis_model;
+            let draft = OllamaAdapter::detect(&model)?.analyze_with_template_progress(
+                &transcript,
+                Some(&template),
+                progress,
+            )?;
+            ("ollama", model, draft)
+        };
         repository.update_job_progress(&job.id, "validating", 1, 1)?;
         resolve_citation_aliases(&mut draft, &segments);
         let verified = verify_citations(&draft, &segments);
         repository.update_job_progress(&job.id, "saving", 1, 1)?;
-        repository.save_analysis_with_template(
+        repository.save_analysis_with_provider_and_template(
             record_id,
             &version.id,
+            provider,
             &model,
             &verified,
             &template,
@@ -1851,6 +2099,19 @@ fn run_analysis(
         return Err(error);
     }
     Ok(())
+}
+
+struct ExternalAnalysisGenerator<'a> {
+    client: &'a OpenAiCompatibleClient,
+}
+
+impl AnalysisTextGenerator for ExternalAnalysisGenerator<'_> {
+    fn generate_text(&self, prompt: &str) -> AppResult<String> {
+        self.client.complete_text(
+            "你是结构化录音分析器。仅返回约定的简体中文 JSON，不要使用 Markdown 或额外说明。",
+            prompt,
+        )
+    }
 }
 
 #[tauri::command]
@@ -1949,10 +2210,13 @@ pub fn update_external_ai_settings(
     let has_api_key = get_api_key()
         .map_err(|error| error.to_frontend())?
         .is_some();
+    let transcription_has_api_key = get_asr_api_key()
+        .map_err(|error| error.to_frontend())?
+        .is_some();
     state
         .library
         .repository()
-        .update_external_ai_settings(&settings, has_api_key)
+        .update_external_ai_settings(&settings, has_api_key, transcription_has_api_key)
         .map_err(|error| error.to_frontend())
 }
 
@@ -1968,6 +2232,21 @@ pub fn set_external_ai_api_key(
 #[tauri::command]
 pub fn clear_external_ai_api_key(state: State<AppState>) -> Result<ExternalAiSettings, String> {
     clear_api_key().map_err(|error| error.to_frontend())?;
+    external_settings(&state.library).map_err(|error| error.to_frontend())
+}
+
+#[tauri::command]
+pub fn set_external_asr_api_key(
+    state: State<AppState>,
+    api_key: String,
+) -> Result<ExternalAiSettings, String> {
+    set_asr_api_key(&api_key).map_err(|error| error.to_frontend())?;
+    external_settings(&state.library).map_err(|error| error.to_frontend())
+}
+
+#[tauri::command]
+pub fn clear_external_asr_api_key(state: State<AppState>) -> Result<ExternalAiSettings, String> {
+    clear_asr_api_key().map_err(|error| error.to_frontend())?;
     external_settings(&state.library).map_err(|error| error.to_frontend())
 }
 
@@ -2796,7 +3075,11 @@ pub fn rename_record_speaker(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::thread;
+    use std::time::Duration;
 
     static COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -2806,6 +3089,378 @@ mod tests {
             .join(format!("{name}_{}", COUNTER.fetch_add(1, Ordering::SeqCst)));
         let _ = std::fs::remove_dir_all(&root);
         ManagedLibrary::open(root).unwrap()
+    }
+
+    fn serve_one_response(response_body: &str) -> (String, thread::JoinHandle<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let response_body = response_body.to_owned();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 8_192];
+            loop {
+                let read = stream.read(&mut buffer).unwrap();
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..read]);
+                let Some(header_end) = request.windows(4).position(|window| window == b"\r\n\r\n")
+                else {
+                    continue;
+                };
+                let headers = String::from_utf8_lossy(&request[..header_end]).to_ascii_lowercase();
+                let content_length = headers
+                    .lines()
+                    .find_map(|line| line.strip_prefix("content-length:"))
+                    .and_then(|value| value.trim().parse::<usize>().ok())
+                    .unwrap_or(0);
+                if request.len() >= header_end + 4 + content_length {
+                    break;
+                }
+            }
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                response_body.len(),
+                response_body
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+            stream.flush().unwrap();
+            String::from_utf8_lossy(&request).into_owned()
+        });
+        (format!("http://{address}"), handle)
+    }
+
+    fn prepare_record_with_transcript(
+        library: &ManagedLibrary,
+        name: &str,
+    ) -> (crate::types::RecordBrief, crate::types::TranscriptVersion) {
+        let repository = library.repository();
+        let (record, _) = repository
+            .create_record_with_transcription_job(
+                name,
+                &format!("外部分析-{name}"),
+                None,
+                Path::new("audio/external.wav"),
+                &format!("hash-{name}"),
+                1_000,
+            )
+            .unwrap();
+        let (version, _) = repository
+            .save_transcript(
+                &record.id,
+                "test",
+                "test-model",
+                &[crate::types::TranscriptSegmentInput {
+                    start_ms: 0,
+                    end_ms: 1_000,
+                    speaker_label: Some("未知".to_owned()),
+                    original_text: "我们确认使用第三方模型完成结构化整理。".to_owned(),
+                }],
+            )
+            .unwrap();
+        (record, version)
+    }
+
+    fn save_analysis(
+        library: &ManagedLibrary,
+        record_id: &str,
+        version_id: &str,
+        draft: crate::analysis::AnalysisDraft,
+    ) -> crate::types::StoredAnalysis {
+        library
+            .repository()
+            .save_analysis(record_id, version_id, "test-model", &draft)
+            .unwrap()
+    }
+
+    fn valid_analysis_draft(
+        segment_id: &str,
+        quote: &str,
+        quality_warning: Option<String>,
+        quality_severity: Option<crate::analysis::AnalysisQualitySeverity>,
+    ) -> crate::analysis::AnalysisDraft {
+        crate::analysis::AnalysisDraft {
+            summary: "这是一段足够完整的摘要，能够清楚说明讨论背景、主要结论和后续方向。"
+                .to_owned(),
+            key_points: vec![crate::analysis::AnalysisItemDraft {
+                owner: None,
+                text: "本次讨论确认了第三方模型的结构化整理方案".to_owned(),
+                citation_segment_ids: vec![segment_id.to_owned()],
+                quote_text: quote.to_owned(),
+                start_ms: Some(0),
+                end_ms: Some(1_000),
+            }],
+            decisions: Vec::new(),
+            action_items: Vec::new(),
+            open_questions: Vec::new(),
+            custom_sections: Vec::new(),
+            quality_warning,
+            quality_severity,
+        }
+    }
+
+    #[test]
+    fn revalidation_recomputes_legacy_quality_fields_and_keeps_advisory_completed() {
+        let library = scratch_library("revalidate-advisory");
+        let (record, version) = prepare_record_with_transcript(&library, "advisory");
+        let segments = library
+            .repository()
+            .list_transcript_segments(&record.id)
+            .unwrap();
+        let quote = segments[0].original_text.clone();
+        let stored = save_analysis(
+            &library,
+            &record.id,
+            &version.id,
+            valid_analysis_draft(
+                &segments[0].id,
+                &quote,
+                Some("旧版本阻断提醒".to_owned()),
+                Some(crate::analysis::AnalysisQualitySeverity::Blocking),
+            ),
+        );
+
+        let revalidated = revalidate_analysis_with_library(&library, &stored.id).unwrap();
+        let draft: crate::analysis::AnalysisDraft =
+            serde_json::from_str(&revalidated.content_json).unwrap();
+
+        assert_eq!(revalidated.status, "completed");
+        assert_eq!(
+            draft.quality_severity,
+            Some(crate::analysis::AnalysisQualitySeverity::Advisory)
+        );
+        assert!(!draft
+            .quality_warning
+            .unwrap_or_default()
+            .contains("旧版本阻断提醒"));
+    }
+
+    #[test]
+    fn revalidation_rejects_analysis_when_evidence_cannot_be_verified() {
+        let library = scratch_library("revalidate-blocking");
+        let (record, version) = prepare_record_with_transcript(&library, "blocking");
+        let segments = library
+            .repository()
+            .list_transcript_segments(&record.id)
+            .unwrap();
+        let mut draft =
+            valid_analysis_draft(&segments[0].id, "逐字稿中不存在的引用原文", None, None);
+        draft.key_points[0].quote_text = "逐字稿中不存在的引用原文".to_owned();
+        let stored = save_analysis(&library, &record.id, &version.id, draft);
+
+        let error = revalidate_analysis_with_library(&library, &stored.id).unwrap_err();
+
+        assert!(error.to_string().contains("仍有分析条目无法匹配可靠出处"));
+        assert_eq!(
+            library
+                .repository()
+                .get_analysis(&stored.id)
+                .unwrap()
+                .status,
+            "completed"
+        );
+    }
+
+    #[test]
+    fn external_analysis_requires_consent_before_transport() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let library = scratch_library("external-analysis-consent");
+        let (record, _) = prepare_record_with_transcript(&library, "consent");
+        let repository = library.repository();
+        repository
+            .set_setting_value("processing_mode", "external")
+            .unwrap();
+        repository
+            .set_setting_value("external_ai_base_url", &base_url)
+            .unwrap();
+        repository
+            .set_setting_value("external_ai_model", "test-model")
+            .unwrap();
+        repository
+            .set_setting_value("external_ai_privacy_consent_at", "")
+            .unwrap();
+
+        let error = analyze_with_library(&library, &record.id).unwrap_err();
+        assert!(error.to_string().contains("确认文本发送说明"), "{error}");
+        assert!(repository.latest_analysis(&record.id).unwrap().is_none());
+
+        listener.set_nonblocking(true).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_millis(200);
+        let mut accepted = false;
+        while std::time::Instant::now() < deadline {
+            match listener.accept() {
+                Ok(_) => {
+                    accepted = true;
+                    break;
+                }
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => panic!("本地测试服务异常：{error}"),
+            }
+        }
+        assert!(!accepted, "未同意时不得建立第三方分析连接");
+        let _ = std::fs::remove_dir_all(library.root());
+    }
+
+    #[test]
+    fn external_mode_routes_transcription_to_asr_consent_gate() {
+        let library = scratch_library("external-transcription-route");
+        let (record, job) = library
+            .repository()
+            .create_record_with_transcription_job(
+                "external-transcription",
+                "第三方转写分流",
+                None,
+                Path::new("audio/external.wav"),
+                "external-transcription-hash",
+                1_000,
+            )
+            .unwrap();
+        library
+            .repository()
+            .set_setting_value("processing_mode", "external")
+            .unwrap();
+
+        let error =
+            run_transcription_with_engine(None, &library, &record.id, &job, "zh", None, None)
+                .unwrap_err();
+
+        assert!(
+            error.to_string().contains("音频上传说明"),
+            "第三方模式必须先进入 ASR 同意门禁：{error}"
+        );
+        assert!(
+            !error.to_string().contains("Whisper"),
+            "第三方模式不得回落到本地转写模型检查"
+        );
+        assert_eq!(
+            library.repository().get_job(&job.id).unwrap().status,
+            "failed"
+        );
+        let _ = std::fs::remove_dir_all(library.root());
+    }
+
+    #[test]
+    fn external_import_checks_text_analysis_before_audio_upload() {
+        use crate::external_ai_gate::AsrApiKeyEnvGuard;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let _key = AsrApiKeyEnvGuard::set("asr-secret");
+        let library = scratch_library("external-import-preflight");
+        let repository = library.repository();
+        let (record, _) = repository
+            .create_record_with_transcription_job(
+                "external-import-preflight",
+                "第三方导入预检",
+                None,
+                Path::new("audio/external.wav"),
+                "external-import-preflight-hash",
+                1_000,
+            )
+            .unwrap();
+        let mut settings = repository.external_ai_settings(false, true).unwrap();
+        settings.processing_mode = "external".to_owned();
+        settings.audio_upload_consent_at = Some("2026-09-26T00:00:00Z".to_owned());
+        repository
+            .update_external_ai_settings(&settings, false, true)
+            .unwrap();
+
+        let error = process_record_with_library(&library, &record.id).unwrap_err();
+
+        assert!(error.to_string().contains("文本发送说明"), "{error}");
+        let jobs = repository.list_jobs_for_record(&record.id).unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].job_type, "transcribe");
+        assert_eq!(jobs[0].status, "failed");
+        assert!(
+            !jobs.iter().any(|job| job.job_type == "analyze"),
+            "第三方理解未配置时不得在音频上传后才开始分析"
+        );
+
+        let mut accepted = false;
+        let deadline = std::time::Instant::now() + Duration::from_millis(100);
+        while std::time::Instant::now() < deadline {
+            match listener.accept() {
+                Ok(_) => {
+                    accepted = true;
+                    break;
+                }
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => panic!("本地测试服务异常：{error}"),
+            }
+        }
+        assert!(!accepted, "第三方理解未配置时不得建立音频上传连接");
+        let _ = std::fs::remove_dir_all(library.root());
+    }
+
+    #[test]
+    fn external_analysis_persists_provider_and_model() {
+        let transcript = "我们确认使用第三方模型完成结构化整理。";
+        let analysis = serde_json::json!({
+            "summary": "本段录音确认使用第三方模型完成结构化整理，并明确了后续分析方向。",
+            "key_points": [
+                {"text":"使用第三方大模型服务", "citation_segment_ids":["segment"], "quote_text":transcript},
+                {"text":"完成逐字稿结构化整理", "citation_segment_ids":["segment"], "quote_text":transcript},
+                {"text":"明确后续分析处理方向", "citation_segment_ids":["segment"], "quote_text":transcript}
+            ],
+            "decisions": [],
+            "action_items": [],
+            "open_questions": [],
+            "custom_sections": []
+        });
+        let content = serde_json::to_string(&analysis).unwrap();
+        let response = serde_json::json!({
+            "choices": [{"message": {"content": content}}]
+        })
+        .to_string();
+        let (base_url, server) = serve_one_response(&response);
+        let _key = crate::external_ai_gate::ApiKeyEnvGuard::set("text-secret");
+        let library = scratch_library("external-analysis-success");
+        let (record, _) = prepare_record_with_transcript(&library, "success");
+        let repository = library.repository();
+        let mut settings = repository.external_ai_settings(false, false).unwrap();
+        settings.processing_mode = "external".to_owned();
+        settings.enabled = true;
+        settings.base_url = base_url;
+        settings.model = "test-model".to_owned();
+        settings.privacy_consent_at = Some("2026-09-25T00:00:00Z".to_owned());
+        repository
+            .update_external_ai_settings(&settings, false, false)
+            .unwrap();
+
+        let analysis_result = analyze_with_library(&library, &record.id);
+        let received = server.join().unwrap();
+        analysis_result.unwrap_or_else(|error| {
+            panic!("第三方分析失败：{error}\n收到请求：{received}");
+        });
+
+        let stored = repository.latest_analysis(&record.id).unwrap().unwrap();
+        assert_eq!(stored.provider, "external-openai-compatible");
+        assert_eq!(stored.model, "test-model");
+        let received_lower = received.to_ascii_lowercase();
+        assert!(received_lower.starts_with("post /chat/completions http/1.1"));
+        assert!(received_lower.contains("authorization: bearer text-secret"));
+        assert!(received.contains("test-model"));
+        let _ = std::fs::remove_dir_all(library.root());
     }
 
     /// 下载完成必须顺手登记为当前模型。少了这一步，用户在引导里下完 574MB 之后
@@ -2908,5 +3563,47 @@ mod tests {
         clear_cancellation("qwen2.5:7b");
         assert!(!is_cancelled("qwen2.5:7b"));
         assert!(cancel_model_download("   ".to_owned()).is_err());
+    }
+
+    #[test]
+    fn failed_transcription_does_not_start_analysis() {
+        let library = scratch_library("pipeline-failure");
+        let (record, _) = library
+            .repository()
+            .create_record_with_transcription_job(
+                "pipeline-failure-record",
+                "missing-model",
+                None,
+                Path::new("audio/missing.wav"),
+                "pipeline-failure-hash",
+                1_000,
+            )
+            .unwrap();
+        library
+            .repository()
+            .set_setting_value(
+                "whisper_model_path",
+                &library
+                    .root()
+                    .join("models")
+                    .join("missing-model.bin")
+                    .to_string_lossy(),
+            )
+            .unwrap();
+
+        assert!(process_record_with_library(&library, &record.id).is_err());
+
+        let jobs = library
+            .repository()
+            .list_jobs_for_record(&record.id)
+            .unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].job_type, "transcribe");
+        assert_eq!(jobs[0].status, "failed");
+        assert!(
+            !jobs.iter().any(|job| job.job_type == "analyze"),
+            "转写失败后不得继续创建分析任务"
+        );
+        let _ = std::fs::remove_dir_all(library.root());
     }
 }

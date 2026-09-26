@@ -8,6 +8,7 @@ pub mod document;
 pub mod error;
 pub mod export;
 pub mod external_ai_gate;
+pub mod external_asr;
 pub mod inbox;
 pub mod knowledge;
 pub mod library;
@@ -69,6 +70,8 @@ pub fn run() {
             commands::update_analysis_template,
             commands::delete_analysis_template,
             commands::list_records,
+            commands::list_archived_records,
+            commands::set_record_archived,
             commands::search_records,
             commands::get_knowledge_overview,
             commands::get_knowledge_index_status,
@@ -99,6 +102,8 @@ pub fn run() {
             commands::update_external_ai_settings,
             commands::set_external_ai_api_key,
             commands::clear_external_ai_api_key,
+            commands::set_external_asr_api_key,
+            commands::clear_external_asr_api_key,
             commands::test_external_ai_connection,
             commands::get_local_timeline,
             commands::get_local_growth_graph,
