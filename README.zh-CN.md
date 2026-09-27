@@ -157,7 +157,7 @@ cargo test --features mcp-bin
 
 ## 项目状态
 
-回声记忆当前版本为 v0.7.0，可从 [GitHub Releases](https://github.com/questionjie-max/echo-memory/releases) 下载最新公开测试版，也支持从源码构建。发布物只有在真实通过签名、公证和装订验证后，才会标注为 Apple 已签名和已公证；否则必须明确标注实际状态。
+回声记忆当前版本为 v0.7.0，可从 [GitHub Releases](https://github.com/questionjie-max/echo-memory/releases) 下载最新公开版，也支持从源码构建。发布物只有在真实通过签名、公证和装订验证后，才会标注为 Apple 已签名和已公证；否则必须明确标注实际状态。
 
 欢迎参与贡献。提交 Issue 或 PR 前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)，不要在公开 Issue 中附带真实音频、逐字稿、数据库、密钥或客户资料。安全问题请按 [SECURITY.md](SECURITY.md) 私密报告。
 

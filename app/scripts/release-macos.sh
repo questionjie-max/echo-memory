@@ -41,10 +41,33 @@ if [ -z "$dmg_path" ]; then
   exit 1
 fi
 
+echo "== Notarizing and stapling DMG =="
+if [ -n "${NOTARYTOOL_KEYCHAIN_PROFILE:-}" ]; then
+  xcrun notarytool submit "$dmg_path" \
+    --keychain-profile "$NOTARYTOOL_KEYCHAIN_PROFILE" \
+    --wait
+elif [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_PASSWORD:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ]; then
+  xcrun notarytool submit "$dmg_path" \
+    --apple-id "$APPLE_ID" \
+    --password "$APPLE_PASSWORD" \
+    --team-id "$APPLE_TEAM_ID" \
+    --wait
+elif [ -n "${APPLE_API_ISSUER:-}" ] && [ -n "${APPLE_API_KEY:-}" ] && [ -n "${APPLE_API_KEY_PATH:-}" ]; then
+  xcrun notarytool submit "$dmg_path" \
+    --key "$APPLE_API_KEY_PATH" \
+    --key-id "$APPLE_API_KEY" \
+    --issuer "$APPLE_API_ISSUER" \
+    --wait
+else
+  echo "No notarization credentials available for the DMG." >&2
+  exit 1
+fi
+xcrun stapler staple "$dmg_path"
+
 echo "== Verifying DMG image and signature =="
 hdiutil verify "$dmg_path"
 codesign --verify --deep --strict --verbose=2 "$dmg_path"
-spctl --assess --type open --verbose=4 "$dmg_path"
+spctl --assess --type install --verbose=4 "$dmg_path"
 xcrun stapler validate "$dmg_path"
 
 attach_output="$(hdiutil attach -readonly -nobrowse -noautoopen -mountpoint "$mount_dir" "$dmg_path")"

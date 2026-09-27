@@ -14,17 +14,18 @@ Tauri 的 `bundle.macOS.hardenedRuntime` 默认开启。本项目通过环境变
 
 ## 当前状态
 
-截至 2026-09-25，本机尚未具备正式签名发布条件：
+截至 2026-09-27，本机已安装有效的 Developer ID Application 身份，且 v0.7.0 DMG 已完成 Apple 公证与票据装订。公证凭据不写入仓库；后续发布仍需通过环境变量或本机钥匙串提供凭据。
 
 ```text
 security find-identity -v -p codesigning
-0 valid identities found
+1) ... "Developer ID Application: Shanghai Yixin Fuyou Information Technology Co., Ltd. (UUW529RXG7)"
+1 valid identities found
 
-xcrun notarytool history
-Error: Must provide credentials.
+xcrun stapler validate path/to/Echo-Memory_0.7.0_aarch64.dmg
+The validate action worked!
 ```
 
-因此当前没有声称已完成 Developer ID 签名或公证，也没有向正式渠道发布签名 DMG。
+v0.7.0 的发布物已按上述流程验证；这不意味着凭据会自动出现在新 shell 或 CI 中。
 
 ## 前置条件
 
@@ -88,13 +89,6 @@ npm run release:macos
 
 任一步骤失败都会返回非零退出码。正式验收还应在干净 macOS 机器上安装并启动一次，确认 Gatekeeper 不显示未验证阻断。
 
-## 预期的当前结果
+## 预期结果
 
-在当前未配置凭据的机器上运行 `npm run check:signing`，应返回 `1`，并至少明确报告：
-
-```text
-APPLE_SIGNING_IDENTITY
-Notarization credentials (...)
-```
-
-这是预期结果，不应用 `--no-sign` 绕过。
+在已安装 Developer ID 身份且提供公证凭据的机器上运行 `npm run check:signing`，应返回 `0`。凭据缺失时应返回 `1` 并明确报告缺失项，不应用 `--no-sign` 绕过。

@@ -7,7 +7,8 @@
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
     "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build:bundle"
+    "beforeBuildCommand": "npm run build:bundle",
+    "beforeBundleCommand": "bash scripts/sign-release-resources.sh"
   },
   "app": {
     "windows": [

@@ -19,18 +19,15 @@
 
 ## Distribution status
 
-This source release is version `0.7.0`. The public test artifact is `Echo-Memory_0.7.0_aarch64.dmg`, SHA-256 `4fdd062e39ec41b883dbe1378ed0a23c3cf009022f5d552284d2fb784001f9ee`.
+This source release is version `0.7.0`. The public artifact is `Echo-Memory_0.7.0_aarch64.dmg`, SHA-256 `caa5ea42dd1d8ff3f321e6ea8eca2db0a84f20ee802cd01125e938c262dadc92`.
 
-- `codesign --verify --deep --strict` passes for both the packaged application and the ad-hoc signed DMG.
+- `codesign --verify --deep --strict` passes for both the packaged application and the DMG.
 - `hdiutil verify` confirms the disk image is intact.
-- `spctl --assess` rejects the artifact, and `xcrun stapler validate` confirms that no Apple notarization ticket is present.
-- This DMG is therefore an **Alpha test build with ad-hoc signing only**. It is not Apple-signed or notarized and must not be described as a formally signed production release.
+- `spctl --assess --type install` reports `accepted` with `source=Notarized Developer ID`.
+- `xcrun stapler validate` passes for both the DMG and the mounted application.
+- This DMG is an **Apple-signed and notarized Developer ID release**. Apple notarization submission `12853e50-c0df-4b94-93d2-62d43cbe3f18` completed with status `Accepted`.
 
-To open the Alpha build on macOS, move `回声记忆.app` into `/Applications`, then use **Right click -> Open** the first time. If macOS still blocks it, review the local security prompt under **System Settings -> Privacy & Security**, or run:
-
-```bash
-xattr -dr com.apple.quarantine "/Applications/回声记忆.app"
-```
+Users can download the DMG, open it, and move `回声记忆.app` into `/Applications` normally.
 
 ---
 
@@ -55,15 +52,12 @@ xattr -dr com.apple.quarantine "/Applications/回声记忆.app"
 
 ## 分发状态
 
-本源码版本为 `0.7.0`，公开测试安装包为 `Echo-Memory_0.7.0_aarch64.dmg`，SHA-256 为 `4fdd062e39ec41b883dbe1378ed0a23c3cf009022f5d552284d2fb784001f9ee`。
+本源码版本为 `0.7.0`，公开安装包为 `Echo-Memory_0.7.0_aarch64.dmg`，SHA-256 为 `caa5ea42dd1d8ff3f321e6ea8eca2db0a84f20ee802cd01125e938c262dadc92`。
 
-- 应用程序与 DMG 均已执行 ad-hoc 签名，`codesign --verify --deep --strict` 检查通过。
+- 应用程序与 DMG 均通过 `codesign --verify --deep --strict`。
 - `hdiutil verify` 确认磁盘镜像完整。
-- `spctl --assess` 拒绝该发布物，`xcrun stapler validate` 确认没有 Apple 公证票据。
-- 因此它明确标注为 **仅 ad-hoc 签名的 Alpha 测试版**，不是 Apple 正式签名并公证的生产版本。
+- `spctl --assess --type install` 返回 `accepted`，来源为 `Notarized Developer ID`。
+- `xcrun stapler validate` 对 DMG 和挂载后的应用均通过。
+- 因此它明确标注为 **Apple 已签名并完成公证的 Developer ID 发布版**。公证提交 `12853e50-c0df-4b94-93d2-62d43cbe3f18` 状态为 `Accepted`。
 
-macOS 用户可把 `回声记忆.app` 拖入 `/Applications`，首次启动时使用“右键 -> 打开”。如果系统仍然阻止启动，请前往 **系统设置 -> 隐私与安全性** 查看提示，或运行：
-
-```bash
-xattr -dr com.apple.quarantine "/Applications/回声记忆.app"
-```
+macOS 用户下载 DMG 后可正常打开，并把 `回声记忆.app` 拖入 `/Applications`。
