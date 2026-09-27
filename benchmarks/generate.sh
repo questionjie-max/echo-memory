@@ -12,7 +12,7 @@ set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 CLIPS="$DIR/clips"
 # 优先用系统完整版 ffmpeg（应用自带的是精简构建，缺 mp4/aac 封装器）
-FFMPEG="${FFMPEG:-$(command -v ffmpeg || echo /Users/REDACTED/Desktop/SOLOPLAY/AI录音工作助手/app/src-tauri/resources/ffmpeg)}"
+FFMPEG="${FFMPEG:-$(command -v ffmpeg || echo "$DIR/../app/src-tauri/resources/ffmpeg")}"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 

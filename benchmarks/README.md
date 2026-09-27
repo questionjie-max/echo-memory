@@ -8,8 +8,7 @@
 - `clips/` — 音频（m4a）与对应真值文本（`.txt`）。`03-dialogue` 另有说话人轮次真值（txt 内 `名字：内容` 逐行）。
 - `manifest.json` — 每条片段的时长、SHA-256、语言、真值、备注。
 - `generate.sh` — 重新生成全部音频（`say` → 系统 ffmpeg → m4a）。声音可用环境变量覆盖（`ZH_FEMALE`/`ZH_MALE`/`EN_VOICE`）。
-- `results/` — 基准跑器的 JSON 明细（每次运行一个文件，按时间戳 + 模型哈希命名）。
-- `RESULTS.md` — 汇总表（人工维护结论）。
+- `results/` — 本地 JSON 明细，不纳入版本控制，避免公开真实转写或分析内容。
 - `../app/src-tauri/tests/transcription_benchmark_test.rs` — 基准跑器。
 
 ## 跑法
@@ -19,8 +18,8 @@
 # 也可用 ECHO_WHISPER_MODEL 显式指定路径）
 ECHO_BENCH=1 cargo test --features mcp-bin --test transcription_benchmark_test -- --ignored --nocapture
 
-# 附加真实录音稳定性对照（无真值，不算 CER，只记录转写与耗时）：
-ECHO_BENCH=1 ECHO_BENCH_REAL="/path/a.m4a;/path/b.wav" \
+# 可选的本地真实录音稳定性对照（无真值，不算 CER；输出只写入被忽略的 results/）：
+ECHO_BENCH=1 ECHO_BENCH_REAL="/path/to/local-audio.m4a;/path/to/local-audio.wav" \
   cargo test --features mcp-bin --test transcription_benchmark_test -- --ignored --nocapture
 ```
 

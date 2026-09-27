@@ -1,12 +1,12 @@
 # Echo Memory / 回声记忆
 
-[中文文档](README.zh-CN.md) · [MCP reference](docs/mcp.md) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
+[中文文档](README.zh-CN.md) · [Download v0.7.0](https://github.com/questionjie-max/echo-memory/releases/latest) · [MCP reference](docs/mcp.md) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
 
-**A Personal Memory OS for AI-native work.** Echo Memory turns conversations, documents, decisions, and changing ideas into a traceable personal memory layer that can be reused by different AI agents.
+**Turn every conversation into long-term memory.** Echo Memory is a Personal Memory OS for AI-native work. It turns conversations, documents, decisions, and changing ideas into a traceable personal memory layer that can be reused by different AI agents.
 
 > AI knows more about the world every day, but it still does not truly know you. Echo Memory gives your AI a memory of what you experienced, why you decided, and how your thinking changed.
 
-The current macOS Alpha is the first working slice of this direction. It is not yet a complete personal digital twin, but it already closes the loop from source material to evidence-backed retrieval and agent access.
+**[Download the signed macOS release](https://github.com/questionjie-max/echo-memory/releases/latest)** or build from source. Echo Memory v0.7.0 closes the loop from capture and transcription to structured analysis, evidence-backed retrieval, and agent access.
 
 ## Why it exists
 
@@ -31,9 +31,20 @@ The long-term product has four connected layers:
 3. **Personal Memory OS**: one system for capture, understanding, organization, retrieval, and feedback.
 4. **Digital Twin Database**: a long-term, correctable model of what a person experienced, knows, values, and how they make decisions.
 
-The digital-twin direction is a product vision, not a claim that the current Alpha can fully model a person.
+The digital-twin direction is a product vision, not a claim that the current release can fully model a person.
 
-## What the current Alpha does
+## What v0.7.0 does
+
+### Latest improvements
+
+- Use a right-click menu to move, rename, archive, manage, or delete a record without selecting it first.
+- Run the complete workflow through either the local processing channel or a separately configured third-party ASR and text-model channel.
+- Consume speaker labels returned by supported third-party ASR providers without guessing speakers from text.
+- Keep long template and AI-model settings pages in one stable scrolling container, with clear feedback when adding template sections.
+- Separate advisory quality warnings from blocking analysis failures so incomplete status reflects an actual failed analysis.
+- Use the opt-in, local, read-only MCP server to give authorized AI tools bounded access to personal context.
+
+### Complete workflow
 
 - First-run onboarding: environment check, resumable local model downloads, and inbox setup.
 - Audio inbox: watch folders and USB recorders; new audio imports, transcribes, and analyzes automatically.
@@ -117,7 +128,7 @@ See the [MCP reference](docs/mcp.md) for tools and development configuration.
 
 ## Current boundary and direction
 
-The Alpha focuses on a single-user, single-device workflow. It does not currently provide real-time recording, automatic meeting joining, mobile or Windows apps, cloud sync, team collaboration, public APIs, or MCP writes.
+The current release focuses on a single-user, single-device workflow. It does not currently provide real-time recording, automatic meeting joining, mobile or Windows apps, cloud sync, team collaboration, public APIs, or MCP writes.
 
 The longer-term direction is to expand from traceable conversation memory into a personal memory infrastructure that can connect events, people, projects, questions, knowledge, decisions, and outcomes across time. That direction still requires product, privacy, and user-trust validation.
 
@@ -160,14 +171,6 @@ cargo test --features mcp-bin
 Echo Memory v0.7.0 is the current public release. Download the latest build from [GitHub Releases](https://github.com/questionjie-max/echo-memory/releases). Source builds are supported. Distribution artifacts must be labeled truthfully according to their actual signing and Apple notarization status; this repository does not claim notarization unless the artifact passes the documented verification commands.
 
 Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening an issue or pull request, and never attach real audio, transcripts, databases, credentials, or private customer material to a public issue. Security reports should follow [SECURITY.md](SECURITY.md).
-
-## Support
-
-Echo Memory is free and open source. Support helps fund maintenance, compatibility testing, and documentation.
-
-<p align="center">
-  <img src="docs/images/support-qr.png" alt="Buy Echo Memory a coffee" width="260">
-</p>
 
 ## License
 

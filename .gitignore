@@ -60,3 +60,6 @@ content/
 # 转写质量基准：合成音频与真值一起版本化，保证结果可复现
 !benchmarks/**/*.m4a
 !benchmarks/**/*.wav
+
+# 本地基准输出可能包含真实逐字稿、路径和分析内容，绝不公开
+benchmarks/results/

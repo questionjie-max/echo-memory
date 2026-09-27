@@ -98,7 +98,7 @@
 }
 
 /* ---------------- Lovart 深色主题 ----------------
-   色板来自 design/lovart-dark-v1/设计规范：Surface-0 #0A0A0A、1 #141414、
+   Lovart 深色方案的公开色板：Surface-0 #0A0A0A、1 #141414、
    2 #1E1E1E、3 #262626；文字 #FAFAFA / #A1A1AA；强调色琥珀 #F59E0B / #D97706。 */
 :root[data-theme="dark"] {
   color-scheme: dark;

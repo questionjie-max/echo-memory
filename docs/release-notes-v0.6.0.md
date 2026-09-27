@@ -15,7 +15,7 @@
 - Deterministic test baseline: TypeScript typecheck and frontend build pass; growth tests 9/9; UI tests 81/81; Rust format and Clippy checks pass; Rust tests execute 155 deterministic cases successfully.
 - Release bundle baseline: frontend and release MCP binary build successfully; production npm dependencies report zero known vulnerabilities.
 - macOS DMG baseline: `回声记忆_0.6.0_aarch64.dmg` passes `hdiutil verify` and launches successfully; SHA-256: `f463c75cfaf96b5c36e047db3845d4416c38763291d623d4f435a79897f29478`.
-- Real long-recording regression: `benchmarks/results/20260923T183736Z-39422170.json` passed with Chinese language selection, 292 segments, a monotonic timeline, `accepted: true`, and no transcription error.
+- Real long-recording regression: the environment-dependent local regression passed with Chinese language selection, 292 segments, a monotonic timeline, `accepted: true`, and no transcription error.
 - Documentation status: known P0 product failures and the repeatable real long-recording regression are resolved; the archived JSON result remains the release evidence.
 
 ## Known boundaries
@@ -43,7 +43,7 @@
 - 确定性基线：TypeScript 类型检查与前端构建通过；成长时间线测试 9/9；UI 测试 81/81；Rust 格式与 Clippy 检查通过；Rust 确定性测试共执行 155 个用例并全部通过。
 - 发布构建基线：前端和 Release MCP 二进制构建通过；生产 npm 依赖已知漏洞为 0。
 - macOS DMG 基线：`回声记忆_0.6.0_aarch64.dmg` 通过 `hdiutil verify` 并可直接启动；SHA-256：`f463c75cfaf96b5c36e047db3845d4416c38763291d623d4f435a79897f29478`。
-- 真实长录音回归：`benchmarks/results/20260923T183736Z-39422170.json` 已通过，显式选择中文，共 292 段，时间轴单调，`accepted: true`，转写无错误。
+- 真实长录音回归：环境依赖的本地回归已通过，显式选择中文，共 292 段，时间轴单调，`accepted: true`，转写无错误。
 - 文档状态：已知 P0 产品故障和可重复真实长录音回归均已解除，归档 JSON 作为发布证据。
 
 ## 已知边界

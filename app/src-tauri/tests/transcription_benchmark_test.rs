@@ -14,8 +14,7 @@
 //! - `ECHO_BENCH_REAL`：额外的真实录音路径列表（`;` 分隔），做稳定性对照，
 //!   不算 CER（无真值），只记录与时间轴信息。
 //!
-//! 结果同时写入 `benchmarks/results/<UTC 时间戳>-<模型>.json`，
-//! 供 `benchmarks/RESULTS.md` 汇总。
+//! 结果同时写入本地忽略的 `benchmarks/results/<UTC 时间戳>-<模型>.json`。
 
 use echo_memory_lib::commands::transcribe_with_library;
 use echo_memory_lib::library::ManagedLibrary;
