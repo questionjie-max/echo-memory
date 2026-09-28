@@ -422,7 +422,8 @@ export interface GrowthGraph {
 export interface EvolutionItem {
   id: string;
   topic: string;
-  changeType: "新增" | "补充" | "修正" | "推翻" | "合并" | "验证" | string;
+  // 与后端 schema_contract 的英文枚举一致；显示层的中文标签见 lib/changeType.ts
+  changeType: "added" | "supplemented" | "revised" | "overturned" | "merged" | "validated" | string;
   beforeText: string;
   afterText: string;
   reason: string;

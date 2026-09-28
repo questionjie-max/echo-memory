@@ -151,6 +151,75 @@ impl LibraryRepository {
         ).map_err(AppError::from)
     }
 
+    /// 批量写反馈：单条 UPSERT 的事务化版本。任一条目校验失败整体回滚，
+    /// 不会留下「一半确认一半没确认」的状态。
+    pub fn update_memory_feedback_batch(
+        &self,
+        snapshot_id: &str,
+        entries: &[(String, String, String)],
+    ) -> AppResult<Vec<MemoryFeedback>> {
+        if entries.is_empty() {
+            return Ok(Vec::new());
+        }
+        for (_, decision, _) in entries {
+            if !matches!(decision.as_str(), "confirmed" | "rejected") {
+                return Err(AppError::Invalid(
+                    "反馈状态必须为 confirmed 或 rejected".to_owned(),
+                ));
+            }
+        }
+        let snapshot = self.get_memory_snapshot(snapshot_id)?;
+        for (item_id, _, _) in entries {
+            let item_exists = snapshot
+                .result
+                .timeline_items
+                .iter()
+                .any(|item| item.id == *item_id)
+                || snapshot.result.nodes.iter().any(|item| item.id == *item_id)
+                || snapshot.result.edges.iter().any(|item| item.id == *item_id)
+                || snapshot
+                    .result
+                    .evolution_items
+                    .iter()
+                    .any(|item| item.id == *item_id);
+            if !item_exists {
+                return Err(AppError::Invalid(format!(
+                    "反馈条目 {item_id} 不存在于该记忆快照"
+                )));
+            }
+        }
+        let mut connection = self.connect()?;
+        let transaction = connection.transaction()?;
+        let now = Utc::now().to_rfc3339();
+        let mut saved = Vec::with_capacity(entries.len());
+        for (item_id, decision, note) in entries {
+            let existing: Option<(String, String)> = transaction
+                .query_row(
+                    "SELECT id, created_at FROM memory_feedback WHERE snapshot_id = ?1 AND item_id = ?2",
+                    params![snapshot_id, item_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?;
+            let (id, created_at) =
+                existing.unwrap_or_else(|| (Uuid::new_v4().to_string(), now.clone()));
+            transaction.execute(
+                "INSERT INTO memory_feedback (id, snapshot_id, item_id, decision, note, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT(snapshot_id, item_id) DO UPDATE SET decision = excluded.decision, note = excluded.note, updated_at = excluded.updated_at",
+                params![id, snapshot_id, item_id, decision, note.trim(), created_at, now],
+            )?;
+            saved.push(MemoryFeedback {
+                id,
+                snapshot_id: snapshot_id.to_owned(),
+                item_id: item_id.clone(),
+                decision: decision.clone(),
+                note: note.trim().to_owned(),
+                created_at,
+                updated_at: now.clone(),
+            });
+        }
+        transaction.commit()?;
+        Ok(saved)
+    }
+
     pub fn list_memory_feedback(&self, snapshot_id: &str) -> AppResult<Vec<MemoryFeedback>> {
         let connection = self.connect()?;
         let mut statement = connection.prepare(

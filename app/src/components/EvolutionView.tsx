@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { SparklesIcon } from "./icons";
 import MemoryViewControls from "./MemoryViewControls";
-import type { EvolutionItem, MemoryFeedback, MemoryScope, MemorySourceReference } from "../shared/types";
-import { listMemoryFeedback, updateMemoryFeedback } from "../lib/tauri";
+import { changeTypeLabel, changeTypeSlug } from "../lib/changeType";
+import type { EvolutionItem, MemoryFeedback, MemoryScope, MemorySnapshot, MemorySourceReference } from "../shared/types";
+import { listMemoryFeedback, updateMemoryFeedback, updateMemoryFeedbackBatch } from "../lib/tauri";
 import {
   formatMemoryDate,
   useMemoryViewData,
@@ -21,12 +22,15 @@ export default function EvolutionView({ scope, onOpenSource, onOpenSettings }: P
   const [feedbackBusy, setFeedbackBusy] = useState<Set<string>>(() => new Set());
   const [feedbackError, setFeedbackError] = useState("");
   const [feedbackStatus, setFeedbackStatus] = useState("");
+  const [confirmAllBusy, setConfirmAllBusy] = useState(false);
   const feedbackRequestId = useRef(0);
   const activeSnapshotId = useRef<string | null>(null);
   const data = useMemoryViewData("evolution", scope, range);
   activeSnapshotId.current = data.selectedSnapshot?.id ?? null;
   const items = data.selectedSnapshot?.result.evolutionItems ?? [];
   const groups = groupByTopic(items);
+  // 待确认 = 推断出来的、且用户还没表过态的条目——批量确认的候选集
+  const pendingCount = items.filter((item) => item.inferred && !feedback.some((entry) => entry.itemId === item.id)).length;
 
   useEffect(() => {
     const snapshotId = data.selectedSnapshot?.id ?? null;
@@ -80,6 +84,30 @@ export default function EvolutionView({ scope, onOpenSource, onOpenSettings }: P
     }
   }
 
+  // 批量确认：一次请求带全部待确认条目，后端单事务写入，避免逐条循环产生半确认状态
+  async function confirmAll() {
+    if (!data.selectedSnapshot || confirmAllBusy || pendingCount === 0) return;
+    const snapshotId = data.selectedSnapshot.id;
+    const decided = feedback.map((entry) => entry.itemId);
+    const targetIds = items.filter((item) => item.inferred && !decided.includes(item.id)).map((item) => item.id);
+    setConfirmAllBusy(true);
+    setFeedbackError("");
+    setFeedbackStatus("正在确认…");
+    try {
+      const saved = await updateMemoryFeedbackBatch(snapshotId, targetIds.map((itemId) => ({ itemId, decision: "confirmed", note: "" })));
+      if (activeSnapshotId.current !== snapshotId) return;
+      setFeedback((current) => [...saved, ...current.filter((entry) => !targetIds.includes(entry.itemId))]);
+      setFeedbackStatus(`已确认 ${saved.length} 条推断。`);
+    } catch (reason) {
+      if (activeSnapshotId.current === snapshotId) {
+        setFeedbackStatus("");
+        setFeedbackError(`批量确认失败：${errorMessage(reason)}`);
+      }
+    } finally {
+      setConfirmAllBusy(false);
+    }
+  }
+
   return <section className="memory-view evolution-view">
     <MemoryViewControls
       title="认知演化"
@@ -100,6 +128,7 @@ export default function EvolutionView({ scope, onOpenSource, onOpenSettings }: P
     />
     {feedbackStatus && <p className="inline-notice memory-notice" role="status" aria-live="polite">{feedbackStatus}</p>}
     {data.loading ? <div className="memory-empty" role="status" aria-live="polite"><strong>正在加载认知演化…</strong></div> : data.error || feedbackError ? <div className="memory-empty memory-error-state" role="alert"><strong>认知演化加载失败</strong><p>{[data.error, feedbackError].filter(Boolean).join("；")}</p><button type="button" className="secondary-button" onClick={() => { setFeedbackError(""); void data.reload(); }}>重试</button></div> : !data.selectedSnapshot ? (data.settings && !isExternalAiReady(data.settings) ? <ConfiguredEmpty onOpenSettings={onOpenSettings} /> : <NoSnapshotEmpty />) : <div className="evolution-content">
+      {items.length > 0 && <EvolutionSummary items={items} snapshot={data.selectedSnapshot} pendingCount={pendingCount} onConfirmAll={confirmAll} busy={confirmAllBusy} />}
       {groups.length === 0 ? <div className="memory-empty"><strong>当前快照还没有可展示的观点变化</strong><p>生成快照后，模型会在可匹配来源的范围内提取观点演化。</p></div> : groups.map(([topic, topicItems]) => <section className="evolution-topic" key={topic}><div className="evolution-topic-heading"><h3>{topic}</h3><span>{topicItems.length} 次变化</span></div><div className="evolution-chain">{topicItems.map((item) => <EvolutionCard key={item.id} item={item} feedback={feedback.find((entry) => entry.itemId === item.id)} busy={feedbackBusy.has(`${data.selectedSnapshot?.id}:${item.id}`)} onDecide={decide} onOpenSource={onOpenSource} />)}</div></section>)}
       <Watchlist title="长期未推进的问题" items={data.selectedSnapshot.result.dormantQuestions} empty="没有识别到长期未推进的问题。" />
       <Watchlist title="持续有任务但缺少里程碑变化的项目" items={data.selectedSnapshot.result.stalledProjects} empty="没有识别到停滞项目。" />
@@ -108,7 +137,29 @@ export default function EvolutionView({ scope, onOpenSource, onOpenSettings }: P
 }
 
 function EvolutionCard({ item, feedback, busy, onDecide, onOpenSource }: { item: EvolutionItem; feedback?: MemoryFeedback; busy: boolean; onDecide: (item: EvolutionItem, decision: "confirmed" | "rejected") => Promise<void>; onOpenSource: (source: MemorySourceReference) => void }) {
-  return <article className={`evolution-card${item.inferred ? " inferred" : ""}`} aria-busy={busy}><div className="evolution-card-heading"><span className={`change-type change-${item.changeType}`}>{item.changeType}</span><time dateTime={item.occurredAt}>{formatMemoryDate(item.occurredAt, { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</time>{item.inferred && <span className="inferred-badge">待确认推断</span>}{feedback && <span className={`feedback-badge ${feedback.decision}`}>{feedback.decision === "confirmed" ? "已确认" : "已驳回"}</span>}</div><div className="evolution-before-after"><div><span>之前</span><p>{item.beforeText || "—"}</p></div><div className="evolution-arrow">→</div><div><span>之后</span><p>{item.afterText || "—"}</p></div></div>{item.reason && <p className="evolution-reason"><strong>变化原因：</strong>{item.reason}</p>}{item.confidence !== null && <span className="confidence-label">置信度 {Math.round(item.confidence * 100)}%</span>}<div className="evolution-card-footer"><div className="source-list">{item.sources.map((source, index) => <button type="button" className="source-reference" key={`${source.recordId}-${source.segmentId}-${index}`} onClick={() => onOpenSource(source)}><span>证据 {index + 1}</span><span>{source.quoteText || "跳转到逐字稿"}</span></button>)}</div><div className="feedback-actions"><button type="button" className="secondary-button" disabled={busy} onClick={() => void onDecide(item, "rejected")}>驳回</button><button type="button" className="primary-button" disabled={busy} onClick={() => void onDecide(item, "confirmed")}>确认</button></div></div>{feedback?.note && <p className="feedback-note">备注：{feedback.note}</p>}</article>;
+  // 只有「有前后对比」的变化类型才值得并排展示：新增/补充类的 beforeText 通常是空的，
+  // 三栏硬装会留下一个空壳「之前」栏。
+  const showsBefore = ["revised", "overturned", "merged"].includes(item.changeType.trim().toLowerCase()) && Boolean(item.beforeText.trim());
+  // reason 若只是复述观点原文或证据引文，说了等于没说——旧快照的模型输出尤其如此。
+  const redundant = reasonIsRedundant(item);
+  return <article className={`evolution-card${item.inferred ? " inferred" : ""}`} aria-busy={busy}>
+    <div className="evolution-card-heading">
+      <span className={`change-type change-${changeTypeSlug(item.changeType)}`}>{changeTypeLabel(item.changeType)}</span>
+      <time dateTime={item.occurredAt}>{formatMemoryDate(item.occurredAt, { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</time>
+      {item.inferred && <span className="inferred-badge">待确认推断</span>}
+      {feedback && <span className={`feedback-badge ${feedback.decision}`}>{feedback.decision === "confirmed" ? "已确认" : "已驳回"}</span>}
+    </div>
+    <div className="evolution-before-after">
+      {showsBefore ? <><div><span>之前</span><p>{item.beforeText}</p></div><div className="evolution-arrow" aria-hidden="true">→</div></> : null}
+      <div><span>之后</span><p>{item.afterText}</p></div>
+    </div>
+    {!redundant && item.reason && <p className="evolution-reason"><strong>为什么变：</strong>{item.reason}</p>}
+    <div className="evolution-card-footer">
+      <div className="source-list">{item.sources.map((source, index) => <button type="button" className="source-reference" key={`${source.recordId}-${source.segmentId}-${index}`} onClick={() => onOpenSource(source)}><span>证据 {index + 1}</span><span>{source.quoteText || "跳转到逐字稿"}</span></button>)}</div>
+      <div className="feedback-actions"><button type="button" className="secondary-button" disabled={busy} onClick={() => void onDecide(item, "rejected")}>驳回</button><button type="button" className="primary-button" disabled={busy} onClick={() => void onDecide(item, "confirmed")}>确认</button></div>
+    </div>
+    {feedback?.note && <p className="feedback-note">备注：{feedback.note}</p>}
+  </article>;
 }
 
 function NoSnapshotEmpty() {
@@ -130,9 +181,37 @@ function Watchlist({ title, items, empty }: { title: string; items: string[]; em
 function groupByTopic(items: EvolutionItem[]) {
   const groups = new Map<string, EvolutionItem[]>();
   for (const item of items) groups.set(item.topic || "未分类主题", [...(groups.get(item.topic || "未分类主题") ?? []), item]);
+  // 同一主题内按发生时间正序：观点演化是从早到晚读的叙事，不是倒序的信息流
+  for (const topicItems of groups.values()) {
+    topicItems.sort((a, b) => a.occurredAt.localeCompare(b.occurredAt));
+  }
   return Array.from(groups.entries()).sort(([a], [b]) => a.localeCompare(b));
+}
+
+// 顶部一句人话摘要：先回答「这份快照讲了什么」，再让用户决定要不要逐条看。
+function EvolutionSummary({ items, snapshot, pendingCount, onConfirmAll, busy }: { items: EvolutionItem[]; snapshot: MemorySnapshot; pendingCount: number; onConfirmAll: () => Promise<void>; busy: boolean }) {
+  const topics = new Set(items.map((item) => item.topic || "未分类主题")).size;
+  return <div className="evolution-summary">
+    <p>基于 {snapshot.sourceRecordIds.length} 条记录 · {topics} 个主题 · {items.length} 次变化{pendingCount > 0 ? ` · 其中 ${pendingCount} 条待确认` : ""}</p>
+    {pendingCount > 0 && <button type="button" className="secondary-button" disabled={busy} onClick={() => void onConfirmAll()}>{busy ? "确认中…" : `全部确认（${pendingCount}）`}</button>}
+  </div>;
 }
 
 function errorMessage(reason: unknown) {
   return reason instanceof Error ? reason.message : String(reason);
+}
+
+function normalizeForCompare(text: string) {
+  return text.replace(/\s+/g, "").replace(/[。，、；：""''（）.,;:!?！？]/g, "");
+}
+
+/** reason 与观点原文或证据引文实质相同时视为复述——留着只会让卡片变长，信息量为零。 */
+function reasonIsRedundant(item: EvolutionItem) {
+  const normalized = normalizeForCompare(item.reason);
+  if (!normalized) return true;
+  const seen = [item.beforeText, item.afterText, ...item.sources.map((source) => source.quoteText)];
+  return seen.some((text) => {
+    const other = normalizeForCompare(text);
+    return other.length >= 6 && (other === normalized || other.includes(normalized) || normalized.includes(other));
+  });
 }

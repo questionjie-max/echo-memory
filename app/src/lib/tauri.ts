@@ -313,6 +313,16 @@ export function updateMemoryFeedback(snapshotId: string, itemId: string, decisio
   return invoke<MemoryFeedback>("update_memory_feedback", { snapshotId, itemId, decision, note });
 }
 
+export interface MemoryFeedbackEntry {
+  itemId: string;
+  decision: string;
+  note: string;
+}
+
+export function updateMemoryFeedbackBatch(snapshotId: string, entries: MemoryFeedbackEntry[]): Promise<MemoryFeedback[]> {
+  return invoke<MemoryFeedback[]>("update_memory_feedback_batch", { snapshotId, entries });
+}
+
 export function listMemoryFeedback(snapshotId: string): Promise<MemoryFeedback[]> {
   return invoke<MemoryFeedback[]>("list_memory_feedback", { snapshotId });
 }

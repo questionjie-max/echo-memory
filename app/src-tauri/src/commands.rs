@@ -2410,6 +2410,19 @@ pub fn update_memory_feedback(
 }
 
 #[tauri::command]
+pub fn update_memory_feedback_batch(
+    state: State<AppState>,
+    snapshot_id: String,
+    entries: Vec<(String, String, String)>,
+) -> Result<Vec<MemoryFeedback>, String> {
+    state
+        .library
+        .repository()
+        .update_memory_feedback_batch(&snapshot_id, &entries)
+        .map_err(|error| error.to_frontend())
+}
+
+#[tauri::command]
 pub fn list_memory_feedback(
     state: State<AppState>,
     snapshot_id: String,

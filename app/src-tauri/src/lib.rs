@@ -114,6 +114,7 @@ pub fn run() {
             commands::get_memory_snapshot,
             commands::cancel_memory_generation,
             commands::update_memory_feedback,
+            commands::update_memory_feedback_batch,
             commands::list_memory_feedback,
             commands::get_onboarding_status,
             commands::complete_onboarding,

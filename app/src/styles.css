@@ -807,6 +807,16 @@ input::placeholder, textarea::placeholder { color: var(--em-ink-4); }
 .range-switch button.selected { background: var(--em-panel); color: var(--em-accent-ink); box-shadow: var(--em-shadow-sm); }
 .memory-status-row { display: flex; align-items: center; gap: 12px; min-height: 34px; padding: 6px 22px; border-bottom: 1px solid var(--em-hairline-soft); color: var(--em-ink-3); font-size: 10px; overflow-x: auto; white-space: nowrap; }
 .memory-status-row .link-button { padding: 0; border: 0; background: transparent; color: var(--em-accent); cursor: pointer; font-size: 10px; }
+/* 变化类型徽章：推翻/修正用警示色，其余走演化主题色，未知类型保持中性 */
+.change-type.change-overturned { background: var(--em-err-soft); color: var(--em-err-ink); }
+.change-type.change-revised { background: var(--em-warn-soft); color: var(--em-warn-ink); }
+.change-type.change-added, .change-type.change-supplemented, .change-type.change-merged, .change-type.change-validated { background: var(--em-evolution-soft); color: var(--em-evolution-ink); }
+.change-type.change-other { background: var(--em-soft-fill-2); color: var(--em-ink-3); }
+/* 认知演化顶部一句人话摘要 + 批量确认入口。
+   底色用 surface 而非 accent-soft：摘要行文字是 11px 正文，accent-soft 上对比度不足（暗色下发灰）。 */
+.evolution-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border: 1px solid var(--em-hairline); border-radius: var(--em-r-sm); background: var(--em-surface-2); color: var(--em-ink-2); }
+.evolution-summary p { margin: 0; font-size: 11px; font-weight: 650; }
+.evolution-summary button { flex: 0 0 auto; }
 .memory-badge, .memory-type-badge, .inferred-badge, .feedback-badge, .change-type { display: inline-flex; align-items: center; width: fit-content; padding: 3px 6px; border-radius: var(--em-r-xs); font-size: 10px; font-weight: 650; white-space: nowrap; }
 .memory-badge.completed, .feedback-badge.confirmed { background: var(--em-ok-soft); color: var(--em-ok-ink); }
 .memory-badge.partial, .memory-badge.stale { background: var(--em-warn-soft); color: var(--em-warn-ink); }
@@ -855,8 +865,9 @@ input::placeholder, textarea::placeholder { color: var(--em-ink-4); }
 .evolution-card { position: relative; display: grid; gap: 9px; padding: 12px; border: 1px solid var(--em-hairline-soft); border-radius: var(--em-r-sm); background: var(--em-panel); }
 .evolution-card::before { position: absolute; top: 17px; left: -17px; width: 9px; height: 9px; border: 2px solid var(--em-evolution); border-radius: 50%; background: var(--em-panel); content: ""; }
 .evolution-card.inferred { border-color: var(--em-evolution-border); background: linear-gradient(90deg, var(--em-evolution-soft), var(--em-panel)); }
-.change-type { background: var(--em-evolution-soft); color: var(--em-evolution-ink); }
-.evolution-before-after { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 10px; align-items: center; }
+/* 变化卡片默认单栏「之后」（叙事主体）；带「之前」栏时才是 前→后 两栏对比。 */
+.evolution-before-after { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; align-items: center; }
+.evolution-before-after:has(.evolution-arrow) { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); }
 .evolution-before-after > div:not(.evolution-arrow) { padding: 8px; border-radius: 6px; background: var(--em-surface-2); }
 .evolution-before-after span { color: var(--em-ink-3); font-size: 10px; }
 .evolution-before-after p { margin: 4px 0 0; color: var(--em-ink-2); font-size: 11px; line-height: 1.45; }

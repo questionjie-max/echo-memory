@@ -1988,3 +1988,133 @@ fn moving_a_record_between_knowledge_bases_updates_scope() {
         .update_record_project(&record.id, Some("no-such-project"))
         .is_err());
 }
+
+#[test]
+fn memory_feedback_batch_writes_atomically_and_validates_entries() {
+    let repository = LibraryRepository::new(database_path()).unwrap();
+    let record = repository
+        .create_record(
+            "批量反馈来源",
+            None,
+            Path::new("audio/batch.wav"),
+            "memory-batch-hash",
+            1_000,
+        )
+        .unwrap();
+    let scope = MemoryScope {
+        kind: "all".to_owned(),
+        project_id: None,
+    };
+    let snapshot = repository
+        .create_memory_snapshot(
+            &MemoryViewKind::Evolution,
+            &scope,
+            (None, None),
+            "test-model",
+            std::slice::from_ref(&record.id),
+            "hash-batch",
+        )
+        .unwrap();
+    let mut result = MemorySnapshotResult::default();
+    for id in ["evolution-1", "evolution-2", "evolution-3"] {
+        result.evolution_items.push(EvolutionItem {
+            id: id.to_owned(),
+            topic: "批量主题".to_owned(),
+            change_type: "added".to_owned(),
+            before_text: String::new(),
+            after_text: "之后".to_owned(),
+            reason: "测试".to_owned(),
+            occurred_at: "2026-01-01T00:00:00Z".to_owned(),
+            inferred: true,
+            confidence: None,
+            sources: vec![],
+        });
+    }
+    repository
+        .finish_memory_snapshot(
+            &snapshot.id,
+            MemoryGenerationStatus::Completed,
+            &result,
+            None,
+            None,
+        )
+        .unwrap();
+
+    // 正常批量：三条一次写入
+    let saved = repository
+        .update_memory_feedback_batch(
+            &snapshot.id,
+            &[
+                (
+                    "evolution-1".to_owned(),
+                    "confirmed".to_owned(),
+                    String::new(),
+                ),
+                (
+                    "evolution-2".to_owned(),
+                    "confirmed".to_owned(),
+                    String::new(),
+                ),
+                (
+                    "evolution-3".to_owned(),
+                    "rejected".to_owned(),
+                    "证据不足".to_owned(),
+                ),
+            ],
+        )
+        .unwrap();
+    assert_eq!(saved.len(), 3);
+    assert_eq!(
+        repository.list_memory_feedback(&snapshot.id).unwrap().len(),
+        3
+    );
+
+    // 混入不存在的条目：整体回滚，之前写入的一条都不能落库
+    let before = repository.list_memory_feedback(&snapshot.id).unwrap().len();
+    assert!(repository
+        .update_memory_feedback_batch(
+            &snapshot.id,
+            &[
+                (
+                    "evolution-1".to_owned(),
+                    "rejected".to_owned(),
+                    "改主意".to_owned()
+                ),
+                (
+                    "missing-item".to_owned(),
+                    "confirmed".to_owned(),
+                    String::new()
+                ),
+            ],
+        )
+        .is_err());
+    let after = repository.list_memory_feedback(&snapshot.id).unwrap();
+    assert_eq!(after.len(), before);
+    // 回滚验证：evolution-1 的决策没有被改成 rejected
+    assert_eq!(
+        after
+            .iter()
+            .find(|entry| entry.item_id == "evolution-1")
+            .unwrap()
+            .decision,
+        "confirmed"
+    );
+
+    // 非法 decision 在校验阶段就要拒绝，不进入写库路径
+    assert!(repository
+        .update_memory_feedback_batch(
+            &snapshot.id,
+            &[("evolution-1".to_owned(), "maybe".to_owned(), String::new())],
+        )
+        .is_err());
+    assert_eq!(
+        repository.list_memory_feedback(&snapshot.id).unwrap().len(),
+        before
+    );
+
+    // 空批次是合法调用，不报错也不写库
+    assert!(repository
+        .update_memory_feedback_batch(&snapshot.id, &[])
+        .unwrap()
+        .is_empty());
+}
