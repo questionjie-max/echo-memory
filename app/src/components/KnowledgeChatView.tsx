@@ -248,7 +248,7 @@ function ChatEmptyState({ scopeName, onAsk }: { scopeName: string; onAsk: (quest
 
 function ConversationTurnView({ turn, onRetry, onOpenCitation }: { turn: ConversationTurn; onRetry: () => void; onOpenCitation: (citation: KnowledgeAnswerCitation) => void }) {
   return <article className="knowledge-chat-turn">
-    <div className="knowledge-chat-user-message"><span>你</span><p>{turn.question}</p></div>
+    <div className="knowledge-chat-user-message"><span>我</span><p>{turn.question}</p></div>
     <div className={`knowledge-chat-assistant-message ${turn.status}`}><span className="knowledge-chat-assistant-label">AI</span>
       {turn.status === "pending" && <div className="knowledge-chat-thinking"><span className="knowledge-chat-loader" aria-hidden="true" /><p>正在检索知识库并整理答案…</p></div>}
       {turn.status === "failed" && <div className="knowledge-chat-turn-error"><strong>本次回答失败</strong><p>{turn.error}</p><button type="button" onClick={onRetry}>重试这个问题</button></div>}

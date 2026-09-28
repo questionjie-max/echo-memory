@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { XIcon } from "./icons";
 import type { ExternalAiSettings, MemoryScope, MemorySnapshot, MemoryViewKind } from "../shared/types";
 import {
   formatMemoryDate,
@@ -61,8 +62,8 @@ export default function MemoryViewControls(props: Props) {
       {selected && <><span>快照 v{selected.version}</span><span>{formatMemoryDate(selected.createdAt, { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} · {selected.model}</span><StatusBadge snapshot={selected} /></>}
       {props.settings && !ready && <button type="button" className="link-button" onClick={props.onOpenSettings}>配置外部 AI</button>}
     </div>
-    {selected?.qualityWarning && selected.provider !== "demo" && <p className="memory-warning" role="status">质量提示：{selected.qualityWarning}</p>}
-    {selected?.errorMessage && <p className="memory-warning" role="alert">部分生成异常：{selected.errorMessage}</p>}
+    {selected?.qualityWarning && selected.provider !== "demo" && <SnapshotWarning kind="quality" snapshotId={selected.id} prefix="质量提示：" message={selected.qualityWarning} />}
+    {selected?.errorMessage && <SnapshotWarning kind="error" snapshotId={selected.id} prefix="部分生成异常：" message={selected.errorMessage} />}
     {confirmOpen && <section className="generation-confirmation">
       <div><strong>确认外部发送范围</strong><p>将发送 {memoryScopeLabel(props.scope)}中 {props.sourceRecordCount} 条记录，范围为{memoryRangeLabel(props.range)}。</p></div>
       <dl><div><dt>预计文本量</dt><dd>{props.sourceRecordCount ? `约 ${estimatedLow.toLocaleString()}–${estimatedHigh.toLocaleString()} 字符` : "0 字符"}</dd></div><div><dt>包含</dt><dd>逐字稿全文、标题、时间、项目和现有结构化分析</dd></div><div><dt>不包含</dt><dd>原始音频文件</dd></div></dl>
@@ -73,6 +74,45 @@ export default function MemoryViewControls(props: Props) {
 
 function StatusBadge({ snapshot }: { snapshot: MemorySnapshot }) {
   return <span className={`memory-badge ${snapshot.isStale ? "stale" : snapshot.status}`}>{snapshot.isStale ? "可能过期" : statusLabel(snapshot.status)}</span>;
+}
+
+// 快照级的质量/异常提醒：允许用户关掉当前这条；同一快照的同一条不再弹，
+// 但换快照或消息内容变化后会重新出现——持久的状态信息由状态行徽章（部分结果/可能过期）兜底。
+function SnapshotWarning({ kind, snapshotId, prefix, message }: { kind: "quality" | "error"; snapshotId: string; prefix: string; message: string }) {
+  const storageKey = `echo-memory-warning-dismissed:${snapshotId}:${kind}`;
+  const [hidden, setHidden] = useState(() => readDismissed(storageKey, message));
+  useEffect(() => {
+    setHidden(readDismissed(storageKey, message));
+  }, [storageKey, message]);
+  if (hidden) return null;
+  return (
+    <p className="memory-warning" role={kind === "error" ? "alert" : "status"}>
+      <span className="memory-warning-copy">{prefix}{message}</span>
+      <button
+        type="button"
+        className="memory-warning-dismiss"
+        aria-label="关闭提醒"
+        onClick={() => {
+          try {
+            localStorage.setItem(storageKey, message);
+          } catch {
+            // 忽略存储失败，仅本次会话内隐藏
+          }
+          setHidden(true);
+        }}
+      >
+        <XIcon size={11} />
+      </button>
+    </p>
+  );
+}
+
+function readDismissed(storageKey: string, message: string) {
+  try {
+    return localStorage.getItem(storageKey) === message;
+  } catch {
+    return false;
+  }
 }
 
 function statusLabel(status: MemorySnapshot["status"]) {

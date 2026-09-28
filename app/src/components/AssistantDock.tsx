@@ -13,7 +13,7 @@ const MODES: Array<{ id: DockMode; label: string; hint: string }> = [
   { id: "creation", label: "文字创作", hint: "扩写、改写、风格化成稿" },
   { id: "inspire", label: "启发对话", hint: "费曼式追问，推动思考" },
   // 名字要说清它不检索资料库 —— 跨记录、带引用的问答在「问知识库」视图里。
-  { id: "free", label: "随手问", hint: "直接问，不读你的资料库" },
+  { id: "free", label: "随手问", hint: "只结合当前对话回答，不检索资料库；跨录音、带原文引用的检索请用「问知识库」" },
 ];
 
 const DOCK_STORAGE_KEY = "echo-memory-dock-state";
@@ -180,9 +180,13 @@ export default function AssistantDock({ selectedRecordId, selectedRecordTitle }:
             <span className="dock-hint" title={activeMode?.hint}>
               {mode === "summary"
                 ? selectedRecordTitle
-                  ? `· ${selectedRecordTitle}`
+                  ? `· 总结对象：${selectedRecordTitle}`
                   : "· 请先选择一条记录"
-                : ""}
+                : mode === "free"
+                  ? "· 只看本对话，不检索资料库"
+                  : selectedRecordTitle
+                    ? "· 参考：当前选中记录"
+                    : "· 未选记录，只看本对话"}
             </span>
             <button type="button" className="dock-clear" onClick={() => void clearAll()}>
               清空

@@ -35,10 +35,13 @@
 .knowledge-chat-suggestions button { min-width: 0; padding: 11px 12px; border: 1px solid var(--em-hairline); border-radius: 9px; background: var(--em-panel); color: var(--em-ink-2); cursor: pointer; font-size: 11px; line-height: 1.45; text-align: left; }
 .knowledge-chat-suggestions button:hover { border-color: var(--em-accent-border); background: var(--em-accent-soft); color: var(--em-accent-ink); }
 .knowledge-chat-turn { display: grid; gap: 13px; margin-bottom: 26px; }
-.knowledge-chat-user-message { max-width: min(620px,84%); display: grid; grid-template-columns: 26px minmax(0,1fr); align-items: start; gap: 8px; justify-self: end; }
+/* 用户气泡的两列必须显式落位并锁死同一行：列宽是 [正文, 头像]，DOM 顺序是 [头像, 正文]，
+   稀疏自动放置在正文回填第 1 列时会因游标已越列而把它挪到第二行（头像右上、气泡左下错开一行），
+   只写 grid-column 不写 grid-row 就会触发。 */
+.knowledge-chat-user-message { max-width: min(620px,84%); display: grid; grid-template-columns: minmax(0,1fr) 26px; align-items: start; gap: 8px; justify-self: end; }
 .knowledge-chat-user-message > span, .knowledge-chat-assistant-label { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 8px; font-size: 9px; font-weight: 720; }
-.knowledge-chat-user-message > span { order: 2; background: var(--em-ink); color: var(--em-canvas); }
-.knowledge-chat-user-message p { margin: 0; padding: 9px 11px; border-radius: 10px 3px 10px 10px; background: var(--em-accent); color: var(--em-on-accent); font-size: 12px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.knowledge-chat-user-message > span { grid-column: 2; grid-row: 1; background: var(--em-ink); color: var(--em-canvas); }
+.knowledge-chat-user-message p { grid-column: 1; grid-row: 1; margin: 0; padding: 9px 11px; border-radius: 10px 3px 10px 10px; background: var(--em-accent); color: var(--em-on-accent); font-size: 12px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 .knowledge-chat-assistant-message { max-width: 760px; display: grid; grid-template-columns: 26px minmax(0,1fr); align-items: start; gap: 9px; }
 .knowledge-chat-assistant-label { background: var(--em-accent-soft); color: var(--em-accent-ink); }
 .knowledge-chat-assistant-message > :not(.knowledge-chat-assistant-label) { grid-column: 2; }

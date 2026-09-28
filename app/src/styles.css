@@ -813,7 +813,10 @@ input::placeholder, textarea::placeholder { color: var(--em-ink-4); }
 .memory-badge.failed, .memory-badge.cancelled, .feedback-badge.rejected { background: var(--em-err-soft); color: var(--em-err-ink); }
 .memory-badge.generating { background: var(--em-accent-soft); color: var(--em-accent-ink); }
 .inferred-badge { background: var(--em-evolution-soft); color: var(--em-evolution-ink); }
-.memory-warning { margin: 10px 22px 0; padding: 8px 10px; border-radius: 7px; background: var(--em-warn-soft); color: var(--em-warn-ink); font-size: 11px; }
+.memory-warning { display: flex; align-items: flex-start; gap: 8px; margin: 10px 22px 0; padding: 8px 10px; border-radius: 7px; background: var(--em-warn-soft); color: var(--em-warn-ink); font-size: 11px; }
+.memory-warning-copy { min-width: 0; overflow-wrap: anywhere; }
+.memory-warning-dismiss { flex: 0 0 auto; display: inline-grid; place-items: center; width: 20px; height: 20px; margin: -1px -2px 0 0; padding: 0; border: 0; border-radius: 6px; background: transparent; color: inherit; cursor: pointer; opacity: .6; }
+.memory-warning-dismiss:hover { opacity: 1; background: var(--em-soft-fill-2); }
 .memory-error { margin: 10px 22px 0; }
 .generation-confirmation { margin: 12px 22px 0; padding: 13px; border: 1px solid var(--em-accent-border); border-radius: 9px; background: var(--em-accent-soft); }
 .generation-confirmation > div:first-child { display: grid; gap: 3px; }
@@ -1006,9 +1009,11 @@ input::placeholder, textarea::placeholder { color: var(--em-ink-4); }
 
 /* ---------------- v0.4.0：AI 伙伴停靠栏 / 模板向导 / 产出 ---------------- */
 .app-shell { grid-template-rows: auto auto minmax(0, 1fr); }
-/* 停靠栏必须自持背景——不能指望任何未定义的工具类（.material 教训）。 */
-.assistant-dock { display: grid; grid-template-rows: auto auto minmax(120px, 22vh) auto auto; gap: 8px; margin: 0 14px 10px; padding: 10px 14px; border: 1px solid var(--em-hairline); border-radius: var(--em-r-md); background: var(--em-panel); box-shadow: var(--em-shadow-md); }
-.assistant-dock.collapsed { grid-template-rows: auto; }
+/* 停靠栏必须自持背景——不能指望任何未定义的工具类（.material 教训）。
+   子元素是条件渲染的（外部警告、错误行时有时无），不能写死 grid-template-rows：
+   行数和元素一错位，消息区就落进 auto 行不限高，把收起按钮顶出屏幕；
+   消息区的高度约束放在 .dock-messages 自己身上。 */
+.assistant-dock { display: grid; gap: 8px; margin: 0 14px 10px; padding: 10px 14px; border: 1px solid var(--em-hairline); border-radius: var(--em-r-md); background: var(--em-panel); box-shadow: var(--em-shadow-md); }
 .dock-header { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .dock-toggle { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border: 0; border-radius: 7px; background: var(--em-accent-soft); color: var(--em-accent-ink); font-size: 12px; font-weight: 650; cursor: pointer; }
 .dock-toggle svg { flex: 0 0 auto; }
@@ -1020,7 +1025,7 @@ input::placeholder, textarea::placeholder { color: var(--em-ink-4); }
 .dock-clear { padding: 3px 8px; border: 0; background: none; color: var(--em-ink-3); font-size: 10px; cursor: pointer; }
 .dock-clear:hover { color: var(--em-err-ink); }
 .dock-external-warning { margin: 0; padding: 6px 10px; border: 1px solid var(--em-warn-border); border-radius: 7px; background: var(--em-warn-soft); color: var(--em-warn-ink); font-size: 10px; }
-.dock-messages { display: grid; align-content: start; gap: 8px; overflow-y: auto; }
+.dock-messages { display: grid; align-content: start; gap: 8px; min-height: 120px; max-height: 22vh; overflow-y: auto; }
 .dock-empty { margin: 0; color: var(--em-ink-3); font-size: 11px; line-height: 1.6; }
 .dock-message { display: grid; gap: 4px; max-width: 78%; padding: 8px 11px; border-radius: 10px; font-size: 12px; line-height: 1.55; white-space: pre-wrap; }
 .dock-message.user { justify-self: end; background: var(--em-accent-soft); color: var(--em-accent-ink); }
