@@ -3357,7 +3357,7 @@ mod tests {
 
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
-        let _key = AsrApiKeyEnvGuard::set("asr-secret");
+        let _key = AsrApiKeyEnvGuard::set("local-mock-0001");
         let library = scratch_library("external-import-preflight");
         let repository = library.repository();
         let (record, _) = repository

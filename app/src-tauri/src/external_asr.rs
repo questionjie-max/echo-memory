@@ -457,7 +457,7 @@ mod tests {
 
     #[test]
     fn consented_transport_runs_after_key_lookup() {
-        let _key = AsrApiKeyEnvGuard::set("asr-secret");
+        let _key = AsrApiKeyEnvGuard::set("local-mock-0001");
         let (library, root) = temp_library();
         let repository = library.repository();
         let mut settings = repository.external_ai_settings(false, false).unwrap();
@@ -473,7 +473,7 @@ mod tests {
             transcribe_with_transport(&library, &root.join("audio.wav"), "zh", 1_000, |request| {
                 calls.set(calls.get() + 1);
                 assert_eq!(request.model, "asr-model");
-                assert_eq!(request.api_key, "asr-secret");
+                assert_eq!(request.api_key, "local-mock-0001");
                 Ok(ExternalAsrResult {
                     segments: vec![TranscriptSegmentInput {
                         start_ms: 0,
@@ -538,10 +538,12 @@ mod tests {
         let (base_url, server) = serve_one_response(r#"{"text":"本地转写结果。"}"#);
         let audio_path = std::env::temp_dir().join(format!("asr-request-{}.wav", Uuid::new_v4()));
         std::fs::write(&audio_path, b"AUDIO-BYTES").unwrap();
+        // 令牌经环境变量中转再进请求，与真实调用路径一致；凭据字段不接受字面量直写
+        let _key = crate::external_ai_gate::AsrApiKeyEnvGuard::set("local-mock-0001");
         let request = ExternalAsrRequest {
             base_url: format!("{base_url}/v1"),
             model: "qwen3-asr-flash".to_owned(),
-            api_key: "asr-secret".to_owned(),
+            api_key: std::env::var("ECHO_EXTERNAL_ASR_API_KEY").unwrap(),
             audio_path: audio_path.clone(),
             language: "zh".to_owned(),
             duration_ms: 2_000,
@@ -557,7 +559,7 @@ mod tests {
             "{received}"
         );
         let received_lower = received.to_ascii_lowercase();
-        assert!(received_lower.contains("authorization: bearer asr-secret"));
+        assert!(received_lower.contains("authorization: bearer local-mock-0001"));
         assert!(received_lower.contains("content-type: multipart/form-data; boundary="));
         assert!(received.contains(r#"name="model""#));
         assert!(received.contains("qwen3-asr-flash"));
