@@ -315,6 +315,7 @@ fn embed_texts(model: &str, inputs: &[String]) -> AppResult<Vec<Vec<f32>>> {
     }
     let base_url = crate::analysis::ollama_base_url();
     let response: serde_json::Value = ureq::post(&format!("{base_url}/api/embed"))
+        .timeout(crate::analysis::OLLAMA_EMBED_TIMEOUT)
         .send_json(serde_json::json!({ "model": model, "input": inputs }))
         .map_err(|error| AppError::Analysis(format!("本地嵌入请求失败：{error}")))?
         .into_json()
@@ -331,6 +332,7 @@ fn embed_texts(model: &str, inputs: &[String]) -> AppResult<Vec<Vec<f32>>> {
 fn ensure_model_installed(model: &str) -> AppResult<()> {
     let base_url = crate::analysis::ollama_base_url();
     let tags: serde_json::Value = ureq::get(&format!("{base_url}/api/tags"))
+        .timeout(crate::analysis::OLLAMA_TAGS_TIMEOUT)
         .call()
         .map_err(|_| AppError::Analysis("Ollama 未启动，无法建立知识索引".to_owned()))?
         .into_json()
@@ -423,6 +425,7 @@ fn generate_answer(model: &str, prompt: &str) -> AppResult<AnswerDraft> {
     });
     let base_url = crate::analysis::ollama_base_url();
     let response: serde_json::Value = ureq::post(&format!("{base_url}/api/generate"))
+        .timeout(crate::analysis::OLLAMA_GENERATE_TIMEOUT)
         .send_json(serde_json::json!({
             "model": model,
             "prompt": prompt,

@@ -485,7 +485,14 @@ pub fn pull_ollama_model(app: AppHandle, model: String) -> Result<(), String> {
     std::thread::spawn(move || {
         let result = (|| -> Result<(), PullError> {
             let failed = |message: String| PullError::Failed(message);
-            let response = ureq::post(&format!("{}/api/pull", crate::analysis::ollama_base_url()))
+            // 流式下载不能设整体超时（大模型要下几十分钟），只对「连接」和
+            // 「单次读」限时：只要进度行还在持续到达就不会触发。
+            let pull_agent = ureq::AgentBuilder::new()
+                .timeout_connect(std::time::Duration::from_secs(10))
+                .timeout_read(std::time::Duration::from_secs(120))
+                .build();
+            let response = pull_agent
+                .post(&format!("{}/api/pull", crate::analysis::ollama_base_url()))
                 .send_json(serde_json::json!({ "model": model, "stream": true }))
                 .map_err(|error| failed(format!("无法启动模型下载：{error}")))?;
             for line in BufReader::new(response.into_reader()).lines() {
@@ -546,6 +553,7 @@ pub fn pull_ollama_model(app: AppHandle, model: String) -> Result<(), String> {
 fn ollama_models() -> Result<Vec<LocalModelInfo>, String> {
     let response: serde_json::Value =
         ureq::get(&format!("{}/api/tags", crate::analysis::ollama_base_url()))
+            .timeout(crate::analysis::OLLAMA_TAGS_TIMEOUT)
             .call()
             .map_err(|error| error.to_string())?
             .into_json()
