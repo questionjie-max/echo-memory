@@ -1,12 +1,12 @@
 # Echo Memory / 回声记忆
 
-[中文文档](README.zh-CN.md) · [Download v0.7.0](https://github.com/questionjie-max/echo-memory/releases/latest) · [MCP reference](docs/mcp.md) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
+[中文文档](README.zh-CN.md) · [Download v0.7.1](https://github.com/questionjie-max/echo-memory/releases/latest) · [MCP reference](docs/mcp.md) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
 
 **Turn every conversation into long-term memory.** Echo Memory is a Personal Memory OS for AI-native work. It turns conversations, documents, decisions, and changing ideas into a traceable personal memory layer that can be reused by different AI agents.
 
 > AI knows more about the world every day, but it still does not truly know you. Echo Memory gives your AI a memory of what you experienced, why you decided, and how your thinking changed.
 
-**[Download the signed macOS release](https://github.com/questionjie-max/echo-memory/releases/latest)** or build from source. Echo Memory v0.7.0 closes the loop from capture and transcription to structured analysis, evidence-backed retrieval, and agent access.
+**[Download the signed macOS release](https://github.com/questionjie-max/echo-memory/releases/latest)** or build from source. Echo Memory v0.7.1 closes the loop from capture and transcription to structured analysis, evidence-backed retrieval, and agent access — and presents cognitive evolution as a readable narrative.
 
 ## Why it exists
 
@@ -33,16 +33,16 @@ The long-term product has four connected layers:
 
 The digital-twin direction is a product vision, not a claim that the current release can fully model a person.
 
-## What v0.7.0 does
+## What v0.7.1 does
 
 ### Latest improvements
 
-- Use a right-click menu to move, rename, archive, manage, or delete a record without selecting it first.
-- Run the complete workflow through either the local processing channel or a separately configured third-party ASR and text-model channel.
-- Consume speaker labels returned by supported third-party ASR providers without guessing speakers from text.
-- Keep long template and AI-model settings pages in one stable scrolling container, with clear feedback when adding template sections.
-- Separate advisory quality warnings from blocking analysis failures so incomplete status reflects an actual failed analysis.
-- Use the opt-in, local, read-only MCP server to give authorized AI tools bounded access to personal context.
+- Read cognitive evolution as a narrative: change types are normalized into clear Chinese labels (新增, 推翻, …), added/supplemented entries no longer render an empty "before" column, and reasons that merely restate the viewpoint or quote a source are hidden.
+- Confirm pending evolution entries in one click: the snapshot header reads 基于 N 条记录 · M 个主题 · K 次变化 · 其中 P 条待确认, and 全部确认 writes the whole batch in a single all-or-nothing SQLite transaction.
+- New snapshots explain why a view changed: generation prompts require first-person, explanatory reasons in Simplified Chinese instead of survey-style restatements.
+- Dismiss quality warnings and generation errors: a dismissed message stays hidden for that snapshot and reappears when content changes or a new snapshot arrives.
+- Knowledge-base chat alignment fixes: user bubbles lock to a single grid row, the sender label reads 我, and the one-character-per-line vertical layout is gone.
+- The assistant dock collapses again after chatting, with a persistent context hint (current record for 总结, "not searching the library" for 随手问) that clarifies the division of labor with knowledge chat.
 
 ### Complete workflow
 
@@ -66,7 +66,7 @@ The digital-twin direction is a product vision, not a claim that the current rel
 - Organizes records into project knowledge libraries with local full-text and vector retrieval.
 - Answers questions across indexed audio and documents with openable citations.
 - Shows a day-based growth timeline across projects and records.
-- Generates versioned cognitive-evolution snapshots with reviewable evidence and feedback.
+- Generates versioned cognitive-evolution snapshots with reviewable evidence, narrative change summaries, and bulk confirmation.
 - Exposes an opt-in, local, read-only MCP server for authorized AI tools.
 
 ## What makes it different
@@ -168,7 +168,7 @@ cargo test --features mcp-bin
 
 ## Project status
 
-Echo Memory v0.7.0 is the current public release. Download the latest build from [GitHub Releases](https://github.com/questionjie-max/echo-memory/releases). Source builds are supported. Distribution artifacts must be labeled truthfully according to their actual signing and Apple notarization status; this repository does not claim notarization unless the artifact passes the documented verification commands.
+Echo Memory v0.7.1 is the current public release. Download the latest build from [GitHub Releases](https://github.com/questionjie-max/echo-memory/releases). Source builds are supported. Distribution artifacts must be labeled truthfully according to their actual signing and Apple notarization status; this repository does not claim notarization unless the artifact passes the documented verification commands.
 
 Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening an issue or pull request, and never attach real audio, transcripts, databases, credentials, or private customer material to a public issue. Security reports should follow [SECURITY.md](SECURITY.md).
 
