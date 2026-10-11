@@ -260,4 +260,79 @@ mod tests {
             .unwrap();
         assert_eq!(integrity, "ok");
     }
+
+    /// 回归：0019 重建 memory_snapshots 时，业务连接的 PRAGMA foreign_keys=ON
+    /// 会让 DROP TABLE 级联清空 memory_feedback（真实事故，2026-10-11）。
+    /// 迁移文件必须在 DROP 前把反馈内容先转移、重建后写回。
+    #[test]
+    fn profile_migration_preserves_feedback_under_foreign_keys() {
+        let p = temp_db();
+        let mut conn = Connection::open(&p).unwrap();
+        // 先按正常路径（FK=OFF，与迁移运行器一致）应用 0019 之前的全部迁移。
+        let mut entries: Vec<(i64, std::path::PathBuf)> = std::fs::read_dir(migrations_dir())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter_map(|entry| {
+                let path = entry.path();
+                let stem = path.file_stem()?.to_str()?.to_owned();
+                let (version, _) = stem.split_once('_')?;
+                let version = version.parse::<i64>().ok()?;
+                (version < 19).then_some((version, path))
+            })
+            .collect::<Vec<_>>();
+        entries.sort_by_key(|(version, _)| *version);
+        for (version, path) in entries {
+            let transaction = conn.transaction().unwrap();
+            transaction
+                .execute_batch(&std::fs::read_to_string(path).unwrap())
+                .unwrap();
+            transaction
+                .execute(
+                    "INSERT INTO schema_migrations (version, name, applied_at) VALUES (?1, 'regression', '2026-01-01')",
+                    rusqlite::params![version],
+                )
+                .unwrap();
+            transaction.commit().unwrap();
+        }
+        conn.execute_batch(
+            "INSERT INTO memory_snapshots (id, view_kind, scope_kind, scope_key, status, provider, model, source_record_ids_json, request_hash, result_json, version, created_at, updated_at) VALUES ('snap1', 'timeline', 'all', 'all', 'completed', 'openai-compatible', 'm', '[]', 'h', '{}', 1, '2026-01-01', '2026-01-01');
+             INSERT INTO memory_feedback (id, snapshot_id, item_id, decision, note, created_at, updated_at) VALUES ('f1', 'snap1', 'item1', 'confirmed', '', '2026-01-01', '2026-01-01');",
+        )
+        .unwrap();
+        drop(conn);
+
+        // 以 FK=ON 连接执行 0019（模拟业务连接跑迁移的最坏情况）。
+        let profile_migration = migrations_dir().join("0019_profile_view.sql");
+        let mut conn = Connection::open(&p).unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        let transaction = conn.transaction().unwrap();
+        transaction
+            .execute_batch(&std::fs::read_to_string(&profile_migration).unwrap())
+            .unwrap();
+        transaction.commit().unwrap();
+
+        let (feedback_count, decision): (i64, String) = conn
+            .query_row(
+                "SELECT COUNT(*), COALESCE(MAX(decision), '') FROM memory_feedback",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(feedback_count, 1, "FK=ON 下重建表不得级联清空反馈");
+        assert_eq!(decision, "confirmed");
+        let snapshot_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM memory_snapshots", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(snapshot_count, 1, "快照数据应平移保留");
+        let profile_allowed: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM memory_snapshots WHERE view_kind = 'profile'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(1);
+        conn.execute_batch("INSERT INTO memory_snapshots (id, view_kind, scope_kind, scope_key, status, provider, model, source_record_ids_json, request_hash, result_json, version, created_at, updated_at) VALUES ('snap2', 'profile', 'all', 'all', 'completed', 'openai-compatible', 'm', '[]', 'h2', '{}', 1, '2026-01-02', '2026-01-02');")
+            .expect("CHECK 约束应放行 profile 视图");
+        assert_eq!(profile_allowed + 1, 1);
+    }
 }

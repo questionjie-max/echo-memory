@@ -2563,17 +2563,21 @@ pub fn cancel_memory_generation(
 
 #[tauri::command]
 pub fn update_memory_feedback(
+    app: AppHandle,
     state: State<AppState>,
     snapshot_id: String,
     item_id: String,
     decision: String,
     note: String,
 ) -> Result<MemoryFeedback, String> {
-    state
+    let feedback = state
         .library
         .repository()
         .update_memory_feedback(&snapshot_id, &item_id, &decision, &note)
-        .map_err(|error| error.to_frontend())
+        .map_err(|error| error.to_frontend())?;
+    // 单条确认/驳回同样改变记忆块收录集合；与批量确认行为保持一致。
+    spawn_memory_index_rebuild(Some(app), state.library.root().to_path_buf());
+    Ok(feedback)
 }
 
 #[tauri::command]
