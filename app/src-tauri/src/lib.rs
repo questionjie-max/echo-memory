@@ -14,6 +14,7 @@ pub mod inbox;
 pub mod knowledge;
 pub mod library;
 pub mod memory;
+pub mod memory_index;
 pub mod record_commands;
 pub mod state;
 pub mod transcript;
@@ -77,6 +78,8 @@ pub fn run() {
             commands::get_knowledge_overview,
             commands::get_knowledge_index_status,
             commands::rebuild_knowledge_index,
+            commands::rebuild_memory_index,
+            commands::get_memory_index_status,
             commands::ask_knowledge_base,
             commands::export_record,
             commands::export_knowledge_base,

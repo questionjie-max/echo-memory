@@ -234,6 +234,8 @@ export interface KnowledgeAnswerCitation {
 export interface KnowledgeAnswer {
   answer: string;
   citations: KnowledgeAnswerCitation[];
+  /** 用户确认过的记忆条目引用（v0.8 记忆召回） */
+  memoryCitations: MemoryAnswerCitation[];
   insufficientEvidence: boolean;
 }
 
@@ -321,6 +323,29 @@ export interface ChatImportOutcome {
 export interface DeleteRecordsResult {
   deletedCount: number;
   fileCleanupFailures: string[];
+}
+
+/** 记忆引用的证据坐标：指向逐字稿片段，供「回听原声」使用 */
+export interface MemoryCitationSource {
+  recordId: string;
+  recordTitle: string;
+  segmentId: string;
+  startMs: number;
+  endMs: number;
+}
+
+/** 记忆引用：来自用户确认过的记忆条目，落点在记忆视图 */
+export interface MemoryAnswerCitation {
+  chunkId: string;
+  itemId: string;
+  itemType: string;
+  topic: string;
+  beforeText: string;
+  afterText: string;
+  occurredAt: string;
+  snapshotId: string;
+  quoteText: string;
+  source: MemoryCitationSource | null;
 }
 
 /* -------------------------- external memory views -------------------------- */

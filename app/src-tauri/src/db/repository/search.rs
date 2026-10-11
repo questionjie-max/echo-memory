@@ -79,7 +79,7 @@ impl LibraryRepository {
         Ok(results)
     }
 
-    fn build_fts_query(query: &str) -> Option<String> {
+    pub(super) fn build_fts_query(query: &str) -> Option<String> {
         let compact = query.chars().collect::<Vec<_>>();
         if (3..=8).contains(&compact.len())
             && compact.iter().all(|character| character.is_alphanumeric())

@@ -125,6 +125,10 @@ export function rebuildKnowledgeIndex(projectId?: string | null, unfiledOnly = f
   return invoke<void>("rebuild_knowledge_index", { projectId: projectId ?? null, unfiledOnly });
 }
 
+export function getMemoryIndexStatus(): Promise<KnowledgeIndexStatus> {
+  return invoke<KnowledgeIndexStatus>("get_memory_index_status");
+}
+
 export function askKnowledgeBase(question: string, projectId?: string | null, unfiledOnly = false): Promise<KnowledgeAnswer> {
   return invoke<KnowledgeAnswer>("ask_knowledge_base", { question, projectId: projectId ?? null, unfiledOnly });
 }

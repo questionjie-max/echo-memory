@@ -297,3 +297,191 @@ impl LibraryRepository {
         })
     }
 }
+
+/* ------------------------- v0.8：确认记忆的检索索引 ------------------------- */
+
+impl LibraryRepository {
+    /// 整体替换记忆块（含 FTS 同步）。记忆块以「最新快照全量重投影」方式维护，
+    /// 每次重建都替换全部行，旧快照的残留块随事务一并清除。
+    pub fn replace_all_memory_chunks(
+        &self,
+        chunks: &[crate::types::MemoryChunkInput],
+    ) -> AppResult<()> {
+        let mut connection = self.connect()?;
+        let transaction = connection.transaction()?;
+        transaction.execute(
+            "DELETE FROM memory_chunks_search WHERE chunk_id IN (SELECT id FROM memory_chunks)",
+            [],
+        )?;
+        transaction.execute("DELETE FROM memory_chunks", [])?;
+        let now = Utc::now().to_rfc3339();
+        for chunk in chunks {
+            let sources_json = serde_json::to_string(&chunk.sources)
+                .map_err(|error| AppError::Invalid(format!("记忆来源序列化失败: {error}")))?;
+            let embedding_blob = Self::encode_embedding(&chunk.embedding);
+            transaction.execute(
+                "INSERT INTO memory_chunks (id, snapshot_id, view_kind, item_id, item_type, topic, before_text, after_text, body, occurred_at, sources_json, content_hash, embedding_model, embedding_dimensions, embedding_blob, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                params![
+                    chunk.id,
+                    chunk.snapshot_id,
+                    chunk.view_kind,
+                    chunk.item_id,
+                    chunk.item_type,
+                    chunk.topic,
+                    chunk.before_text,
+                    chunk.after_text,
+                    chunk.body,
+                    chunk.occurred_at,
+                    sources_json,
+                    chunk.content_hash,
+                    chunk.embedding_model,
+                    chunk.embedding.len() as i64,
+                    embedding_blob,
+                    now,
+                ],
+            )?;
+            transaction.execute(
+                "INSERT INTO memory_chunks_search (chunk_id, body) VALUES (?1, ?2)",
+                params![chunk.id, chunk.body],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn list_memory_chunks(
+        &self,
+        embedding_model: &str,
+    ) -> AppResult<Vec<crate::types::MemoryChunkRecord>> {
+        let connection = self.connect()?;
+        let mut statement = connection.prepare(
+            "SELECT id, snapshot_id, item_id, item_type, topic, before_text, after_text, body, occurred_at, sources_json, embedding_model, embedding_dimensions, embedding_blob FROM memory_chunks WHERE embedding_model = ?1",
+        )?;
+        let rows = statement
+            .query_map(params![embedding_model], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
+                    row.get::<_, String>(8)?,
+                    row.get::<_, String>(9)?,
+                    row.get::<_, String>(10)?,
+                    row.get::<_, i64>(11)?,
+                    row.get::<_, Vec<u8>>(12)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, rusqlite::Error>>()?;
+        let mut chunks = Vec::with_capacity(rows.len());
+        for (
+            id,
+            snapshot_id,
+            item_id,
+            item_type,
+            topic,
+            before_text,
+            after_text,
+            body,
+            occurred_at,
+            sources_json,
+            embedding_model,
+            dimensions,
+            blob,
+        ) in rows
+        {
+            let sources = serde_json::from_str(&sources_json).unwrap_or_default();
+            let embedding = Self::decode_embedding(&blob, dimensions as usize).map_err(|message| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    12,
+                    rusqlite::types::Type::Blob,
+                    Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, message)),
+                )
+            })?;
+            chunks.push(crate::types::MemoryChunkRecord {
+                id,
+                snapshot_id,
+                item_id,
+                item_type,
+                topic,
+                before_text,
+                after_text,
+                body,
+                occurred_at,
+                sources,
+                embedding_model,
+                embedding,
+            });
+        }
+        Ok(chunks)
+    }
+
+    /// 记忆块关键词召回：与 record_search 同款 trigram FTS，短查询退回 LIKE。
+    pub fn search_memory_chunks(&self, query: &str, limit: usize) -> AppResult<Vec<String>> {
+        let query = query.trim();
+        if query.is_empty() {
+            return Ok(Vec::new());
+        }
+        let connection = self.connect()?;
+        let fts_query = Self::build_fts_query(query);
+        let use_fts = query.chars().count() >= 3 && fts_query.is_some();
+        let sql = if use_fts {
+            "SELECT chunk_id FROM memory_chunks_search WHERE memory_chunks_search MATCH ?1 ORDER BY rank LIMIT ?2"
+        } else {
+            "SELECT chunk_id FROM memory_chunks_search WHERE body LIKE '%' || ?1 || '%' LIMIT ?2"
+        };
+        let mut statement = connection.prepare(sql)?;
+        let query_param = fts_query.as_deref().filter(|_| use_fts).unwrap_or(query);
+        let rows = statement
+            .query_map(params![query_param, limit as i64], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, rusqlite::Error>>()?;
+        Ok(rows)
+    }
+
+    /// 每个 (view_kind, scope_key, range) 只取最新 completed 版本的快照，
+    /// 记忆块投影只认这些版本。返回 (快照 ID, view_kind, result_json)。
+    pub fn latest_completed_memory_snapshots(&self) -> AppResult<Vec<(String, String, String)>> {
+        let connection = self.connect()?;
+        let mut statement = connection.prepare(
+            "SELECT outer_snapshot.id, outer_snapshot.view_kind, outer_snapshot.result_json FROM memory_snapshots AS outer_snapshot WHERE outer_snapshot.status = 'completed' AND outer_snapshot.version = ( \
+                SELECT MAX(version) FROM memory_snapshots AS inner_snapshot \
+                WHERE inner_snapshot.view_kind = outer_snapshot.view_kind \
+                  AND inner_snapshot.scope_key = outer_snapshot.scope_key \
+                  AND inner_snapshot.range_start IS outer_snapshot.range_start \
+                  AND inner_snapshot.range_end IS outer_snapshot.range_end \
+                  AND inner_snapshot.status = 'completed' \
+             ) ORDER BY outer_snapshot.updated_at DESC",
+        )?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, rusqlite::Error>>()?;
+        Ok(rows)
+    }
+
+    /// 同一条目（稳定内容 ID）跨快照版本的最近一次用户裁决：后写覆盖先写。
+    pub fn latest_memory_feedback_decisions(
+        &self,
+    ) -> AppResult<std::collections::HashMap<String, String>> {
+        let connection = self.connect()?;
+        let mut statement = connection.prepare(
+            "SELECT feedback.item_id, feedback.decision FROM memory_feedback AS feedback \
+             JOIN memory_snapshots AS snapshots ON snapshots.id = feedback.snapshot_id \
+             ORDER BY feedback.updated_at ASC",
+        )?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<Result<Vec<_>, rusqlite::Error>>()?;
+        Ok(rows.into_iter().collect())
+    }
+}

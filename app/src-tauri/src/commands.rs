@@ -57,6 +57,30 @@ fn emit_knowledge_index_update(app: &AppHandle) {
     let _ = app.emit("knowledge-index-update", ());
 }
 
+/// 记忆块索引重建：确认反馈或快照生成完成后触发；不阻塞调用方，
+/// 无 AppHandle 的内部路径不发光发事件，界面状态靠下一次事件刷新。
+pub(crate) fn spawn_memory_index_rebuild(app: Option<AppHandle>, library_root: PathBuf) {
+    let heavy_jobs = crate::state::heavy_job_limiter().clone();
+    std::thread::spawn(move || {
+        let _permit = heavy_jobs.acquire();
+        match ManagedLibrary::open(library_root.clone()) {
+            Ok(library) => {
+                if let Err(error) = crate::memory_index::rebuild_memory_index(&library) {
+                    let _ = library
+                        .repository()
+                        .mark_knowledge_indexes_failed(&error.to_string());
+                }
+            }
+            Err(error) => {
+                mark_knowledge_indexes_failed(&library_root, &error.to_string());
+            }
+        }
+        if let Some(app) = app {
+            emit_knowledge_index_update(&app);
+        }
+    });
+}
+
 #[tauri::command]
 pub async fn get_local_ai_status(state: State<'_, AppState>) -> Result<LocalAiStatus, String> {
     // 命令必须 async + spawn_blocking：Ollama 探测与模型列表是网络/子进程调用，
@@ -841,6 +865,32 @@ pub fn rebuild_knowledge_index(
         app_state.finish_knowledge_index(&failure_scope_key);
         emit_knowledge_index_update(&progress_app);
     });
+    Ok(())
+}
+
+/// 记忆块索引状态（问知识库状态条与引用卡引导用）。
+#[tauri::command]
+pub fn get_memory_index_status(state: State<AppState>) -> Result<KnowledgeIndexStatus, String> {
+    let settings = state
+        .library
+        .repository()
+        .knowledge_settings()
+        .map_err(|error| error.to_frontend())?;
+    state
+        .library
+        .repository()
+        .get_knowledge_index_status(crate::knowledge::MEMORY_SCOPE_KEY, &settings.embedding_model)
+        .map_err(|error| error.to_frontend())
+}
+
+/// 手动重建记忆块索引（确认反馈/快照生成会自动触发，这里是排障入口）。
+#[tauri::command]
+pub fn rebuild_memory_index(
+    app: AppHandle,
+    state: State<AppState>,
+) -> Result<(), String> {
+    let library_root = state.library.root().to_path_buf();
+    spawn_memory_index_rebuild(Some(app), library_root);
     Ok(())
 }
 
@@ -2234,7 +2284,10 @@ pub(crate) fn schedule_memory_update(state: AppState) {
                 continue;
             }
             match memory::generate_snapshot(&state, &request) {
-                Ok(snapshot) => state.finish_generation_job(&generation_id, &snapshot),
+                Ok(snapshot) => {
+                    state.finish_generation_job(&generation_id, &snapshot);
+                    spawn_memory_index_rebuild(None, state.library.root().to_path_buf());
+                }
                 Err(error) => state.fail_generation_job(&generation_id, error.to_frontend()),
             }
             state.clear_generation_cancel(&generation_id);
@@ -2377,13 +2430,18 @@ pub fn get_local_growth_graph(
 
 #[tauri::command]
 pub async fn generate_memory_snapshot(
+    app: AppHandle,
     state: State<'_, AppState>,
     request: MemoryGenerationRequest,
 ) -> Result<MemorySnapshot, String> {
     let state = state.inner().clone();
     state.clear_generation_cancel(&request.generation_id);
     tauri::async_runtime::spawn_blocking(move || {
-        memory::generate_snapshot(&state, &request).map_err(|error| error.to_frontend())
+        memory::generate_snapshot(&state, &request)
+            .inspect(|_| {
+                spawn_memory_index_rebuild(Some(app.clone()), state.library.root().to_path_buf());
+            })
+            .map_err(|error| error.to_frontend())
     })
     .await
     .map_err(|_| "外部 AI 生成后台任务异常，请重试".to_owned())?
@@ -2391,21 +2449,29 @@ pub async fn generate_memory_snapshot(
 
 #[tauri::command]
 pub fn start_memory_generation(
+    app: AppHandle,
     state: State<AppState>,
     request: MemoryGenerationRequest,
 ) -> Result<MemoryGenerationJob, String> {
-    start_memory_generation_with_state(state.inner().clone(), request)
+    start_memory_generation_with_state(state.inner().clone(), app, request)
         .map_err(|error| error.to_frontend())
 }
 
 fn start_memory_generation_with_state(
     state: AppState,
+    app: AppHandle,
     request: MemoryGenerationRequest,
 ) -> crate::error::AppResult<MemoryGenerationJob> {
     let job = state.start_generation_job(&request.generation_id)?;
     std::thread::spawn(move || {
         match memory::generate_snapshot(&state, &request) {
-            Ok(snapshot) => state.finish_generation_job(&request.generation_id, &snapshot),
+            Ok(snapshot) => {
+                state.finish_generation_job(&request.generation_id, &snapshot);
+                spawn_memory_index_rebuild(
+                    Some(app.clone()),
+                    state.library.root().to_path_buf(),
+                );
+            }
             Err(error) => state.fail_generation_job(&request.generation_id, error.to_frontend()),
         }
         state.clear_generation_cancel(&request.generation_id);
@@ -2482,15 +2548,19 @@ pub fn update_memory_feedback(
 
 #[tauri::command]
 pub fn update_memory_feedback_batch(
+    app: AppHandle,
     state: State<AppState>,
     snapshot_id: String,
     entries: Vec<(String, String, String)>,
 ) -> Result<Vec<MemoryFeedback>, String> {
-    state
+    let feedback = state
         .library
         .repository()
         .update_memory_feedback_batch(&snapshot_id, &entries)
-        .map_err(|error| error.to_frontend())
+        .map_err(|error| error.to_frontend())?;
+    // 确认/驳回会改变记忆块索引的收录集合，提交后立即重建。
+    spawn_memory_index_rebuild(Some(app), state.library.root().to_path_buf());
+    Ok(feedback)
 }
 
 #[tauri::command]

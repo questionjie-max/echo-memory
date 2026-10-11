@@ -246,7 +246,37 @@ pub struct KnowledgeAnswerCitation {
 pub struct KnowledgeAnswer {
     pub answer: String,
     pub citations: Vec<KnowledgeAnswerCitation>,
+    #[serde(default)]
+    pub memory_citations: Vec<MemoryAnswerCitation>,
     pub insufficient_evidence: bool,
+}
+
+/// 记忆引用：来自用户确认过的记忆条目，落点在记忆视图而非音频时间点；
+/// sources 里带片段坐标时额外提供回听入口。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryAnswerCitation {
+    pub chunk_id: String,
+    pub item_id: String,
+    pub item_type: String,
+    pub topic: String,
+    pub before_text: String,
+    pub after_text: String,
+    pub occurred_at: String,
+    pub snapshot_id: String,
+    pub quote_text: String,
+    #[serde(default)]
+    pub source: Option<MemoryCitationSource>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryCitationSource {
+    pub record_id: String,
+    pub record_title: String,
+    pub segment_id: String,
+    pub start_ms: i64,
+    pub end_ms: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -275,6 +305,42 @@ pub struct KnowledgeChunkRecord {
     pub body: String,
     pub start_ms: i64,
     pub end_ms: i64,
+    pub embedding_model: String,
+    pub embedding: Vec<f32>,
+}
+
+/// 记忆块写入载荷：由确认过的记忆条目投影而来。
+#[derive(Debug, Clone)]
+pub struct MemoryChunkInput {
+    pub id: String,
+    pub snapshot_id: String,
+    pub view_kind: String,
+    pub item_id: String,
+    pub item_type: String,
+    pub topic: String,
+    pub before_text: String,
+    pub after_text: String,
+    pub body: String,
+    pub occurred_at: String,
+    pub sources: Vec<MemorySourceReference>,
+    pub content_hash: String,
+    pub embedding_model: String,
+    pub embedding: Vec<f32>,
+}
+
+/// 记忆块读取载荷：检索时与知识块并行召回。
+#[derive(Debug, Clone)]
+pub struct MemoryChunkRecord {
+    pub id: String,
+    pub snapshot_id: String,
+    pub item_id: String,
+    pub item_type: String,
+    pub topic: String,
+    pub body: String,
+    pub occurred_at: String,
+    pub before_text: String,
+    pub after_text: String,
+    pub sources: Vec<MemorySourceReference>,
     pub embedding_model: String,
     pub embedding: Vec<f32>,
 }
