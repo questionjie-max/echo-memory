@@ -634,6 +634,23 @@ pub struct IngestResult {
     pub title: String,
 }
 
+/// `import_chat_exports` 返回的单条跳过明细。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatImportSkip {
+    pub file: String,
+    pub title: Option<String>,
+    pub reason: String,
+}
+
+/// `import_chat_exports` 命令的返回：逐会话导入结果 + 跳过明细。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatImportOutcome {
+    pub imported: Vec<IngestResult>,
+    pub skipped: Vec<ChatImportSkip>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeleteRecordsResult {

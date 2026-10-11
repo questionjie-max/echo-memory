@@ -1,5 +1,6 @@
 pub mod analysis;
 pub mod audio;
+pub mod chat_import;
 pub mod commands;
 pub mod db;
 pub mod degeneration;
@@ -91,6 +92,7 @@ pub fn run() {
             commands::list_jobs,
             commands::import_audio,
             commands::import_document,
+            commands::import_chat_exports,
             commands::list_transcript_segments,
             commands::list_transcript_blocks,
             commands::update_transcript_segment,

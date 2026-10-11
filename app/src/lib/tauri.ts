@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AnalysisTemplate,
   AudioPreprocessorStatus,
+  ChatImportOutcome,
   DeleteRecordsResult,
   ExternalAiSettings,
   GrowthGraph,
@@ -198,6 +199,18 @@ export function importDocument(input: {
 }): Promise<IngestResult> {
   return invoke<IngestResult>("import_document", {
     sourcePath: input.sourcePath,
+    projectId: input.projectId ?? null,
+    duplicateConfirmed: input.duplicateConfirmed,
+  });
+}
+
+export function importChatExports(input: {
+  sourcePaths: string[];
+  projectId?: string | null;
+  duplicateConfirmed: boolean;
+}): Promise<ChatImportOutcome> {
+  return invoke<ChatImportOutcome>("import_chat_exports", {
+    sourcePaths: input.sourcePaths,
     projectId: input.projectId ?? null,
     duplicateConfirmed: input.duplicateConfirmed,
   });

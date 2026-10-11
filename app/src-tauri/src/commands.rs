@@ -17,13 +17,13 @@ use crate::memory::{self, OpenAiCompatibleClient};
 use crate::state::AppState;
 use crate::transcript::effective_text;
 use crate::types::{
-    ActionDashboard, AnalysisTemplate, AppInfo, DockReply, DockStatus, ExternalAiSettings,
-    GrowthGraph, Hotword, InboxStatus, InboxWatchFolder, IngestResult, KnowledgeAnswer,
-    KnowledgeIndexStatus, KnowledgeOverview, KnowledgeSettings, LocalAiStatus, LocalModelInfo,
-    LocalWhisperModel, McpStatus, MemoryFeedback, MemoryGenerationJob, MemoryGenerationRequest,
-    MemoryScope, MemorySnapshot, MemoryViewKind, ModelDownloadProgress, OnboardingStatus,
-    OutputStatus, PendingModelDownload, ProcessingJob, Project, RecommendedModel, RecordBrief,
-    RelatedRecord, SearchResult, SpeakerSummary, SuggestedWatchFolder, TemplateDraft,
+    ActionDashboard, AnalysisTemplate, AppInfo, ChatImportOutcome, DockReply, DockStatus,
+    ExternalAiSettings, GrowthGraph, Hotword, InboxStatus, InboxWatchFolder, IngestResult,
+    KnowledgeAnswer, KnowledgeIndexStatus, KnowledgeOverview, KnowledgeSettings, LocalAiStatus,
+    LocalModelInfo, LocalWhisperModel, McpStatus, MemoryFeedback, MemoryGenerationJob,
+    MemoryGenerationRequest, MemoryScope, MemorySnapshot, MemoryViewKind, ModelDownloadProgress,
+    OnboardingStatus, OutputStatus, PendingModelDownload, ProcessingJob, Project, RecommendedModel,
+    RecordBrief, RelatedRecord, SearchResult, SpeakerSummary, SuggestedWatchFolder, TemplateDraft,
     TemplateSection, TimelineItem, TranscriptBlock, TranscriptSegment, TranscriptSegmentInput,
     TranscriptionEngineStatus,
 };
@@ -1096,6 +1096,69 @@ pub fn import_document(
         });
     }
     Ok(result)
+}
+
+/// AI 对话导入：同步完成解析与落库，索引与分析在后台按记录串行执行，
+/// 全部结束后调度一次记忆更新。逐会话的失败在 skipped 明细里返回。
+#[tauri::command]
+pub fn import_chat_exports(
+    app: AppHandle,
+    state: State<AppState>,
+    source_paths: Vec<String>,
+    project_id: Option<String>,
+    duplicate_confirmed: bool,
+) -> Result<ChatImportOutcome, String> {
+    let paths = source_paths.into_iter().map(PathBuf::from).collect::<Vec<_>>();
+    if paths.is_empty() {
+        return Err("未选择任何文件".to_owned());
+    }
+    let outcome = crate::chat_import::import_chat_exports(
+        &state.library,
+        &paths,
+        project_id.as_deref(),
+        duplicate_confirmed,
+    )
+    .map_err(|error| error.to_frontend())?;
+    let record_ids = outcome
+        .imported
+        .iter()
+        .map(|item| item.record_id.clone())
+        .collect::<Vec<_>>();
+    if !record_ids.is_empty() {
+        let library_root = state.library.root().to_path_buf();
+        let app_state = state.inner().clone();
+        for record_id in &record_ids {
+            spawn_incremental_index(app.clone(), library_root.clone(), record_id.clone());
+        }
+        let heavy_jobs = crate::state::heavy_job_limiter().clone();
+        std::thread::spawn(move || {
+            for record_id in record_ids {
+                let _permit = heavy_jobs.acquire();
+                match ManagedLibrary::open(library_root.clone()) {
+                    Ok(library) => {
+                        if analyze_with_library(&library, &record_id).is_err() {
+                            mark_processing_failed(
+                                &library_root,
+                                &record_id,
+                                None,
+                                "analyze",
+                                "AI 对话分析失败",
+                            );
+                        }
+                    }
+                    Err(error) => mark_processing_failed(
+                        &library_root,
+                        &record_id,
+                        None,
+                        "analyze",
+                        &error.to_string(),
+                    ),
+                }
+            }
+            schedule_memory_update(app_state);
+        });
+    }
+    Ok(outcome)
 }
 
 #[tauri::command]

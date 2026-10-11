@@ -305,6 +305,19 @@ export interface IngestResult {
   title: string;
 }
 
+/** import_chat_exports 返回的单条跳过明细 */
+export interface ChatImportSkip {
+  file: string;
+  title: string | null;
+  reason: string;
+}
+
+/** import_chat_exports 命令返回：逐会话导入结果 + 跳过明细 */
+export interface ChatImportOutcome {
+  imported: IngestResult[];
+  skipped: ChatImportSkip[];
+}
+
 export interface DeleteRecordsResult {
   deletedCount: number;
   fileCleanupFailures: string[];

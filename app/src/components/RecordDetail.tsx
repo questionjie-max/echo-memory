@@ -181,7 +181,8 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
   const [exportNotice, setExportNotice] = useState<string | null>(null);
   const [retranscribeLanguage, setRetranscribeLanguage] = useState("zh");
   const [retranscribeModelPath, setRetranscribeModelPath] = useState("");
-  const isDocument = currentRecord.sourceType === "document";
+  // 文字类来源（文档导入 / AI 对话导入）没有音频：走纯文本分支，隐藏播放与转写操作。
+  const isDocument = currentRecord.sourceType === "document" || currentRecord.sourceType === "chat";
 
   async function load() {
     const requestId = ++loadRequestId.current;

@@ -182,6 +182,61 @@ impl LibraryRepository {
         source_format: &str,
         segments: &[TranscriptSegmentInput],
     ) -> AppResult<RecordBrief> {
+        self.create_text_record(
+            record_id,
+            title,
+            project_id,
+            document_path,
+            document_hash,
+            "document",
+            "document-import",
+            "document-import-v1",
+            source_format,
+            segments,
+        )
+    }
+
+    /// AI 对话导入的落库入口：与文档导入同构，仅 source_type / 管线标识不同，
+    /// 便于按来源查重（find_record_by_source_hash）和前端区分展示。
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_chat_record(
+        &self,
+        record_id: &str,
+        title: &str,
+        project_id: Option<&str>,
+        document_path: &Path,
+        document_hash: &str,
+        source_format: &str,
+        segments: &[TranscriptSegmentInput],
+    ) -> AppResult<RecordBrief> {
+        self.create_text_record(
+            record_id,
+            title,
+            project_id,
+            document_path,
+            document_hash,
+            "chat",
+            "chat-import",
+            "chat-import-v1",
+            source_format,
+            segments,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn create_text_record(
+        &self,
+        record_id: &str,
+        title: &str,
+        project_id: Option<&str>,
+        document_path: &Path,
+        document_hash: &str,
+        source_type: &str,
+        provider: &str,
+        pipeline_version: &str,
+        source_format: &str,
+        segments: &[TranscriptSegmentInput],
+    ) -> AppResult<RecordBrief> {
         let title = title.trim();
         if title.is_empty() {
             return Err(AppError::Invalid("记录标题不能为空".into()));
@@ -207,22 +262,25 @@ impl LibraryRepository {
         let mut connection = self.connect()?;
         let transaction = connection.transaction()?;
         transaction.execute(
-            "INSERT INTO records              (id, title, project_id, source_type, audio_path, audio_hash, audio_duration_ms, imported_at, processing_status, created_at, updated_at)              VALUES (?1, ?2, NULLIF(?3, ''), 'document', ?4, ?5, 0, ?6, 'completed', ?6, ?6)",
+            "INSERT INTO records              (id, title, project_id, source_type, audio_path, audio_hash, audio_duration_ms, imported_at, processing_status, created_at, updated_at)              VALUES (?1, ?2, NULLIF(?3, ''), ?4, ?5, ?6, 0, ?7, 'completed', ?7, ?7)",
             params![
                 record_id,
                 title,
                 project_id,
+                source_type,
                 document_path.to_string_lossy(),
                 document_hash,
                 now,
             ],
         )?;
         transaction.execute(
-            "INSERT INTO transcript_versions              (id, record_id, provider, model, status, language, pipeline_version, preprocessing_json, created_at)              VALUES (?1, ?2, 'document-import', ?3, 'completed', 'und', 'document-import-v1', ?4, ?5)",
+            "INSERT INTO transcript_versions              (id, record_id, provider, model, status, language, pipeline_version, preprocessing_json, created_at)              VALUES (?1, ?2, ?3, ?4, 'completed', 'und', ?5, ?6, ?7)",
             params![
                 transcript_version_id,
                 record_id,
+                provider,
                 source_format,
+                pipeline_version,
                 preprocessing_json,
                 now,
             ],
