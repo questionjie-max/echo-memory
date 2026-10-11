@@ -455,7 +455,6 @@ impl LibraryRepository {
 mod tests {
     use super::*;
     use crate::library::ManagedLibrary;
-    use crate::types::EvolutionItem;
 
     fn all_scope() -> crate::types::MemoryScope {
         crate::types::MemoryScope {
