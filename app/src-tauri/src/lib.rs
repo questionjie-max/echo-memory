@@ -2,6 +2,7 @@ pub mod agent_scan;
 pub mod analysis;
 pub mod audio;
 pub mod chat_import;
+pub mod chat_digest;
 pub mod commands;
 pub mod db;
 pub mod degeneration;
@@ -99,6 +100,7 @@ pub fn run() {
             commands::import_chat_exports,
             commands::scan_local_agents,
             commands::import_agent_scans,
+            commands::generate_chat_digest,
             commands::list_transcript_segments,
             commands::list_transcript_blocks,
             commands::update_transcript_segment,

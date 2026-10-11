@@ -357,7 +357,7 @@ pub(crate) fn filter_wrapped_text(text: &str) -> String {
         .to_owned()
 }
 
-fn mtime_rfc3339(metadata: &fs::Metadata) -> String {
+pub(crate) fn mtime_rfc3339(metadata: &fs::Metadata) -> String {
     let stamp = metadata
         .modified()
         .ok()

@@ -192,12 +192,14 @@ impl LibraryRepository {
             "document-import",
             "document-import-v1",
             source_format,
+            None,
             segments,
         )
     }
 
     /// AI 对话导入的落库入口：与文档导入同构，仅 source_type / 管线标识不同，
     /// 便于按来源查重（find_record_by_source_hash）和前端区分展示。
+    /// occurred_at 是对话的真实时间（导出元数据或文件 mtime）；None 时用现在。
     #[allow(clippy::too_many_arguments)]
     pub fn create_chat_record(
         &self,
@@ -207,6 +209,7 @@ impl LibraryRepository {
         document_path: &Path,
         document_hash: &str,
         source_format: &str,
+        occurred_at: Option<&str>,
         segments: &[TranscriptSegmentInput],
     ) -> AppResult<RecordBrief> {
         self.create_text_record(
@@ -219,6 +222,7 @@ impl LibraryRepository {
             "chat-import",
             "chat-import-v1",
             source_format,
+            occurred_at,
             segments,
         )
     }
@@ -235,6 +239,7 @@ impl LibraryRepository {
         provider: &str,
         pipeline_version: &str,
         source_format: &str,
+        occurred_at: Option<&str>,
         segments: &[TranscriptSegmentInput],
     ) -> AppResult<RecordBrief> {
         let title = title.trim();
@@ -257,12 +262,14 @@ impl LibraryRepository {
         }
 
         let now = Utc::now().to_rfc3339();
+        // 记录的展示时间用对话/文档的真实时间；导入时刻只作为 updated_at 兜底。
+        let imported_at = occurred_at.filter(|stamp| !stamp.trim().is_empty()).unwrap_or(now.as_str());
         let transcript_version_id = Uuid::new_v4().to_string();
         let preprocessing_json = serde_json::json!({ "sourceFormat": source_format }).to_string();
         let mut connection = self.connect()?;
         let transaction = connection.transaction()?;
         transaction.execute(
-            "INSERT INTO records              (id, title, project_id, source_type, audio_path, audio_hash, audio_duration_ms, imported_at, processing_status, created_at, updated_at)              VALUES (?1, ?2, NULLIF(?3, ''), ?4, ?5, ?6, 0, ?7, 'completed', ?7, ?7)",
+            "INSERT INTO records              (id, title, project_id, source_type, audio_path, audio_hash, audio_duration_ms, imported_at, processing_status, created_at, updated_at)              VALUES (?1, ?2, NULLIF(?3, ''), ?4, ?5, ?6, 0, ?7, 'completed', ?8, ?8)",
             params![
                 record_id,
                 title,
@@ -270,6 +277,7 @@ impl LibraryRepository {
                 source_type,
                 document_path.to_string_lossy(),
                 document_hash,
+                imported_at,
                 now,
             ],
         )?;

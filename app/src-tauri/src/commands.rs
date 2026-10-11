@@ -1174,6 +1174,8 @@ pub fn import_chat_exports(
 }
 
 /// 导入后的共享后台管线：逐记录增量索引 + 限流串行分析 + 一次记忆更新调度。
+/// AI 对话（source_type=chat）走独立车道：只建检索索引，不做逐条分析，
+/// 也不触发记忆链更新——它的结构化产出是「梳理报告」，不是记忆视图。
 fn spawn_chat_import_pipeline(app: AppHandle, state: &AppState, outcome: &ChatImportOutcome) {
     let record_ids = outcome
         .imported
@@ -1183,14 +1185,26 @@ fn spawn_chat_import_pipeline(app: AppHandle, state: &AppState, outcome: &ChatIm
     if record_ids.is_empty() {
         return;
     }
+    let repository = state.library.repository();
+    let mut memory_chain_record_ids = Vec::new();
+    for record_id in &record_ids {
+        let is_chat = repository
+            .get_record(record_id)
+            .map(|record| record.source_type == "chat")
+            .unwrap_or(false);
+        if !is_chat {
+            memory_chain_record_ids.push(record_id.clone());
+        }
+    }
     let library_root = state.library.root().to_path_buf();
     let app_state = state.clone();
     for record_id in &record_ids {
         spawn_incremental_index(app.clone(), library_root.clone(), record_id.clone());
     }
     let heavy_jobs = crate::state::heavy_job_limiter().clone();
+    let has_memory_chain = !memory_chain_record_ids.is_empty();
     std::thread::spawn(move || {
-        for record_id in record_ids {
+        for record_id in memory_chain_record_ids {
             let _permit = heavy_jobs.acquire();
             match ManagedLibrary::open(library_root.clone()) {
                 Ok(library) => {
@@ -1213,7 +1227,9 @@ fn spawn_chat_import_pipeline(app: AppHandle, state: &AppState, outcome: &ChatIm
                 ),
             }
         }
-        schedule_memory_update(app_state);
+        if has_memory_chain {
+            schedule_memory_update(app_state);
+        }
     });
 }
 
@@ -1221,6 +1237,40 @@ fn spawn_chat_import_pipeline(app: AppHandle, state: &AppState, outcome: &ChatIm
 #[tauri::command]
 pub fn scan_local_agents() -> Result<crate::agent_scan::AgentScanResult, String> {
     crate::agent_scan::scan_agent_sessions().map_err(|error| error.to_frontend())
+}
+
+/// AI 对话档案梳理：把导入的全部 AI 对话聚合成一份结构化报告（外部 AI，双同意门禁）。
+/// 报告以 chat 记录落库：可搜索、可被知识问答引用，不进录音记忆链。
+#[tauri::command]
+pub async fn generate_chat_digest(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<IngestResult, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let settings = crate::external_ai_gate::require_external_ai_consent(&state.library)
+            .map_err(|error| error.to_frontend())?;
+        if !settings.enabled {
+            return Err("请先在设置中启用外部 AI".to_owned());
+        }
+        let api_key = crate::external_ai_gate::get_api_key()
+            .map_err(|error| error.to_frontend())?
+            .ok_or_else(|| "请先配置外部 AI API Key".to_owned())?;
+        let client = crate::memory::OpenAiCompatibleClient::new(
+            &settings.base_url,
+            &settings.model,
+            &api_key,
+        )
+        .map_err(|error| error.to_frontend())?;
+        let result = crate::chat_digest::generate(&state.library, &client)
+            .map_err(|error| error.to_frontend())?;
+        if !result.duplicate {
+            spawn_incremental_index(app, state.library.root().to_path_buf(), result.record_id.clone());
+        }
+        Ok(result)
+    })
+    .await
+    .map_err(|_| "梳理报告后台任务异常".to_owned())?
 }
 
 /// 导入勾选的本机 Agent 会话与记忆/规则文件。

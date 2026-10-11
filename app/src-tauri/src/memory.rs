@@ -982,6 +982,11 @@ fn source_records(
     let records = repository.list_records(project_id, unfiled)?;
     let mut result = Vec::new();
     for record in records {
+        // AI 对话走独立的车道（知识检索 / 梳理报告），不进录音工作流的记忆链：
+        // 否则一次批量导入 181 条对话会把演化视图、行动仪表盘全部冲乱。
+        if record.source_type == "chat" {
+            continue;
+        }
         if !within_range(&record.imported_at, range_start, range_end) {
             continue;
         }

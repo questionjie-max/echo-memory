@@ -45,6 +45,8 @@ pub(crate) struct ParsedConversation {
     pub(crate) title: String,
     pub(crate) source_format: &'static str,
     pub(crate) turns: Vec<ChatTurn>,
+    /// 对话的真实时间（RFC3339）：来自导出元数据；没有时落库回退文件 mtime。
+    pub(crate) occurred_at: Option<String>,
 }
 
 /// 批量导入：逐文件、逐会话解析；失败以 skipped 明细返回，不让一个坏会话拖垮整批。
@@ -258,6 +260,7 @@ fn parse_chatgpt_conversation(item: &Value) -> AppResult<ParsedConversation> {
                     title,
                     source_format: "chat-gpt",
                     turns,
+                    occurred_at: gpt_create_time(item),
                 });
             };
             let mut queue: Vec<String> = root
@@ -289,6 +292,7 @@ fn parse_chatgpt_conversation(item: &Value) -> AppResult<ParsedConversation> {
         title,
         source_format: "chat-gpt",
         turns,
+        occurred_at: gpt_create_time(item),
     })
 }
 
@@ -349,6 +353,11 @@ fn parse_claude_conversation(item: &Value) -> AppResult<ParsedConversation> {
         title,
         source_format: "chat-claude",
         turns,
+        occurred_at: item
+            .get("created_at")
+            .or_else(|| item.get("updated_at"))
+            .and_then(Value::as_str)
+            .map(str::to_owned),
     })
 }
 
@@ -449,7 +458,16 @@ fn parse_markdown_dialogue(text: &str, fallback_title: &str) -> AppResult<Parsed
         title: title.to_owned(),
         source_format: "chat-md",
         turns,
+        // 对话式 Markdown 自身无时间元数据，落库时回退文件 mtime。
+        occurred_at: None,
     })
+}
+
+/// 源文件的修改时间（RFC3339）：对话式 Markdown 等无时间元数据时的兜底。
+fn file_mtime_rfc3339(path: &Path) -> Option<String> {
+    fs::metadata(path)
+        .ok()
+        .map(|metadata| crate::agent_scan::mtime_rfc3339(&metadata))
 }
 
 /// 单会话落库（公开给 Agent 扫描导入复用）：校验、查重、写对话文件、建记录。
@@ -508,6 +526,11 @@ pub(crate) fn import_parsed_conversation(
     }
 
     let segments = conversation_segments(&conversation.turns);
+    // 优先用导出元数据里的对话真实时间；没有就回退源文件 mtime（比导入时刻真实）。
+    let occurred_at = conversation
+        .occurred_at
+        .clone()
+        .or_else(|| file_mtime_rfc3339(Path::new(file_label)));
     let record_id = Uuid::new_v4().to_string();
     let now = Utc::now();
     let relative_path = PathBuf::from("documents")
@@ -530,6 +553,7 @@ pub(crate) fn import_parsed_conversation(
         &relative_path,
         &hash,
         conversation.source_format,
+        occurred_at.as_deref(),
         &segments,
     ) {
         Ok(record) => outcome.imported.push(IngestResult {
@@ -668,6 +692,20 @@ pub fn import_agent_sessions(
     Ok(outcome)
 }
 
+/// ChatGPT 导出的 create_time 是 Unix 秒（浮点），转 RFC3339。
+fn gpt_create_time(item: &Value) -> Option<String> {
+    let seconds = item.get("create_time").and_then(Value::as_f64)?;
+    chrono::DateTime::from_timestamp(seconds as i64, 0)
+        .map(|stamp| stamp.to_rfc3339())
+}
+
+fn json_timestamp(value: &Value) -> Option<String> {
+    value
+        .get("timestamp")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+}
+
 /// Claude Code 会话（~/.claude/projects/**/*.jsonl）：逐行流式解析，
 /// 只取 user/assistant 的文本内容；侧链（子代理）、工具块、`<` 开头的
 /// 包装文本（命令/本地输出）一律忽略。
@@ -676,11 +714,15 @@ pub(crate) fn parse_claude_code_session(path: &Path) -> AppResult<ParsedConversa
     let reader = BufReader::with_capacity(64 * 1024, file);
     let mut turns: Vec<ChatTurn> = Vec::new();
     let mut title: Option<String> = None;
+    let mut claude_code_timestamp: Option<String> = None;
     for line in reader.lines() {
         let line = line?;
         let Ok(value) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
+        if claude_code_timestamp.is_none() {
+            claude_code_timestamp = json_timestamp(&value);
+        }
         let role = match value.get("type").and_then(Value::as_str) {
             Some("user") => ChatRole::User,
             Some("assistant") => ChatRole::Assistant,
@@ -729,6 +771,7 @@ pub(crate) fn parse_claude_code_session(path: &Path) -> AppResult<ParsedConversa
         title: title.unwrap_or_else(|| fallback.to_owned()),
         source_format: "claude-code",
         turns,
+        occurred_at: claude_code_timestamp,
     })
 }
 
@@ -741,6 +784,7 @@ pub(crate) fn parse_codex_session(path: &Path) -> AppResult<ParsedConversation> 
     let mut turns: Vec<ChatTurn> = Vec::new();
     let mut title: Option<String> = None;
     let mut cwd_title: Option<String> = None;
+    let mut codex_timestamp: Option<String> = None;
     for line in reader.lines() {
         let line = line?;
         let Ok(value) = serde_json::from_str::<Value>(&line) else {
@@ -754,6 +798,13 @@ pub(crate) fn parse_codex_session(path: &Path) -> AppResult<ParsedConversation> 
                     .map(Path::new)
                     .and_then(Path::file_name)
                     .and_then(|name| name.to_str())
+                    .map(str::to_owned);
+            }
+            if codex_timestamp.is_none() {
+                codex_timestamp = value
+                    .pointer("/payload/timestamp")
+                    .or_else(|| value.get("timestamp"))
+                    .and_then(Value::as_str)
                     .map(str::to_owned);
             }
             continue;
@@ -820,6 +871,7 @@ pub(crate) fn parse_codex_session(path: &Path) -> AppResult<ParsedConversation> 
         title: title.unwrap_or(fallback),
         source_format: "codex",
         turns,
+        occurred_at: codex_timestamp,
     })
 }
 
@@ -942,16 +994,19 @@ mod tests {
             title: "t".into(),
             source_format: "chat-md",
             turns: vec![ChatTurn { role: ChatRole::User, text: "a".into() }],
+            occurred_at: None,
         };
         let same = ParsedConversation {
             title: "t".into(),
             source_format: "chat-md",
             turns: vec![ChatTurn { role: ChatRole::User, text: "a".into() }],
+            occurred_at: None,
         };
         let different = ParsedConversation {
             title: "t".into(),
             source_format: "chat-md",
             turns: vec![ChatTurn { role: ChatRole::User, text: "b".into() }],
+            occurred_at: None,
         };
         assert_eq!(conversation_hash(&base), conversation_hash(&same));
         assert_ne!(conversation_hash(&base), conversation_hash(&different));
