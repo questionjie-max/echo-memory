@@ -371,6 +371,7 @@ pub enum MemoryViewKind {
     Timeline,
     Map,
     Evolution,
+    Profile,
 }
 
 impl MemoryViewKind {
@@ -379,6 +380,7 @@ impl MemoryViewKind {
             Self::Timeline => "timeline",
             Self::Map => "map",
             Self::Evolution => "evolution",
+            Self::Profile => "profile",
         }
     }
 }
@@ -602,6 +604,35 @@ pub struct MemoryGenerationRequest {
     pub scope: MemoryScope,
     pub range_start: Option<String>,
     pub range_end: Option<String>,
+}
+
+/// L3 个人总述：跨快照聚合的中文第一人称画像，独立于逐条记忆条目。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileSummary {
+    #[serde(default)]
+    pub summary: String,
+    #[serde(default)]
+    pub stances: Vec<String>,
+    #[serde(default)]
+    pub preferences: Vec<String>,
+    #[serde(default)]
+    pub trajectory: Vec<String>,
+    #[serde(default)]
+    pub watching: Vec<String>,
+}
+
+/// `get_memory_profile` 命令的返回：最新 profile 快照元数据 + 总述内容。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileSnapshot {
+    pub id: String,
+    pub status: String,
+    pub is_stale: bool,
+    pub model: String,
+    pub error_message: Option<String>,
+    pub updated_at: String,
+    pub profile: Option<ProfileSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

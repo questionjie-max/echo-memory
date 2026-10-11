@@ -365,7 +365,7 @@ export interface ExternalAiSettings {
   audioUploadConsentAt: string | null;
 }
 
-export type MemoryViewKind = "timeline" | "map" | "evolution";
+export type MemoryViewKind = "timeline" | "map" | "evolution" | "profile";
 export type MemoryGenerationStatus = "generating" | "completed" | "partial" | "failed" | "cancelled";
 
 export interface MemoryScope {
@@ -379,6 +379,26 @@ export interface MemorySourceReference {
   startMs: number | null;
   endMs: number | null;
   quoteText: string;
+}
+
+/** L3 个人总述：跨快照聚合的中文第一人称画像 */
+export interface ProfileSummary {
+  summary: string;
+  stances: string[];
+  preferences: string[];
+  trajectory: string[];
+  watching: string[];
+}
+
+/** get_memory_profile 命令返回 */
+export interface ProfileSnapshot {
+  id: string;
+  status: string;
+  isStale: boolean;
+  model: string;
+  errorMessage: string | null;
+  updatedAt: string;
+  profile: ProfileSummary | null;
 }
 
 export interface TimelineItem {

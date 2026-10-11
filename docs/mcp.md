@@ -33,6 +33,7 @@ Then configure an MCP client with the built executable:
 | `list_projects` | List local projects. |
 | `get_project_context` | Return recent records, decisions, and action items for a project. |
 | `list_action_items` | List local action items, optionally filtered by project and status. |
+| `get_my_context` | Return the user's L3 profile summary (if generated) and up to 20 recently confirmed memory items, so an agent can pick up the user's standing context in one call. |
 
 ## Evidence and boundaries
 

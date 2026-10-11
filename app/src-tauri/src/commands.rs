@@ -22,10 +22,10 @@ use crate::types::{
     KnowledgeAnswer, KnowledgeIndexStatus, KnowledgeOverview, KnowledgeSettings, LocalAiStatus,
     LocalModelInfo, LocalWhisperModel, McpStatus, MemoryFeedback, MemoryGenerationJob,
     MemoryGenerationRequest, MemoryScope, MemorySnapshot, MemoryViewKind, ModelDownloadProgress,
-    OnboardingStatus, OutputStatus, PendingModelDownload, ProcessingJob, Project, RecommendedModel,
-    RecordBrief, RelatedRecord, SearchResult, SpeakerSummary, SuggestedWatchFolder, TemplateDraft,
-    TemplateSection, TimelineItem, TranscriptBlock, TranscriptSegment, TranscriptSegmentInput,
-    TranscriptionEngineStatus,
+    OnboardingStatus, OutputStatus, PendingModelDownload, ProcessingJob, ProfileSnapshot, Project,
+    RecommendedModel, RecordBrief, RelatedRecord, SearchResult, SpeakerSummary,
+    SuggestedWatchFolder, TemplateDraft, TemplateSection, TimelineItem, TranscriptBlock,
+    TranscriptSegment, TranscriptSegmentInput, TranscriptionEngineStatus,
 };
 use crate::whisper::{
     library_model_files, localize_speaker_label, WhisperAdapter, WhisperSession,
@@ -2487,6 +2487,36 @@ pub fn get_memory_generation_job(
     state
         .generation_job(&generation_id)
         .ok_or_else(|| "未找到该生成任务".to_owned())
+}
+
+/// 最新 L3 个人总述（含快照元数据；未生成过返回 null profile）。
+#[tauri::command]
+pub fn get_memory_profile(state: State<AppState>) -> Result<ProfileSnapshot, String> {
+    match state
+        .library
+        .repository()
+        .latest_profile_snapshot()
+        .map_err(|error| error.to_frontend())?
+    {
+        Some((snapshot, profile)) => Ok(ProfileSnapshot {
+            id: snapshot.id,
+            status: snapshot.status.as_str().to_owned(),
+            is_stale: snapshot.is_stale,
+            model: snapshot.model,
+            error_message: snapshot.error_message,
+            updated_at: snapshot.updated_at,
+            profile: Some(profile),
+        }),
+        None => Ok(ProfileSnapshot {
+            id: String::new(),
+            status: "not_built".to_owned(),
+            is_stale: false,
+            model: String::new(),
+            error_message: None,
+            updated_at: String::new(),
+            profile: None,
+        }),
+    }
 }
 
 #[tauri::command]

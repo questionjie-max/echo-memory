@@ -19,6 +19,7 @@ import type {
   MemoryScope,
   MemorySnapshot,
   MemoryViewKind,
+  ProfileSnapshot,
   Project,
   RecordBrief,
   SearchResult,
@@ -127,6 +128,10 @@ export function rebuildKnowledgeIndex(projectId?: string | null, unfiledOnly = f
 
 export function getMemoryIndexStatus(): Promise<KnowledgeIndexStatus> {
   return invoke<KnowledgeIndexStatus>("get_memory_index_status");
+}
+
+export function getMemoryProfile(): Promise<ProfileSnapshot> {
+  return invoke<ProfileSnapshot>("get_memory_profile");
 }
 
 export function askKnowledgeBase(question: string, projectId?: string | null, unfiledOnly = false): Promise<KnowledgeAnswer> {

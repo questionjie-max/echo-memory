@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { SparklesIcon } from "./icons";
 import MemoryViewControls from "./MemoryViewControls";
+import ProfileCard from "./ProfileCard";
 import { changeTypeLabel, changeTypeSlug } from "../lib/changeType";
 import type { EvolutionItem, MemoryFeedback, MemoryScope, MemorySnapshot, MemorySourceReference } from "../shared/types";
 import { listMemoryFeedback, updateMemoryFeedback, updateMemoryFeedbackBatch } from "../lib/tauri";
@@ -126,6 +127,7 @@ export default function EvolutionView({ scope, onOpenSource, onOpenSettings }: P
       onCancel={data.cancel}
       onOpenSettings={onOpenSettings}
     />
+    <ProfileCard onOpenSettings={onOpenSettings} refreshToken={items.length + pendingCount} />
     {feedbackStatus && <p className="inline-notice memory-notice" role="status" aria-live="polite">{feedbackStatus}</p>}
     {data.loading ? <div className="memory-empty" role="status" aria-live="polite"><strong>正在加载认知演化…</strong></div> : data.error || feedbackError ? <div className="memory-empty memory-error-state" role="alert"><strong>认知演化加载失败</strong><p>{[data.error, feedbackError].filter(Boolean).join("；")}</p><button type="button" className="secondary-button" onClick={() => { setFeedbackError(""); void data.reload(); }}>重试</button></div> : !data.selectedSnapshot ? (data.settings && !isExternalAiReady(data.settings) ? <ConfiguredEmpty onOpenSettings={onOpenSettings} /> : <NoSnapshotEmpty />) : <div className="evolution-content">
       {items.length > 0 && <EvolutionSummary items={items} snapshot={data.selectedSnapshot} pendingCount={pendingCount} onConfirmAll={confirmAll} busy={confirmAllBusy} />}
