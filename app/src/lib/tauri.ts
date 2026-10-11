@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  AgentScanResult,
+  AgentSessionSelection,
   AnalysisTemplate,
   AudioPreprocessorStatus,
   ChatImportOutcome,
@@ -132,6 +134,24 @@ export function getMemoryIndexStatus(): Promise<KnowledgeIndexStatus> {
 
 export function getMemoryProfile(): Promise<ProfileSnapshot> {
   return invoke<ProfileSnapshot>("get_memory_profile");
+}
+
+export function scanLocalAgents(): Promise<AgentScanResult> {
+  return invoke<AgentScanResult>("scan_local_agents");
+}
+
+export function importAgentScans(input: {
+  sessions: AgentSessionSelection[];
+  memoryPaths: string[];
+  projectId?: string | null;
+  duplicateConfirmed: boolean;
+}): Promise<ChatImportOutcome> {
+  return invoke<ChatImportOutcome>("import_agent_scans", {
+    sessions: input.sessions,
+    memoryPaths: input.memoryPaths,
+    projectId: input.projectId ?? null,
+    duplicateConfirmed: input.duplicateConfirmed,
+  });
 }
 
 export function askKnowledgeBase(question: string, projectId?: string | null, unfiledOnly = false): Promise<KnowledgeAnswer> {

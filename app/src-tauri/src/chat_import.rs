@@ -9,6 +9,7 @@ use chrono::{Datelike, Utc};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
@@ -39,10 +40,11 @@ pub struct ChatTurn {
     pub text: String,
 }
 
-struct ParsedConversation {
-    title: String,
-    source_format: &'static str,
-    turns: Vec<ChatTurn>,
+#[derive(Debug, Clone)]
+pub(crate) struct ParsedConversation {
+    pub(crate) title: String,
+    pub(crate) source_format: &'static str,
+    pub(crate) turns: Vec<ChatTurn>,
 }
 
 /// 批量导入：逐文件、逐会话解析；失败以 skipped 明细返回，不让一个坏会话拖垮整批。
@@ -128,7 +130,7 @@ fn import_json_export(
     }
     for conversation in conversations.into_iter().take(MAX_CONVERSATIONS_PER_FILE) {
         match conversation {
-            Ok(conversation) => import_conversation(
+            Ok(conversation) => import_parsed_conversation(
                 library,
                 &file_label,
                 project_id,
@@ -162,7 +164,7 @@ fn import_dialogue_text(
         .filter(|name| !name.trim().is_empty())
         .unwrap_or("未命名对话");
     let conversation = parse_markdown_dialogue(&text, fallback_title)?;
-    import_conversation(
+    import_parsed_conversation(
         library,
         &file_label,
         project_id,
@@ -450,7 +452,8 @@ fn parse_markdown_dialogue(text: &str, fallback_title: &str) -> AppResult<Parsed
     })
 }
 
-fn import_conversation(
+/// 单会话落库（公开给 Agent 扫描导入复用）：校验、查重、写对话文件、建记录。
+pub(crate) fn import_parsed_conversation(
     library: &ManagedLibrary,
     file_label: &str,
     project_id: Option<&str>,
@@ -619,6 +622,207 @@ fn write_markdown(destination: &Path, content: &str) -> AppResult<()> {
     Ok(())
 }
 
+/* ----------------------- v0.8：本机 Agent 会话适配器 ----------------------- */
+
+/// 导入一个选中的本机 Agent 会话（路径已由命令层做白名单校验）。
+pub fn import_agent_sessions(
+    library: &ManagedLibrary,
+    selections: &[(crate::agent_scan::AgentKind, String)],
+    project_id: Option<&str>,
+    duplicate_confirmed: bool,
+) -> AppResult<ChatImportOutcome> {
+    let mut outcome = ChatImportOutcome {
+        imported: Vec::new(),
+        skipped: Vec::new(),
+    };
+    for (agent, path) in selections {
+        let file_label = path.clone();
+        if fs::metadata(path).is_ok_and(|meta| meta.len() > crate::agent_scan::MAX_SESSION_BYTES) {
+            outcome.skipped.push(ChatImportSkip {
+                file: file_label,
+                title: None,
+                reason: "会话文件过大，暂不支持导入".into(),
+            });
+            continue;
+        }
+        let parsed = match agent {
+            crate::agent_scan::AgentKind::ClaudeCode => parse_claude_code_session(Path::new(path)),
+            crate::agent_scan::AgentKind::Codex => parse_codex_session(Path::new(path)),
+        };
+        match parsed {
+            Ok(conversation) => import_parsed_conversation(
+                library,
+                &file_label,
+                project_id,
+                duplicate_confirmed,
+                conversation,
+                &mut outcome,
+            ),
+            Err(error) => outcome.skipped.push(ChatImportSkip {
+                file: file_label,
+                title: None,
+                reason: error.to_string(),
+            }),
+        }
+    }
+    Ok(outcome)
+}
+
+/// Claude Code 会话（~/.claude/projects/**/*.jsonl）：逐行流式解析，
+/// 只取 user/assistant 的文本内容；侧链（子代理）、工具块、`<` 开头的
+/// 包装文本（命令/本地输出）一律忽略。
+pub(crate) fn parse_claude_code_session(path: &Path) -> AppResult<ParsedConversation> {
+    let file = fs::File::open(path)?;
+    let reader = BufReader::with_capacity(64 * 1024, file);
+    let mut turns: Vec<ChatTurn> = Vec::new();
+    let mut title: Option<String> = None;
+    for line in reader.lines() {
+        let line = line?;
+        let Ok(value) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        let role = match value.get("type").and_then(Value::as_str) {
+            Some("user") => ChatRole::User,
+            Some("assistant") => ChatRole::Assistant,
+            Some("summary") => {
+                if title.is_none() {
+                    title = value
+                        .get("summary")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|text| !text.is_empty())
+                        .map(str::to_owned);
+                }
+                continue;
+            }
+            _ => continue,
+        };
+        if value
+            .get("isSidechain")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let text = crate::agent_scan::claude_message_text(value.get("message"));
+        let text = crate::agent_scan::filter_wrapped_text(&text);
+        if text.is_empty() {
+            continue;
+        }
+        if title.is_none() && role == ChatRole::User {
+            title = Some(text.chars().take(60).collect::<String>());
+        }
+        turns.push(ChatTurn { role, text });
+    }
+    let turns: Vec<ChatTurn> = turns
+        .into_iter()
+        .filter(|turn| !turn.text.trim().is_empty())
+        .collect();
+    if turns.is_empty() {
+        return Err(AppError::Import("会话里没有可导入的对话内容".into()));
+    }
+    let fallback = path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or("未命名会话");
+    Ok(ParsedConversation {
+        title: title.unwrap_or_else(|| fallback.to_owned()),
+        source_format: "claude-code",
+        turns,
+    })
+}
+
+/// Codex 会话（~/.codex/sessions/**/*.jsonl）：只取 response_item.message 的
+/// user/assistant 文本；system/developer 角色、`<environment_context>` 等
+/// 注入型内容一律忽略。标题取首条用户消息，回退 cwd 目录名。
+pub(crate) fn parse_codex_session(path: &Path) -> AppResult<ParsedConversation> {
+    let file = fs::File::open(path)?;
+    let reader = BufReader::with_capacity(64 * 1024, file);
+    let mut turns: Vec<ChatTurn> = Vec::new();
+    let mut title: Option<String> = None;
+    let mut cwd_title: Option<String> = None;
+    for line in reader.lines() {
+        let line = line?;
+        let Ok(value) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if value.get("type").and_then(Value::as_str) == Some("session_meta") {
+            if cwd_title.is_none() {
+                cwd_title = value
+                    .pointer("/payload/cwd")
+                    .and_then(Value::as_str)
+                    .map(Path::new)
+                    .and_then(Path::file_name)
+                    .and_then(|name| name.to_str())
+                    .map(str::to_owned);
+            }
+            continue;
+        }
+        if value.get("type").and_then(Value::as_str) != Some("response_item") {
+            continue;
+        }
+        let payload = value.get("payload");
+        if payload
+            .and_then(|payload| payload.get("type"))
+            .and_then(Value::as_str)
+            != Some("message")
+        {
+            continue;
+        }
+        let role = match payload
+            .and_then(|payload| payload.get("role"))
+            .and_then(Value::as_str)
+        {
+            Some("user") => ChatRole::User,
+            Some("assistant") => ChatRole::Assistant,
+            _ => continue,
+        };
+        let text = payload
+            .and_then(|payload| payload.get("content"))
+            .and_then(Value::as_array)
+            .map(|blocks| {
+                blocks
+                    .iter()
+                    .filter(|block| {
+                        matches!(
+                            block.get("type").and_then(Value::as_str),
+                            Some("input_text") | Some("output_text")
+                        )
+                    })
+                    .filter_map(|block| block.get("text").and_then(Value::as_str))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .unwrap_or_default();
+        let text = crate::agent_scan::filter_wrapped_text(&text);
+        if text.is_empty() {
+            continue;
+        }
+        if title.is_none() && role == ChatRole::User {
+            title = Some(text.chars().take(60).collect::<String>());
+        }
+        turns.push(ChatTurn { role, text });
+    }
+    let turns: Vec<ChatTurn> = turns
+        .into_iter()
+        .filter(|turn| !turn.text.trim().is_empty())
+        .collect();
+    if turns.is_empty() {
+        return Err(AppError::Import("会话里没有可导入的对话内容".into()));
+    }
+    let fallback = cwd_title.unwrap_or_else(|| {
+        path.file_stem()
+            .and_then(|name| name.to_str())
+            .unwrap_or("未命名会话")
+            .to_owned()
+    });
+    Ok(ParsedConversation {
+        title: title.unwrap_or(fallback),
+        source_format: "codex",
+        turns,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -751,5 +955,101 @@ mod tests {
         };
         assert_eq!(conversation_hash(&base), conversation_hash(&same));
         assert_ne!(conversation_hash(&base), conversation_hash(&different));
+    }
+
+    fn temp_session(name: &str, content: &str) -> (std::path::PathBuf, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("chat_import_agent_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(name);
+        fs::write(&path, content).unwrap();
+        (dir, path)
+    }
+
+    #[test]
+    fn claude_code_session_skips_sidechain_and_wrapped_text() {
+        let (_dir, path) = temp_session(
+            "abc.jsonl",
+            concat!(
+                "{\"type\":\"mode\",\"mode\":\"normal\",\"sessionId\":\"s\"}\n",
+                "{\"type\":\"summary\",\"summary\":\"讨论灰度发布\"}\n",
+                "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"直接问题\"}}\n",
+                "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"这是回答\"},{\"type\":\"tool_use\",\"name\":\"read\"}]}}\n",
+                "{\"type\":\"user\",\"isSidechain\":true,\"message\":{\"role\":\"user\",\"content\":\"子代理消息\"}}\n",
+                "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"<command-name>/clear</command-name>\"}}\n",
+            ),
+        );
+        let parsed = parse_claude_code_session(&path).unwrap();
+        assert_eq!(parsed.source_format, "claude-code");
+        assert_eq!(parsed.title, "讨论灰度发布");
+        assert_eq!(parsed.turns.len(), 2);
+        assert_eq!(parsed.turns[0].role, ChatRole::User);
+        assert_eq!(parsed.turns[0].text, "直接问题");
+        assert_eq!(parsed.turns[1].text, "这是回答");
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn codex_session_filters_context_and_falls_back_to_cwd_title() {
+        let (_dir, path) = temp_session(
+            "rollout-x.jsonl",
+            concat!(
+                "{\"timestamp\":\"2026-10-11T03:46:45Z\",\"type\":\"session_meta\",\"payload\":{\"cwd\":\"/Users/demo/工作目录\"}}\n",
+                "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"<environment_context>env</environment_context>\"}]}}\n",
+                "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"真实问题\"}]}}\n",
+                "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"回答\"}]}}\n",
+                "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"system\",\"content\":[{\"type\":\"input_text\",\"text\":\"系统\"}]}}\n",
+                "{\"type\":\"event_msg\",\"payload\":{\"type\":\"agent_message\",\"text\":\"不是消息体\"}}\n",
+            ),
+        );
+        let parsed = parse_codex_session(&path).unwrap();
+        assert_eq!(parsed.source_format, "codex");
+        assert_eq!(parsed.turns.len(), 2);
+        assert_eq!(parsed.turns[0].text, "真实问题");
+        assert_eq!(parsed.turns[1].role, ChatRole::Assistant);
+        // 无 summary 时标题取首条用户消息
+        assert_eq!(parsed.title, "真实问题");
+
+        let empty = temp_session(
+            "rollout-y.jsonl",
+            "{\"type\":\"session_meta\",\"payload\":{\"cwd\":\"/Users/demo/另一个目录\"}}\n",
+        );
+        assert!(parse_codex_session(&empty.1).is_err());
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+        let _ = fs::remove_dir_all(&empty.0);
+    }
+
+    #[test]
+    fn agent_import_lands_chat_record_and_dedupes() {
+        let (_dir, path) = temp_session(
+            "rollout-x.jsonl",
+            concat!(
+                "{\"type\":\"session_meta\",\"payload\":{\"cwd\":\"/Users/demo/工作目录\"}}\n",
+                "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"帮我看看这个功能怎么验收\"}]}}\n",
+                "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"分三层验收。\"}]}}\n",
+            ),
+        );
+        let root = std::env::temp_dir().join(format!("chat_import_agent_db_{}", uuid::Uuid::new_v4()));
+        let library = crate::library::ManagedLibrary::open(root.clone()).unwrap();
+        let selection = (crate::agent_scan::AgentKind::Codex, path.display().to_string());
+
+        let outcome = import_agent_sessions(&library, std::slice::from_ref(&selection), None, false)
+            .unwrap();
+        assert_eq!(outcome.imported.len(), 1, "应导入: {:?}", outcome.skipped);
+        let record = library
+            .repository()
+            .get_record(&outcome.imported[0].record_id)
+            .unwrap();
+        assert_eq!(record.source_type, "chat");
+        let segments = library.repository().list_transcript_segments(&record.id).unwrap();
+        assert!(segments.iter().any(|segment| segment.speaker_label.as_deref() == Some("用户")));
+        assert!(segments.iter().any(|segment| segment.speaker_label.as_deref() == Some("助手")));
+
+        let repeat = import_agent_sessions(&library, &[selection], None, false).unwrap();
+        assert!(repeat.imported.is_empty(), "重复导入不应产生新记录");
+        assert_eq!(repeat.skipped.len(), 1);
+        assert!(repeat.skipped[0].reason.contains("已导入过"));
+
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+        let _ = fs::remove_dir_all(root);
     }
 }

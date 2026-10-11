@@ -320,6 +320,35 @@ export interface ChatImportOutcome {
   skipped: ChatImportSkip[];
 }
 
+/** 扫描到的本机 Agent 会话 */
+export interface DiscoveredSession {
+  agent: "claude-code" | "codex";
+  path: string;
+  title: string;
+  startedAt: string;
+  sizeBytes: number;
+  oversized: boolean;
+}
+
+/** 扫描到的 Agent 记忆/规则文件 */
+export interface DiscoveredMemoryFile {
+  agentLabel: string;
+  path: string;
+  sizeBytes: number;
+}
+
+/** scan_local_agents 命令返回 */
+export interface AgentScanResult {
+  sessions: DiscoveredSession[];
+  memoryFiles: DiscoveredMemoryFile[];
+}
+
+/** import_agent_scans 的单个选中会话 */
+export interface AgentSessionSelection {
+  agent: "claude-code" | "codex";
+  path: string;
+}
+
 export interface DeleteRecordsResult {
   deletedCount: number;
   fileCleanupFailures: string[];

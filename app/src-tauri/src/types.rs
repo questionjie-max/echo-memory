@@ -748,6 +748,16 @@ pub struct ChatImportOutcome {
     pub skipped: Vec<ChatImportSkip>,
 }
 
+/// `import_agent_scans` 的单个选中本机 Agent 会话。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSessionSelection {
+    /// "claude-code" | "codex"
+    pub agent: String,
+    /// 会话文件的绝对路径（后端会做白名单校验）
+    pub path: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeleteRecordsResult {

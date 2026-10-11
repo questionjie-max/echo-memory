@@ -23,8 +23,8 @@ use crate::types::{
     LocalModelInfo, LocalWhisperModel, McpStatus, MemoryFeedback, MemoryGenerationJob,
     MemoryGenerationRequest, MemoryScope, MemorySnapshot, MemoryViewKind, ModelDownloadProgress,
     OnboardingStatus, OutputStatus, PendingModelDownload, ProcessingJob, ProfileSnapshot, Project,
-    RecommendedModel, RecordBrief, RelatedRecord, SearchResult, SpeakerSummary,
-    SuggestedWatchFolder, TemplateDraft, TemplateSection, TimelineItem, TranscriptBlock,
+    RecommendedModel, RecordBrief, RelatedRecord, SearchResult, SpeakerSummary, SuggestedWatchFolder,
+    AgentSessionSelection, TemplateDraft, TemplateSection, TimelineItem, TranscriptBlock,
     TranscriptSegment, TranscriptSegmentInput, TranscriptionEngineStatus,
 };
 use crate::whisper::{
@@ -1169,45 +1169,117 @@ pub fn import_chat_exports(
         duplicate_confirmed,
     )
     .map_err(|error| error.to_frontend())?;
+    spawn_chat_import_pipeline(app, &state, &outcome);
+    Ok(outcome)
+}
+
+/// 导入后的共享后台管线：逐记录增量索引 + 限流串行分析 + 一次记忆更新调度。
+fn spawn_chat_import_pipeline(app: AppHandle, state: &AppState, outcome: &ChatImportOutcome) {
     let record_ids = outcome
         .imported
         .iter()
         .map(|item| item.record_id.clone())
         .collect::<Vec<_>>();
-    if !record_ids.is_empty() {
-        let library_root = state.library.root().to_path_buf();
-        let app_state = state.inner().clone();
-        for record_id in &record_ids {
-            spawn_incremental_index(app.clone(), library_root.clone(), record_id.clone());
-        }
-        let heavy_jobs = crate::state::heavy_job_limiter().clone();
-        std::thread::spawn(move || {
-            for record_id in record_ids {
-                let _permit = heavy_jobs.acquire();
-                match ManagedLibrary::open(library_root.clone()) {
-                    Ok(library) => {
-                        if analyze_with_library(&library, &record_id).is_err() {
-                            mark_processing_failed(
-                                &library_root,
-                                &record_id,
-                                None,
-                                "analyze",
-                                "AI 对话分析失败",
-                            );
-                        }
-                    }
-                    Err(error) => mark_processing_failed(
-                        &library_root,
-                        &record_id,
-                        None,
-                        "analyze",
-                        &error.to_string(),
-                    ),
-                }
-            }
-            schedule_memory_update(app_state);
-        });
+    if record_ids.is_empty() {
+        return;
     }
+    let library_root = state.library.root().to_path_buf();
+    let app_state = state.clone();
+    for record_id in &record_ids {
+        spawn_incremental_index(app.clone(), library_root.clone(), record_id.clone());
+    }
+    let heavy_jobs = crate::state::heavy_job_limiter().clone();
+    std::thread::spawn(move || {
+        for record_id in record_ids {
+            let _permit = heavy_jobs.acquire();
+            match ManagedLibrary::open(library_root.clone()) {
+                Ok(library) => {
+                    if analyze_with_library(&library, &record_id).is_err() {
+                        mark_processing_failed(
+                            &library_root,
+                            &record_id,
+                            None,
+                            "analyze",
+                            "AI 对话分析失败",
+                        );
+                    }
+                }
+                Err(error) => mark_processing_failed(
+                    &library_root,
+                    &record_id,
+                    None,
+                    "analyze",
+                    &error.to_string(),
+                ),
+            }
+        }
+        schedule_memory_update(app_state);
+    });
+}
+
+/// 扫描本机 Agent 会话与记忆文件（白名单位置，纯本地只读）。
+#[tauri::command]
+pub fn scan_local_agents() -> Result<crate::agent_scan::AgentScanResult, String> {
+    crate::agent_scan::scan_agent_sessions().map_err(|error| error.to_frontend())
+}
+
+/// 导入勾选的本机 Agent 会话与记忆/规则文件。
+/// 所有路径先过白名单校验，杜绝任意路径读取。
+#[tauri::command]
+pub fn import_agent_scans(
+    app: AppHandle,
+    state: State<AppState>,
+    sessions: Vec<AgentSessionSelection>,
+    memory_paths: Vec<String>,
+    project_id: Option<String>,
+    duplicate_confirmed: bool,
+) -> Result<ChatImportOutcome, String> {
+    if sessions.is_empty() && memory_paths.is_empty() {
+        return Err("未选择任何内容".to_owned());
+    }
+    let mut selections = Vec::new();
+    for session in &sessions {
+        let Some(agent) = crate::agent_scan::AgentKind::parse(&session.agent) else {
+            return Err(format!("未知的 Agent 类型：{}", session.agent));
+        };
+        if !crate::agent_scan::is_session_path_allowed(agent, &session.path) {
+            return Err(format!("路径不在允许的扫描范围内：{}", session.path));
+        }
+        selections.push((agent, session.path.clone()));
+    }
+    for path in &memory_paths {
+        if !crate::agent_scan::is_memory_path_allowed(path) {
+            return Err(format!("路径不在允许的扫描范围内：{path}"));
+        }
+    }
+
+    let mut outcome = if selections.is_empty() {
+        ChatImportOutcome { imported: Vec::new(), skipped: Vec::new() }
+    } else {
+        crate::chat_import::import_agent_sessions(
+            &state.library,
+            &selections,
+            project_id.as_deref(),
+            duplicate_confirmed,
+        )
+        .map_err(|error| error.to_frontend())?
+    };
+    for path in &memory_paths {
+        match crate::document::import_document(
+            &state.library,
+            Path::new(path),
+            project_id.as_deref(),
+            duplicate_confirmed,
+        ) {
+            Ok(result) => outcome.imported.push(result),
+            Err(error) => outcome.skipped.push(crate::types::ChatImportSkip {
+                file: path.clone(),
+                title: None,
+                reason: error.to_string(),
+            }),
+        }
+    }
+    spawn_chat_import_pipeline(app, &state, &outcome);
     Ok(outcome)
 }
 
