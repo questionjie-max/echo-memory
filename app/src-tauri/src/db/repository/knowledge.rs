@@ -207,6 +207,16 @@ impl LibraryRepository {
         Ok(())
     }
 
+    /// AI 对话档案计数（知识库主页的档案卡用）。
+    pub fn chat_record_count(&self) -> AppResult<i64> {
+        self.connect()?.query_row(
+            "SELECT COUNT(*) FROM records WHERE source_type = 'chat' AND archived_at IS NULL",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(Into::into)
+    }
+
     pub fn knowledge_overview(
         &self,
         project_id: Option<&str>,

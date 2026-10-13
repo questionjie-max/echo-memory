@@ -796,6 +796,8 @@ input::placeholder, textarea::placeholder { color: var(--em-ink-4); }
 .memory-workspace-grid.solo { grid-template-columns: minmax(0, 1fr); }
 .memory-main-content { min-width: 0; min-height: 0; overflow: hidden; background: var(--em-pane); }
 .memory-view { min-width: 0; min-height: 0; height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; background: var(--em-pane); }
+/* 记忆视图的内容行滚动体：总述卡等条件子元素必须包在这里面，绝不作为 grid 直接子元素。 */
+.evolution-body { min-height: 0; overflow: auto; }
 .memory-view-controls { display: grid; }
 .memory-view-header { gap: 18px; }
 

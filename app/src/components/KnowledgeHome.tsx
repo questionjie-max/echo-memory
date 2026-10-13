@@ -8,8 +8,10 @@ import type {
   KnowledgeReference,
 } from "../shared/types";
 import {
+  chatArchiveCount,
   createExportTicket,
   exportKnowledgeBase,
+  generateChatDigest,
   getKnowledgeIndexStatus,
   getKnowledgeOverview,
   listProjects,
@@ -35,6 +37,8 @@ export default function KnowledgeHome({ scope, projectId, unfiledOnly, refreshKe
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [chatCount, setChatCount] = useState<number | null>(null);
+  const [digestBusy, setDigestBusy] = useState(false);
   const requestId = useRef(0);
   const refreshKeyRef = useRef(refreshKey);
   const currentScopeKey = `${scope}:${projectId ?? ""}:${unfiledOnly ? "unfiled" : "all"}`;
@@ -46,14 +50,16 @@ export default function KnowledgeHome({ scope, projectId, unfiledOnly, refreshKe
     const refreshScopeKey = currentScopeKey;
     if (showLoading) setLoading(true);
     try {
-      const [summary, status, projects] = await Promise.all([
+      const [summary, status, projects, archiveCount] = await Promise.all([
         getKnowledgeOverview(projectId, unfiledOnly),
         getKnowledgeIndexStatus(projectId, unfiledOnly),
         listProjects(),
+        chatArchiveCount().catch(() => null),
       ]);
       if (refreshId !== requestId.current || refreshScopeKey !== activeScopeRef.current) return;
       setOverview(summary);
       setIndex(status);
+      setChatCount(archiveCount);
       setName(scope === "all" ? "全部记录" : scope === "unfiled" ? "未归档" : projects.find((project) => project.id === scope)?.name ?? "知识库");
     } catch (reason) {
       if (refreshId !== requestId.current || refreshScopeKey !== activeScopeRef.current) return;
@@ -132,6 +138,22 @@ export default function KnowledgeHome({ scope, projectId, unfiledOnly, refreshKe
     }
   }
 
+  async function generateDigest() {
+    setDigestBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await generateChatDigest();
+      setNotice(result.duplicate
+        ? "最新对话没有产生新内容，已有一份一致的梳理报告。"
+        : `梳理报告已生成：「${result.title}」，可在工作区查看，也可被知识问答引用。`);
+    } catch (reason) {
+      setError(String(reason).replace(/^Error:\s*/i, ""));
+    } finally {
+      setDigestBusy(false);
+    }
+  }
+
   async function exportAll(format: "md" | "txt") {
     // 先领票据再弹目录选择对话框——后端凭票放行导出。
     const ticket = await createExportTicket();
@@ -173,6 +195,10 @@ export default function KnowledgeHome({ scope, projectId, unfiledOnly, refreshKe
         <div><h3>知识索引</h3><p>{indexStatusText(index)}{!ready && " · 建好后就能在「问知识库」里提问"}</p></div>
         <button type="button" className={ready ? "secondary-button" : "primary-button"} disabled={busy || index?.status === "indexing"} onClick={() => void rebuild()}>{index?.status === "indexing" ? "建立中…" : ready ? "更新索引" : "建立索引"}</button>
         {index?.status === "indexing" && <div className="index-progress"><span style={{ width: `${index.totalRecords ? Math.round(index.processedRecords / index.totalRecords * 100) : 5}%` }} /></div>}
+      </section>}
+      {!loading && <section className="index-section">
+        <div><h3>AI 对话档案</h3><p>{chatCount ?? 0} 条导入的 AI 对话 · 独立于录音记忆链，可搜索、可被问答引用；梳理报告把它们归纳成「正在推进的事」</p></div>
+        <button type="button" className="secondary-button" disabled={digestBusy || (chatCount ?? 0) === 0} onClick={() => void generateDigest()}>{digestBusy ? "梳理中…" : "生成梳理报告"}</button>
       </section>}
       {!loading && <>
         <ReferenceSection title="最近决策" empty="还没有可验证的决策。" items={overview?.decisions ?? []} onOpen={(item) => item.segmentId && onOpenCitation({ chunkId: "overview", recordId: item.recordId, recordTitle: item.recordTitle, quoteText: item.quoteText, segmentId: item.segmentId, startMs: item.startMs ?? 0, endMs: item.endMs ?? item.startMs ?? 0 })} />

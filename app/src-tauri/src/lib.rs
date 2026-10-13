@@ -101,6 +101,7 @@ pub fn run() {
             commands::scan_local_agents,
             commands::import_agent_scans,
             commands::generate_chat_digest,
+            commands::chat_archive_count,
             commands::list_transcript_segments,
             commands::list_transcript_blocks,
             commands::update_transcript_segment,

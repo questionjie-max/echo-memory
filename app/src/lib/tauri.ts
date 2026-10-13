@@ -154,6 +154,14 @@ export function importAgentScans(input: {
   });
 }
 
+export function chatArchiveCount(): Promise<number> {
+  return invoke<number>("chat_archive_count");
+}
+
+export function generateChatDigest(): Promise<IngestResult> {
+  return invoke<IngestResult>("generate_chat_digest");
+}
+
 export function askKnowledgeBase(question: string, projectId?: string | null, unfiledOnly = false): Promise<KnowledgeAnswer> {
   return invoke<KnowledgeAnswer>("ask_knowledge_base", { question, projectId: projectId ?? null, unfiledOnly });
 }

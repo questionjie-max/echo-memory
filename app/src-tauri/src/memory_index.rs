@@ -53,7 +53,6 @@ pub fn rebuild_memory_index(library: &ManagedLibrary) -> AppResult<()> {
     let repository = library.repository();
     let settings = repository.knowledge_settings()?;
     let model = settings.embedding_model.clone();
-    crate::knowledge::ensure_model_installed(&model)?;
     let mut status = repository.get_knowledge_index_status("memory", &model)?;
     if status.status == "indexing" {
         return Ok(());
@@ -118,6 +117,10 @@ fn rebuild_inner(library: &ManagedLibrary, model: &str) -> AppResult<usize> {
     }
 
     // 没有可收录条目也要落一次空替换：把旧块清干净，计数归零。
+    // 空投影不需求嵌入模型：Ollama 没开时清空索引也应成功。
+    if !drafts.is_empty() {
+        crate::knowledge::ensure_model_installed(model)?;
+    }
     let texts = drafts
         .iter()
         .map(|draft| draft.body.clone())

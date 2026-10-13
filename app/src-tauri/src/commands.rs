@@ -1239,6 +1239,16 @@ pub fn scan_local_agents() -> Result<crate::agent_scan::AgentScanResult, String>
     crate::agent_scan::scan_agent_sessions().map_err(|error| error.to_frontend())
 }
 
+/// AI 对话档案计数（知识库主页档案卡）。
+#[tauri::command]
+pub fn chat_archive_count(state: State<AppState>) -> Result<i64, String> {
+    state
+        .library
+        .repository()
+        .chat_record_count()
+        .map_err(|error| error.to_frontend())
+}
+
 /// AI 对话档案梳理：把导入的全部 AI 对话聚合成一份结构化报告（外部 AI，双同意门禁）。
 /// 报告以 chat 记录落库：可搜索、可被知识问答引用，不进录音记忆链。
 #[tauri::command]
