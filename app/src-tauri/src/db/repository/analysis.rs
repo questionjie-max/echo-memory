@@ -106,8 +106,20 @@ impl LibraryRepository {
             })
             .collect::<Vec<_>>()
             .join(" ");
+        let chapter_text = draft
+            .chapters
+            .iter()
+            .map(|chapter| format!("{} {}", chapter.title, chapter.summary))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let highlight_text = draft
+            .highlights
+            .iter()
+            .map(|highlight| highlight.quote_text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
         let search_text = format!(
-            "{} {} {} {} {} {}",
+            "{} {} {} {} {} {} {} {}",
             draft.summary,
             draft
                 .key_points
@@ -133,7 +145,9 @@ impl LibraryRepository {
                 .map(|item| item.text.as_str())
                 .collect::<Vec<_>>()
                 .join(" "),
-            custom_text
+            custom_text,
+            chapter_text,
+            highlight_text
         );
         transaction.execute("INSERT INTO record_search (record_id, project_id, source_id, title, body) VALUES (?1, ?2, ?3, ?4, ?5)", params![record_id, project_id, analysis.id, title, search_text])?;
         for (kind, items) in [
@@ -159,6 +173,15 @@ impl LibraryRepository {
                         params![Uuid::new_v4().to_string(), analysis.id, format!("custom_sections[{section_index}].items[{item_index}]"), segment_id, item.quote_text],
                     )?;
                 }
+            }
+        }
+        // 金句是逐字引文，落 citations 行；章节是导航用的摘要，没有逐字引文，不落此表。
+        for (index, highlight) in draft.highlights.iter().enumerate() {
+            for segment_id in &highlight.citation_segment_ids {
+                transaction.execute(
+                    "INSERT INTO citations (id, analysis_id, item_path, transcript_segment_id, quote_text, verified) VALUES (?1, ?2, ?3, ?4, ?5, 1)",
+                    params![Uuid::new_v4().to_string(), analysis.id, format!("highlights[{index}]"), segment_id, highlight.quote_text],
+                )?;
             }
         }
         transaction.commit()?;

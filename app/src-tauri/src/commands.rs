@@ -3541,6 +3541,8 @@ mod tests {
             action_items: Vec::new(),
             open_questions: Vec::new(),
             custom_sections: Vec::new(),
+            chapters: Vec::new(),
+            highlights: Vec::new(),
             quality_warning,
             quality_severity,
         }

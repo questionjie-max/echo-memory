@@ -57,6 +57,8 @@ fn mcp_returns_decisions_with_traceable_source() {
                 action_items: vec![],
                 open_questions: vec![],
                 custom_sections: vec![],
+                chapters: vec![],
+                highlights: vec![],
                 quality_warning: None,
                 quality_severity: None,
             },

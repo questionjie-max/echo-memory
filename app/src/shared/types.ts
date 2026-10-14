@@ -121,6 +121,23 @@ export interface AnalysisResultItem {
   end_ms?: number;
 }
 
+/** 长内容的章节导航：start_ms 由首个引用片段推导，可点击跳播。 */
+export interface AnalysisChapter {
+  title: string;
+  summary?: string;
+  citation_segment_ids?: string[];
+  start_ms?: number;
+  end_ms?: number;
+}
+
+/** 逐字金句：quote_text 已通过后端逐字校验。 */
+export interface AnalysisHighlight {
+  quote_text?: string;
+  citation_segment_ids?: string[];
+  start_ms?: number;
+  end_ms?: number;
+}
+
 export interface AnalysisContent {
   summary: string;
   key_points?: AnalysisResultItem[];
@@ -129,6 +146,9 @@ export interface AnalysisContent {
   open_questions?: AnalysisResultItem[];
   quality_warning?: string;
   custom_sections?: AnalysisCustomSection[];
+  /** v0.9：章节与金句；老分析没有这两个字段。 */
+  chapters?: AnalysisChapter[];
+  highlights?: AnalysisHighlight[];
 }
 
 export interface TemplateSection {

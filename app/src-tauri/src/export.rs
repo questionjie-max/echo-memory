@@ -1,4 +1,7 @@
-use crate::analysis::{AnalysisCustomSectionDraft, AnalysisDraft, AnalysisItemDraft};
+use crate::analysis::{
+    AnalysisChapterDraft, AnalysisCustomSectionDraft, AnalysisDraft, AnalysisHighlightDraft,
+    AnalysisItemDraft,
+};
 use crate::error::{AppError, AppResult};
 use crate::library::ManagedLibrary;
 use crate::transcript::build_blocks;
@@ -130,6 +133,7 @@ fn render_markdown(
         output.push_str("## 摘要\n\n");
         output.push_str(&analysis.summary);
         output.push_str("\n\n");
+        append_markdown_chapters(&mut output, &analysis.chapters);
         append_markdown_items(&mut output, "关键观点", &analysis.key_points);
         append_markdown_items(&mut output, "决策", &analysis.decisions);
         append_markdown_items(&mut output, "待办", &analysis.action_items);
@@ -137,6 +141,7 @@ fn render_markdown(
         for section in &analysis.custom_sections {
             append_custom_markdown(&mut output, section);
         }
+        append_markdown_highlights(&mut output, &analysis.highlights);
     }
     output.push_str("## 逐字稿\n\n");
     for block in build_blocks(segments) {
@@ -183,6 +188,42 @@ fn append_markdown_items(output: &mut String, title: &str, items: &[AnalysisItem
                 format_time(item.start_ms.unwrap_or(0))
             ));
         }
+    }
+    output.push('\n');
+}
+
+/// 章节是导航栏目：空章节不写「未识别出可靠内容」，直接省略。
+fn append_markdown_chapters(output: &mut String, chapters: &[AnalysisChapterDraft]) {
+    if chapters.is_empty() {
+        return;
+    }
+    output.push_str("## 章节\n\n");
+    for chapter in chapters {
+        output.push_str(&format!(
+            "- **{}**（{}）",
+            chapter.title.trim(),
+            format_time(chapter.start_ms.unwrap_or(0))
+        ));
+        if !chapter.summary.trim().is_empty() {
+            output.push_str(&format!("：{}", chapter.summary.trim()));
+        }
+        output.push('\n');
+    }
+    output.push('\n');
+}
+
+/// 金句同样是导航栏目，空则省略。
+fn append_markdown_highlights(output: &mut String, highlights: &[AnalysisHighlightDraft]) {
+    if highlights.is_empty() {
+        return;
+    }
+    output.push_str("## 金句\n\n");
+    for highlight in highlights {
+        output.push_str(&format!(
+            "- “{}”（{}）\n",
+            highlight.quote_text.trim(),
+            format_time(highlight.start_ms.unwrap_or(0))
+        ));
     }
     output.push('\n');
 }
@@ -336,6 +377,8 @@ mod tests {
                         text: "保持纯本地处理。".into(),
                         items: vec![],
                     }],
+                    chapters: vec![],
+                    highlights: vec![],
                     quality_warning: None,
                     quality_severity: None,
                 },

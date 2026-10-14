@@ -172,9 +172,7 @@ fn scan_codex_root(root: &Path) -> AppResult<Vec<DiscoveredSession>> {
     collect_jsonl_files(root, 0, &mut files);
     let mut sessions = Vec::new();
     for path in files {
-        if let Some(session) =
-            describe_session(AgentKind::Codex, &path, |head| codex_session_brief(head))
-        {
+        if let Some(session) = describe_session(AgentKind::Codex, &path, codex_session_brief) {
             sessions.push(session);
         }
     }

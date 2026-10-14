@@ -907,6 +907,26 @@ function AnalysisView({ analysis, documentMode, blocking, onSeek }: { analysis: 
         <h3>摘要</h3>
         <p>{analysis.summary || "暂未生成有效摘要。"}</p>
       </section>
+      {analysis.chapters?.length ? (
+        <section className="analysis-section">
+          <h3>章节</h3>
+          <ul className="analysis-list">
+            {analysis.chapters.map((chapter, index) => {
+              const segmentId = chapter.citation_segment_ids?.[0];
+              const locatable = Boolean(segmentId) && (documentMode || typeof chapter.start_ms === "number");
+              const meta = [chapter.summary, documentMode ? null : formatTime(chapter.start_ms ?? 0)].filter(Boolean).join(" · ");
+              return (
+                <li key={`chapter-${index}`}>
+                  <button type="button" disabled={!locatable} onClick={() => locatable && onSeek(chapter.start_ms ?? 0, segmentId!)}>
+                    <strong>{chapter.title}</strong>
+                    {meta && <span>{meta}</span>}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ) : null}
       {groups.map(([name, items, emptyText]) => (
         <section className="analysis-section" key={name}>
           <h3>{name}</h3>
@@ -928,6 +948,26 @@ function AnalysisView({ analysis, documentMode, blocking, onSeek }: { analysis: 
           ) : <p className="analysis-empty">{emptyText}</p>}
         </section>
       ))}
+      {analysis.highlights?.length ? (
+        <section className="analysis-section">
+          <h3>金句</h3>
+          <ul className="analysis-list">
+            {analysis.highlights.map((highlight, index) => {
+              const segmentId = highlight.citation_segment_ids?.[0];
+              const locatable = Boolean(segmentId) && (documentMode || typeof highlight.start_ms === "number");
+              const meta = documentMode ? "" : formatTime(highlight.start_ms ?? 0);
+              return (
+                <li key={`highlight-${index}`}>
+                  <button type="button" disabled={!locatable} onClick={() => locatable && onSeek(highlight.start_ms ?? 0, segmentId!)}>
+                    <strong>“{highlight.quote_text ?? ""}”</strong>
+                    {meta && <span>{meta}</span>}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ) : null}
       {analysis.custom_sections?.map((section) => (
         <section className="analysis-section custom-analysis-section" key={section.key}>
           <h3>{section.title}</h3>
