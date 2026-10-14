@@ -2118,3 +2118,62 @@ fn memory_feedback_batch_writes_atomically_and_validates_entries() {
         .unwrap()
         .is_empty());
 }
+
+/// 单条记录「补充信息」随分析版本落库并在 latest_analysis 完整回读；
+/// 未填写时是空串（迁移默认值），而不是 NULL。
+#[test]
+fn analysis_instruction_round_trips_and_defaults_to_empty() {
+    let repository = LibraryRepository::new(database_path()).unwrap();
+    let record = repository
+        .create_record(
+            "补充要求回读",
+            None,
+            Path::new("audio/instruction.wav"),
+            "instruction-hash",
+            1_000,
+        )
+        .unwrap();
+    let (version, segments) = repository
+        .save_transcript(
+            &record.id,
+            "whisper.cpp",
+            "small",
+            &[TranscriptSegmentInput {
+                start_ms: 0,
+                end_ms: 1_000,
+                speaker_label: None,
+                original_text: "确认采用本地知识库".into(),
+            }],
+        )
+        .unwrap();
+
+    let template = repository.get_analysis_template("builtin-standard").unwrap();
+    repository
+        .save_analysis_with_provider_and_template(
+            &record.id,
+            &version.id,
+            "ollama",
+            "qwen",
+            &cited_draft(&segments[0].id, "确认采用本地知识库"),
+            &template,
+            "只保留待办事项，按负责人分组",
+        )
+        .unwrap();
+    let stored = repository.latest_analysis(&record.id).unwrap().unwrap();
+    assert_eq!(
+        stored.analysis_instruction,
+        "只保留待办事项，按负责人分组"
+    );
+
+    // 走不带指令的保存路径时为空串，前端回显为「未填写」。
+    repository
+        .save_analysis(
+            &record.id,
+            &version.id,
+            "qwen",
+            &cited_draft(&segments[0].id, "确认采用本地知识库"),
+        )
+        .unwrap();
+    let stored = repository.latest_analysis(&record.id).unwrap().unwrap();
+    assert_eq!(stored.analysis_instruction, "");
+}

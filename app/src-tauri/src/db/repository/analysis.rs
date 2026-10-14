@@ -33,9 +33,7 @@ impl LibraryRepository {
         draft: &AnalysisDraft,
         template: &AnalysisTemplate,
     ) -> AppResult<StoredAnalysis> {
-        self.save_analysis_with_provider_and_template(
-            record_id, version_id, "ollama", model, draft, template,
-        )
+        self.save_analysis_with_provider_and_template(record_id, version_id, "ollama", model, draft, template, "")
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -47,6 +45,7 @@ impl LibraryRepository {
         model: &str,
         draft: &AnalysisDraft,
         template: &AnalysisTemplate,
+        instruction: &str,
     ) -> AppResult<StoredAnalysis> {
         let content_json = serde_json::to_string(draft)
             .map_err(|error| AppError::Invalid(format!("分析序列化失败: {error}")))?;
@@ -67,6 +66,7 @@ impl LibraryRepository {
             template_version: "knowledge-v1".to_owned(),
             template_id: Some(template.id.clone()),
             template_snapshot_json,
+            analysis_instruction: instruction.trim().to_owned(),
             created_at: Utc::now().to_rfc3339(),
         };
         let (project_id, title): (Option<String>, String) = self.connect()?.query_row(
@@ -85,7 +85,7 @@ impl LibraryRepository {
             "DELETE FROM action_items WHERE record_id = ?1",
             params![record_id],
         )?;
-        transaction.execute("INSERT INTO analyses (id, record_id, source_transcript_version_id, status, content_json, provider, model, template_version, template_id, template_snapshot_json, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)", params![analysis.id, analysis.record_id, analysis.source_transcript_version_id, analysis.status, analysis.content_json, analysis.provider, analysis.model, analysis.template_version, analysis.template_id, analysis.template_snapshot_json, analysis.created_at])?;
+        transaction.execute("INSERT INTO analyses (id, record_id, source_transcript_version_id, status, content_json, provider, model, template_version, template_id, template_snapshot_json, analysis_instruction, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)", params![analysis.id, analysis.record_id, analysis.source_transcript_version_id, analysis.status, analysis.content_json, analysis.provider, analysis.model, analysis.template_version, analysis.template_id, analysis.template_snapshot_json, analysis.analysis_instruction, analysis.created_at])?;
         let custom_text = draft
             .custom_sections
             .iter()
@@ -164,13 +164,13 @@ impl LibraryRepository {
     }
 
     pub fn latest_analysis(&self, record_id: &str) -> AppResult<Option<StoredAnalysis>> {
-        self.connect()?.query_row("SELECT id, record_id, source_transcript_version_id, status, content_json, provider, model, template_version, template_id, template_snapshot_json, created_at FROM analyses WHERE record_id = ?1 ORDER BY created_at DESC LIMIT 1", params![record_id], Self::map_analysis).optional().map_err(Into::into)
+        self.connect()?.query_row("SELECT id, record_id, source_transcript_version_id, status, content_json, provider, model, template_version, template_id, template_snapshot_json, analysis_instruction, created_at FROM analyses WHERE record_id = ?1 ORDER BY created_at DESC LIMIT 1", params![record_id], Self::map_analysis).optional().map_err(Into::into)
     }
 
     pub fn get_analysis(&self, id: &str) -> AppResult<StoredAnalysis> {
         self.connect()?
             .query_row(
-                "SELECT id, record_id, source_transcript_version_id, status, content_json, provider, model, template_version, template_id, template_snapshot_json, created_at FROM analyses WHERE id = ?1",
+                "SELECT id, record_id, source_transcript_version_id, status, content_json, provider, model, template_version, template_id, template_snapshot_json, analysis_instruction, created_at FROM analyses WHERE id = ?1",
                 params![id],
                 Self::map_analysis,
             )
@@ -292,7 +292,8 @@ impl LibraryRepository {
             template_version: row.get(7)?,
             template_id: row.get(8)?,
             template_snapshot_json: row.get(9)?,
-            created_at: row.get(10)?,
+            analysis_instruction: row.get(10)?,
+            created_at: row.get(11)?,
         })
     }
 }

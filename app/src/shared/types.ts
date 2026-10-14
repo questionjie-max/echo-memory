@@ -265,6 +265,8 @@ export interface StoredAnalysis {
   templateVersion: string;
   templateId: string | null;
   templateSnapshotJson: string;
+  /** 生成本次分析时填写的「补充信息」；空串表示未填写。 */
+  analysisInstruction: string;
   createdAt: string;
 }
 

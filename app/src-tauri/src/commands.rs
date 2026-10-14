@@ -1,5 +1,6 @@
 use crate::analysis::{
-    analyze_with_generator_progress, resolve_citation_aliases, verify_citations,
+    analyze_with_generator_instruction_progress, resolve_citation_aliases,
+    verify_citations_with_instruction,
     AnalysisTextGenerator, OllamaAdapter,
 };
 use crate::audio::{
@@ -2126,6 +2127,7 @@ pub fn analyze_record(
     state: State<AppState>,
     record_id: String,
     template_id: Option<String>,
+    instruction: Option<String>,
 ) -> Result<(), String> {
     if let Some(template_id) = template_id.as_deref() {
         state
@@ -2134,6 +2136,7 @@ pub fn analyze_record(
             .set_record_analysis_template(&record_id, template_id)
             .map_err(|error| error.to_frontend())?;
     }
+    let instruction = crate::analysis::normalize_analysis_instruction(instruction.as_deref());
     let job = reserve_analysis(&state.library, &record_id).map_err(|e| e.to_frontend())?;
     emit_processing_progress(&app, &record_id);
     let library_root = state.library.root().to_path_buf();
@@ -2144,7 +2147,15 @@ pub fn analyze_record(
         let _permit = heavy_jobs.acquire();
         match ManagedLibrary::open(library_root.clone()) {
             Ok(library) => {
-                if run_analysis(Some(&progress_app), &library, &record_id, &job).is_ok() {
+                if run_analysis(
+                    Some(&progress_app),
+                    &library,
+                    &record_id,
+                    &job,
+                    instruction.as_deref(),
+                )
+                .is_ok()
+                {
                     schedule_memory_update(app_state);
                 }
             }
@@ -2166,7 +2177,7 @@ pub fn analyze_record(
 /// Runs the same local analysis path synchronously for explicit real-data regression tests.
 pub fn analyze_with_library(library: &ManagedLibrary, record_id: &str) -> AppResult<()> {
     let job = reserve_analysis(library, record_id)?;
-    run_analysis(None, library, record_id, &job)
+    run_analysis(None, library, record_id, &job, None)
 }
 
 pub fn revalidate_analysis_with_library(
@@ -2181,7 +2192,8 @@ pub fn revalidate_analysis_with_library(
     draft.quality_warning = None;
     draft.quality_severity = None;
     resolve_citation_aliases(&mut draft, &segments);
-    let verified = verify_citations(&draft, &segments);
+    let instruction_present = !stored.analysis_instruction.trim().is_empty();
+    let verified = verify_citations_with_instruction(&draft, &segments, instruction_present);
     if crate::analysis::analysis_is_blocking(&verified) {
         return Err(crate::error::AppError::Analysis(
             "仍有分析条目无法匹配可靠出处".to_owned(),
@@ -2200,6 +2212,7 @@ pub fn revalidate_analysis_with_library(
         &stored.model,
         &verified,
         &template,
+        &stored.analysis_instruction,
     )
 }
 
@@ -2232,6 +2245,7 @@ fn run_analysis(
     library: &ManagedLibrary,
     record_id: &str,
     job: &ProcessingJob,
+    instruction: Option<&str>,
 ) -> AppResult<()> {
     let repository = library.repository();
     let result = (|| {
@@ -2296,26 +2310,28 @@ fn run_analysis(
         };
         let (provider, model, mut draft) = if let Some(client) = external_client {
             let generator = ExternalAnalysisGenerator { client: &client };
-            let draft = analyze_with_generator_progress(
+            let draft = analyze_with_generator_instruction_progress(
                 &generator,
                 &transcript,
                 Some(&template),
+                instruction,
                 progress,
             )?;
             let external_settings = repository.external_ai_settings(false, false)?;
             ("external-openai-compatible", external_settings.model, draft)
         } else {
             let model = repository.knowledge_settings()?.analysis_model;
-            let draft = OllamaAdapter::detect(&model)?.analyze_with_template_progress(
+            let draft = OllamaAdapter::detect(&model)?.analyze_with_template_instruction_progress(
                 &transcript,
                 Some(&template),
+                instruction,
                 progress,
             )?;
             ("ollama", model, draft)
         };
         repository.update_job_progress(&job.id, "validating", 1, 1)?;
         resolve_citation_aliases(&mut draft, &segments);
-        let verified = verify_citations(&draft, &segments);
+        let verified = verify_citations_with_instruction(&draft, &segments, instruction.is_some());
         repository.update_job_progress(&job.id, "saving", 1, 1)?;
         repository.save_analysis_with_provider_and_template(
             record_id,
@@ -2324,6 +2340,7 @@ fn run_analysis(
             &model,
             &verified,
             &template,
+            instruction.unwrap_or_default(),
         )?;
         repository.update_job_status(&job.id, "completed", None)?;
         repository.update_record_status(record_id, "completed")?;

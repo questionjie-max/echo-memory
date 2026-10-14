@@ -277,8 +277,12 @@ export function retranscribeRecord(recordId: string, language: string, modelPath
   return invoke<void>("retranscribe_record", { recordId, language, modelPath, qualityPreset, engine: engine ?? null });
 }
 
-export function analyzeRecord(recordId: string, templateId?: string | null): Promise<void> {
-  return invoke<void>("analyze_record", { recordId, templateId: templateId ?? null });
+export function analyzeRecord(recordId: string, templateId?: string | null, instruction?: string | null): Promise<void> {
+  return invoke<void>("analyze_record", {
+    recordId,
+    templateId: templateId ?? null,
+    instruction: instruction && instruction.trim() ? instruction : null,
+  });
 }
 
 export function latestAnalysis(recordId: string): Promise<StoredAnalysis | null> {

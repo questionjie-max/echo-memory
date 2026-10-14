@@ -101,6 +101,8 @@ pub struct StoredAnalysis {
     pub template_version: String,
     pub template_id: Option<String>,
     pub template_snapshot_json: String,
+    /// 生成本次分析时用户填写的「补充信息」；空串表示未填写。
+    pub analysis_instruction: String,
     pub created_at: String,
 }
 
