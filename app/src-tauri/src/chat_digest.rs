@@ -104,7 +104,10 @@ pub fn digest_prompt(material: &DigestMaterial) -> String {
 }
 
 /// 生成梳理报告并落库为 chat 记录（重复生成相同内容会命中哈希去重）。
-pub fn generate(library: &ManagedLibrary, client: &OpenAiCompatibleClient) -> AppResult<IngestResult> {
+pub fn generate(
+    library: &ManagedLibrary,
+    client: &OpenAiCompatibleClient,
+) -> AppResult<IngestResult> {
     let material = assemble_material(library)?;
     let prompt = digest_prompt(&material);
     let raw = client.complete_json(&prompt)?;

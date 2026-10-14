@@ -33,7 +33,9 @@ impl LibraryRepository {
         draft: &AnalysisDraft,
         template: &AnalysisTemplate,
     ) -> AppResult<StoredAnalysis> {
-        self.save_analysis_with_provider_and_template(record_id, version_id, "ollama", model, draft, template, "")
+        self.save_analysis_with_provider_and_template(
+            record_id, version_id, "ollama", model, draft, template, "",
+        )
     }
 
     #[allow(clippy::too_many_arguments)]

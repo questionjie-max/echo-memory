@@ -2147,7 +2147,9 @@ fn analysis_instruction_round_trips_and_defaults_to_empty() {
         )
         .unwrap();
 
-    let template = repository.get_analysis_template("builtin-standard").unwrap();
+    let template = repository
+        .get_analysis_template("builtin-standard")
+        .unwrap();
     repository
         .save_analysis_with_provider_and_template(
             &record.id,
@@ -2160,10 +2162,7 @@ fn analysis_instruction_round_trips_and_defaults_to_empty() {
         )
         .unwrap();
     let stored = repository.latest_analysis(&record.id).unwrap().unwrap();
-    assert_eq!(
-        stored.analysis_instruction,
-        "只保留待办事项，按负责人分组"
-    );
+    assert_eq!(stored.analysis_instruction, "只保留待办事项，按负责人分组");
 
     // 走不带指令的保存路径时为空串，前端回显为「未填写」。
     repository

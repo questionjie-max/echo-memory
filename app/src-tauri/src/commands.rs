@@ -1,7 +1,6 @@
 use crate::analysis::{
     analyze_with_generator_instruction_progress, resolve_citation_aliases,
-    verify_citations_with_instruction,
-    AnalysisTextGenerator, OllamaAdapter,
+    verify_citations_with_instruction, AnalysisTextGenerator, OllamaAdapter,
 };
 use crate::audio::{
     is_overlap_duplicate, merge_overlap_continuation, normalize_segment_timestamps, plan_chunks,
@@ -18,15 +17,15 @@ use crate::memory::{self, OpenAiCompatibleClient};
 use crate::state::AppState;
 use crate::transcript::effective_text;
 use crate::types::{
-    ActionDashboard, AnalysisTemplate, AppInfo, ChatImportOutcome, DockReply, DockStatus,
-    ExternalAiSettings, GrowthGraph, Hotword, InboxStatus, InboxWatchFolder, IngestResult,
-    KnowledgeAnswer, KnowledgeIndexStatus, KnowledgeOverview, KnowledgeSettings, LocalAiStatus,
-    LocalModelInfo, LocalWhisperModel, McpStatus, MemoryFeedback, MemoryGenerationJob,
-    MemoryGenerationRequest, MemoryScope, MemorySnapshot, MemoryViewKind, ModelDownloadProgress,
-    OnboardingStatus, OutputStatus, PendingModelDownload, ProcessingJob, ProfileSnapshot, Project,
-    RecommendedModel, RecordBrief, RelatedRecord, SearchResult, SpeakerSummary, SuggestedWatchFolder,
-    AgentSessionSelection, TemplateDraft, TemplateSection, TimelineItem, TranscriptBlock,
-    TranscriptSegment, TranscriptSegmentInput, TranscriptionEngineStatus,
+    ActionDashboard, AgentSessionSelection, AnalysisTemplate, AppInfo, ChatImportOutcome,
+    DockReply, DockStatus, ExternalAiSettings, GrowthGraph, Hotword, InboxStatus, InboxWatchFolder,
+    IngestResult, KnowledgeAnswer, KnowledgeIndexStatus, KnowledgeOverview, KnowledgeSettings,
+    LocalAiStatus, LocalModelInfo, LocalWhisperModel, McpStatus, MemoryFeedback,
+    MemoryGenerationJob, MemoryGenerationRequest, MemoryScope, MemorySnapshot, MemoryViewKind,
+    ModelDownloadProgress, OnboardingStatus, OutputStatus, PendingModelDownload, ProcessingJob,
+    ProfileSnapshot, Project, RecommendedModel, RecordBrief, RelatedRecord, SearchResult,
+    SpeakerSummary, SuggestedWatchFolder, TemplateDraft, TemplateSection, TimelineItem,
+    TranscriptBlock, TranscriptSegment, TranscriptSegmentInput, TranscriptionEngineStatus,
 };
 use crate::whisper::{
     library_model_files, localize_speaker_label, WhisperAdapter, WhisperSession,
@@ -880,16 +879,16 @@ pub fn get_memory_index_status(state: State<AppState>) -> Result<KnowledgeIndexS
     state
         .library
         .repository()
-        .get_knowledge_index_status(crate::knowledge::MEMORY_SCOPE_KEY, &settings.embedding_model)
+        .get_knowledge_index_status(
+            crate::knowledge::MEMORY_SCOPE_KEY,
+            &settings.embedding_model,
+        )
         .map_err(|error| error.to_frontend())
 }
 
 /// 手动重建记忆块索引（确认反馈/快照生成会自动触发，这里是排障入口）。
 #[tauri::command]
-pub fn rebuild_memory_index(
-    app: AppHandle,
-    state: State<AppState>,
-) -> Result<(), String> {
+pub fn rebuild_memory_index(app: AppHandle, state: State<AppState>) -> Result<(), String> {
     let library_root = state.library.root().to_path_buf();
     spawn_memory_index_rebuild(Some(app), library_root);
     Ok(())
@@ -1159,7 +1158,10 @@ pub fn import_chat_exports(
     project_id: Option<String>,
     duplicate_confirmed: bool,
 ) -> Result<ChatImportOutcome, String> {
-    let paths = source_paths.into_iter().map(PathBuf::from).collect::<Vec<_>>();
+    let paths = source_paths
+        .into_iter()
+        .map(PathBuf::from)
+        .collect::<Vec<_>>();
     if paths.is_empty() {
         return Err("未选择任何文件".to_owned());
     }
@@ -1276,7 +1278,11 @@ pub async fn generate_chat_digest(
         let result = crate::chat_digest::generate(&state.library, &client)
             .map_err(|error| error.to_frontend())?;
         if !result.duplicate {
-            spawn_incremental_index(app, state.library.root().to_path_buf(), result.record_id.clone());
+            spawn_incremental_index(
+                app,
+                state.library.root().to_path_buf(),
+                result.record_id.clone(),
+            );
         }
         Ok(result)
     })
@@ -1315,7 +1321,10 @@ pub fn import_agent_scans(
     }
 
     let mut outcome = if selections.is_empty() {
-        ChatImportOutcome { imported: Vec::new(), skipped: Vec::new() }
+        ChatImportOutcome {
+            imported: Vec::new(),
+            skipped: Vec::new(),
+        }
     } else {
         crate::chat_import::import_agent_sessions(
             &state.library,
@@ -2616,10 +2625,7 @@ fn start_memory_generation_with_state(
         match memory::generate_snapshot(&state, &request) {
             Ok(snapshot) => {
                 state.finish_generation_job(&request.generation_id, &snapshot);
-                spawn_memory_index_rebuild(
-                    Some(app.clone()),
-                    state.library.root().to_path_buf(),
-                );
+                spawn_memory_index_rebuild(Some(app.clone()), state.library.root().to_path_buf());
             }
             Err(error) => state.fail_generation_job(&request.generation_id, error.to_frontend()),
         }

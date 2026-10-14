@@ -332,6 +332,10 @@ mod tests {
             .unwrap();
         assert_eq!(status.status, "completed");
         assert_eq!(status.chunk_count, 0);
-        assert!(library.repository().list_memory_chunks(&settings.embedding_model).unwrap().is_empty());
+        assert!(library
+            .repository()
+            .list_memory_chunks(&settings.embedding_model)
+            .unwrap()
+            .is_empty());
     }
 }

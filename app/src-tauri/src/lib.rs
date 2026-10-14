@@ -1,8 +1,8 @@
 pub mod agent_scan;
 pub mod analysis;
 pub mod audio;
-pub mod chat_import;
 pub mod chat_digest;
+pub mod chat_import;
 pub mod commands;
 pub mod db;
 pub mod degeneration;

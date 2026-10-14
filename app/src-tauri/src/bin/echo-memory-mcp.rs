@@ -160,9 +160,7 @@ fn call_tool(library: &ManagedLibrary, params: &Value, id: Value) -> Value {
                     })
                 })
                 .unwrap_or(Value::Null);
-            let confirmed = repo
-                .confirmed_memory_items(20)
-                .map_err(|e| e.to_string())?;
+            let confirmed = repo.confirmed_memory_items(20).map_err(|e| e.to_string())?;
             Ok(json!({"profile": profile, "confirmedItems": confirmed}))
         }
         _ => Err("unknown tool".to_owned()),

@@ -321,7 +321,9 @@ mod tests {
         assert_eq!(feedback_count, 1, "FK=ON 下重建表不得级联清空反馈");
         assert_eq!(decision, "confirmed");
         let snapshot_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM memory_snapshots", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM memory_snapshots", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(snapshot_count, 1, "快照数据应平移保留");
         let profile_allowed: i64 = conn

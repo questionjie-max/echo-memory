@@ -347,7 +347,10 @@ pub fn normalize_analysis_instruction(raw: Option<&str>) -> Option<String> {
     let trimmed = raw.map(str::trim).filter(|text| !text.is_empty())?;
     let mut normalized = trimmed.replace("\r\n", "\n").replace('\r', "\n");
     if normalized.chars().count() > MAX_ANALYSIS_INSTRUCTION_CHARS {
-        normalized = normalized.chars().take(MAX_ANALYSIS_INSTRUCTION_CHARS).collect();
+        normalized = normalized
+            .chars()
+            .take(MAX_ANALYSIS_INSTRUCTION_CHARS)
+            .collect();
     }
     Some(normalized)
 }
@@ -487,8 +490,7 @@ where
         instruction,
     );
     let retry = generator.generate_text(&correction)?;
-    let mut draft =
-        resolve_analysis_attempts(&first, &retry, transcript, instruction.is_some())?;
+    let mut draft = resolve_analysis_attempts(&first, &retry, transcript, instruction.is_some())?;
     normalize_custom_sections(&mut draft, template);
     simplify_draft(&mut draft);
     Ok(draft)
@@ -511,7 +513,10 @@ where
     let mut partials = Vec::with_capacity(chunks.len());
     for (index, chunk) in chunks.iter().enumerate() {
         partials.push(analyze_single_with_generator(
-            generator, chunk, template, instruction,
+            generator,
+            chunk,
+            template,
+            instruction,
         )?);
         progress(index + 1, total_steps)?;
     }
@@ -1026,8 +1031,11 @@ fn resolve_analysis_attempts(
 ) -> AppResult<AnalysisDraft> {
     match parse_prepared_analysis(retry) {
         Ok(mut draft) => {
-            let assessment =
-                analysis_quality_assessment_for_instruction(&draft, transcript, instruction_present);
+            let assessment = analysis_quality_assessment_for_instruction(
+                &draft,
+                transcript,
+                instruction_present,
+            );
             append_quality_assessment(&mut draft, assessment);
             Ok(draft)
         }
@@ -1583,8 +1591,14 @@ mod tests {
     fn parsable_but_low_quality_output_is_echoed_back_for_correction() {
         // 能解析但质量不达标时，回灌上一次输出仍然是有用的纠正依据。
         let low_quality = r#"{"summary":"太短","key_points":[]}"#;
-        let prompt =
-            build_correction_prompt(low_quality, true, "关键观点不足", "", "[1] 逐字稿原文", None);
+        let prompt = build_correction_prompt(
+            low_quality,
+            true,
+            "关键观点不足",
+            "",
+            "[1] 逐字稿原文",
+            None,
+        );
         assert!(prompt.contains(low_quality));
         assert!(prompt.contains("关键观点不足"));
         assert!(prompt.contains("1 到 8 项"));
@@ -1607,8 +1621,7 @@ mod tests {
     fn instruction_reaches_first_and_correction_prompts() {
         // 第一次输出完全为空（带指令时仍判 Blocking），验证纠错重试同样携带补充要求；
         // 否则第二次生成会退回默认栏目结构。
-        let blocking =
-            r#"{"summary":"","key_points":[],"decisions":[],"action_items":[],"open_questions":[],"custom_sections":[]}"#;
+        let blocking = r#"{"summary":"","key_points":[],"decisions":[],"action_items":[],"open_questions":[],"custom_sections":[]}"#;
         let corrected = r#"{"summary":"本次讨论围绕待办分工展开，需要按负责人分组跟进。","action_items":[{"text":"周三前把待办按负责人分组发给团队","citation_segment_ids":["0"],"quote_text":"这是用于核验的逐字稿原文"}]}"#;
         let generator = RecordingGenerator::new(vec![blocking, corrected]);
 
@@ -1664,7 +1677,9 @@ mod tests {
         let assessment =
             analysis_quality_assessment_for_instruction(&empty, "逐字稿", true).unwrap();
         assert_eq!(assessment.severity, AnalysisQualitySeverity::Blocking);
-        assert!(assessment.warning.contains("没有按补充要求返回任何可用内容"));
+        assert!(assessment
+            .warning
+            .contains("没有按补充要求返回任何可用内容"));
     }
 
     #[test]
@@ -1952,7 +1967,9 @@ mod tests {
         for batch in batches.iter().filter(|batch| batch.len() > 1) {
             let payload = serde_json::to_string(batch).unwrap();
             assert!(
-                build_long_merge_prompt(&payload, None, None).chars().count()
+                build_long_merge_prompt(&payload, None, None)
+                    .chars()
+                    .count()
                     <= MAX_MERGE_PROMPT_CHARS
             );
         }
@@ -1975,8 +1992,11 @@ mod tests {
         let merged = merge_partials_with(&partials, None, None, |batch, template| {
             let payload = serde_json::to_string(batch)
                 .map_err(|error| AppError::Analysis(error.to_string()))?;
-            request_sizes
-                .push(build_long_merge_prompt(&payload, template, None).chars().count());
+            request_sizes.push(
+                build_long_merge_prompt(&payload, template, None)
+                    .chars()
+                    .count(),
+            );
             let mut result = deterministic_merge(batch);
             normalize_custom_sections(&mut result, template);
             Ok(result)

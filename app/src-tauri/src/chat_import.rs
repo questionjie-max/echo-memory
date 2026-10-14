@@ -61,7 +61,13 @@ pub fn import_chat_exports(
         skipped: Vec::new(),
     };
     for source in sources {
-        import_file(library, source, project_id, duplicate_confirmed, &mut outcome);
+        import_file(
+            library,
+            source,
+            project_id,
+            duplicate_confirmed,
+            &mut outcome,
+        );
     }
     Ok(outcome)
 }
@@ -74,9 +80,14 @@ fn import_file(
     outcome: &mut ChatImportOutcome,
 ) {
     let file_label = source.display().to_string();
-    if let Err(reason) =
-        import_file_inner(library, source, file_label.clone(), project_id, duplicate_confirmed, outcome)
-    {
+    if let Err(reason) = import_file_inner(
+        library,
+        source,
+        file_label.clone(),
+        project_id,
+        duplicate_confirmed,
+        outcome,
+    ) {
         outcome.skipped.push(ChatImportSkip {
             file: file_label,
             title: None,
@@ -99,10 +110,22 @@ fn import_file_inner(
         .map(str::to_ascii_lowercase)
         .unwrap_or_default();
     match extension.as_str() {
-        "json" => import_json_export(library, source, file_label, project_id, duplicate_confirmed, outcome),
-        "md" | "markdown" | "txt" => {
-            import_dialogue_text(library, source, file_label, project_id, duplicate_confirmed, outcome)
-        }
+        "json" => import_json_export(
+            library,
+            source,
+            file_label,
+            project_id,
+            duplicate_confirmed,
+            outcome,
+        ),
+        "md" | "markdown" | "txt" => import_dialogue_text(
+            library,
+            source,
+            file_label,
+            project_id,
+            duplicate_confirmed,
+            outcome,
+        ),
         _ => Err(AppError::Import(
             "仅支持 .json 导出文件或对话式 .md/.markdown/.txt 文本".into(),
         )),
@@ -178,10 +201,9 @@ fn import_dialogue_text(
 }
 
 /// 顶层是数组（官方全量导出）或单个会话对象都接受，按字段形态识别格式。
-fn parse_json_export(
-    root: &Value,
-) -> AppResult<Vec<Result<ParsedConversation, String>>> {
-    const FORMAT_HINT: &str = "不是受支持的对话导出格式（需要 ChatGPT 或 Claude 导出的 conversations.json）";
+fn parse_json_export(root: &Value) -> AppResult<Vec<Result<ParsedConversation, String>>> {
+    const FORMAT_HINT: &str =
+        "不是受支持的对话导出格式（需要 ChatGPT 或 Claude 导出的 conversations.json）";
     let items: Vec<&Value> = match root {
         Value::Array(items) => items.iter().collect(),
         Value::Object(object) => {
@@ -195,16 +217,12 @@ fn parse_json_export(
     if first.get("mapping").is_some() {
         Ok(items
             .iter()
-            .map(|item| {
-                parse_chatgpt_conversation(item).map_err(|error| error.to_string())
-            })
+            .map(|item| parse_chatgpt_conversation(item).map_err(|error| error.to_string()))
             .collect())
     } else if first.get("chat_messages").is_some() {
         Ok(items
             .iter()
-            .map(|item| {
-                parse_claude_conversation(item).map_err(|error| error.to_string())
-            })
+            .map(|item| parse_claude_conversation(item).map_err(|error| error.to_string()))
             .collect())
     } else {
         Err(AppError::Import(FORMAT_HINT.into()))
@@ -381,9 +399,23 @@ fn claude_message_text(message: &Value) -> String {
         .to_owned()
 }
 
-const USER_MARKERS: &[&str] = &["用户", "我", "提问", "问", "User", "user", "USER", "Human", "human"];
+const USER_MARKERS: &[&str] = &[
+    "用户", "我", "提问", "问", "User", "user", "USER", "Human", "human",
+];
 const ASSISTANT_MARKERS: &[&str] = &[
-    "助手", "答", "回答", "AI", "Ai", "ai", "Assistant", "assistant", "Claude", "ChatGPT", "GPT", "Bot", "bot",
+    "助手",
+    "答",
+    "回答",
+    "AI",
+    "Ai",
+    "ai",
+    "Assistant",
+    "assistant",
+    "Claude",
+    "ChatGPT",
+    "GPT",
+    "Bot",
+    "bot",
 ];
 
 /// 行首「说话人：」标记识别。标记后必须紧跟冒号，避免把普通句子误判成说话人。
@@ -404,9 +436,7 @@ fn detect_speaker(line: &str) -> Option<(ChatRole, &str)> {
 
 fn strip_marker<'a>(line: &'a str, marker: &str) -> Option<&'a str> {
     let rest = line.strip_prefix(marker)?;
-    let rest = rest
-        .strip_prefix('：')
-        .or_else(|| rest.strip_prefix(':'))?;
+    let rest = rest.strip_prefix('：').or_else(|| rest.strip_prefix(':'))?;
     Some(rest.trim())
 }
 
@@ -695,8 +725,7 @@ pub fn import_agent_sessions(
 /// ChatGPT 导出的 create_time 是 Unix 秒（浮点），转 RFC3339。
 fn gpt_create_time(item: &Value) -> Option<String> {
     let seconds = item.get("create_time").and_then(Value::as_f64)?;
-    chrono::DateTime::from_timestamp(seconds as i64, 0)
-        .map(|stamp| stamp.to_rfc3339())
+    chrono::DateTime::from_timestamp(seconds as i64, 0).map(|stamp| stamp.to_rfc3339())
 }
 
 fn json_timestamp(value: &Value) -> Option<String> {
@@ -993,19 +1022,28 @@ mod tests {
         let base = ParsedConversation {
             title: "t".into(),
             source_format: "chat-md",
-            turns: vec![ChatTurn { role: ChatRole::User, text: "a".into() }],
+            turns: vec![ChatTurn {
+                role: ChatRole::User,
+                text: "a".into(),
+            }],
             occurred_at: None,
         };
         let same = ParsedConversation {
             title: "t".into(),
             source_format: "chat-md",
-            turns: vec![ChatTurn { role: ChatRole::User, text: "a".into() }],
+            turns: vec![ChatTurn {
+                role: ChatRole::User,
+                text: "a".into(),
+            }],
             occurred_at: None,
         };
         let different = ParsedConversation {
             title: "t".into(),
             source_format: "chat-md",
-            turns: vec![ChatTurn { role: ChatRole::User, text: "b".into() }],
+            turns: vec![ChatTurn {
+                role: ChatRole::User,
+                text: "b".into(),
+            }],
             occurred_at: None,
         };
         assert_eq!(conversation_hash(&base), conversation_hash(&same));
@@ -1083,21 +1121,32 @@ mod tests {
                 "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"分三层验收。\"}]}}\n",
             ),
         );
-        let root = std::env::temp_dir().join(format!("chat_import_agent_db_{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("chat_import_agent_db_{}", uuid::Uuid::new_v4()));
         let library = crate::library::ManagedLibrary::open(root.clone()).unwrap();
-        let selection = (crate::agent_scan::AgentKind::Codex, path.display().to_string());
+        let selection = (
+            crate::agent_scan::AgentKind::Codex,
+            path.display().to_string(),
+        );
 
-        let outcome = import_agent_sessions(&library, std::slice::from_ref(&selection), None, false)
-            .unwrap();
+        let outcome =
+            import_agent_sessions(&library, std::slice::from_ref(&selection), None, false).unwrap();
         assert_eq!(outcome.imported.len(), 1, "应导入: {:?}", outcome.skipped);
         let record = library
             .repository()
             .get_record(&outcome.imported[0].record_id)
             .unwrap();
         assert_eq!(record.source_type, "chat");
-        let segments = library.repository().list_transcript_segments(&record.id).unwrap();
-        assert!(segments.iter().any(|segment| segment.speaker_label.as_deref() == Some("用户")));
-        assert!(segments.iter().any(|segment| segment.speaker_label.as_deref() == Some("助手")));
+        let segments = library
+            .repository()
+            .list_transcript_segments(&record.id)
+            .unwrap();
+        assert!(segments
+            .iter()
+            .any(|segment| segment.speaker_label.as_deref() == Some("用户")));
+        assert!(segments
+            .iter()
+            .any(|segment| segment.speaker_label.as_deref() == Some("助手")));
 
         let repeat = import_agent_sessions(&library, &[selection], None, false).unwrap();
         assert!(repeat.imported.is_empty(), "重复导入不应产生新记录");
