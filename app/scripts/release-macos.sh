@@ -128,7 +128,9 @@ fi
 echo "== Verifying mounted application =="
 codesign --verify --deep --strict --verbose=2 "$app_path"
 spctl --assess --type execute --verbose=4 "$app_path"
-xcrun stapler validate "$app_path"
+# 装订票贴在 DMG 上（分发单位就是 DMG），DMG 内的 .app 本身不带票——
+# 这里再校验 .app 的票会必然失败（stapler 返回 65）。验收看两件事：
+# 上面 spctl 是否返回 accepted/Notarized Developer ID，以及第 106 行对 DMG 的 stapler validate。
 
 echo "== Release artifact =="
 printf 'DMG: %s\n' "$dmg_path"

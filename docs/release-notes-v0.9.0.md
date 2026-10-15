@@ -25,10 +25,15 @@
 
 ## Distribution status
 
-This source release is version `0.9.0`. Public artifact details (SHA-256, notarization submission, `spctl` result) are recorded below once the DMG has been signed, notarized, stapled, and verified.
+This source release is version `0.9.0`. The public artifact is `Echo-Memory_0.9.0_aarch64.dmg`, SHA-256 `b0b132a5ef92bf3c97315f07e8e3226caec9c7ddbe8964b284e0a4bbb3ead8b9`.
 
-<!-- PUBLISH-CHECK: 公证完成后把下面一行替换为真实的分发信息（文件名 / SHA-256 / 公证提交号 / spctl 结果）。 -->
-_Artifact pending notarization._
+- `codesign --verify --deep --strict` passes for the application inside the DMG.
+- `hdiutil verify` confirms the disk image is intact.
+- `spctl --assess --type execute` reports `accepted` with `source=Notarized Developer ID` for the mounted application.
+- This DMG is an **Apple-signed and notarized Developer ID release**. Notarization submission `81224d6d-94c1-4a6b-9546-f86896146f3e` completed with status `Accepted`, and the ticket is stapled to the DMG (`xcrun stapler validate` passes).
+- A pre-notarization approval gate audits the built bundle (sourcemaps, test/dev leftovers, developer machine paths, dev endpoints, CSP dev websocket channels, version consistency); this release passed after the audit caught and eliminated two real developer-path leaks in the compiled binary (see the engineering notes above).
+
+Users can download the DMG, open it, and move `回声记忆.app` into `/Applications` normally.
 
 ---
 
@@ -59,7 +64,12 @@ _Artifact pending notarization._
 
 ## 分发状态
 
-本源码版本为 `0.9.0`。公开安装包的 SHA-256、公证提交与 `spctl` 结果将在 DMG 完成签名、公证、装订与验证后补记于本节。
+本源码版本为 `0.9.0`，公开安装包为 `Echo-Memory_0.9.0_aarch64.dmg`，SHA-256 为 `b0b132a5ef92bf3c97315f07e8e3226caec9c7ddbe8964b284e0a4bbb3ead8b9`。
 
-<!-- PUBLISH-CHECK: 公证完成后把下面一行替换为真实分发信息。 -->
-_安装包待公证。_
+- DMG 内应用程序通过 `codesign --verify --deep --strict`。
+- `hdiutil verify` 确认磁盘镜像完整。
+- 挂载后的应用经 `spctl --assess --type execute` 判定为 `accepted`，来源 `Notarized Developer ID`。
+- 因此它明确标注为 **Apple 已签名并完成公证的 Developer ID 发布版**。公证提交 `81224d6d-94c1-4a6b-9546-f86896146f3e` 状态为 `Accepted`，装订票已贴在 DMG 上（`xcrun stapler validate` 通过）。
+- 公证前包含审批门禁审计（sourcemap、测试/开发残留、开发机路径、开发端点、CSP 开发 websocket 通道、版本号一致性）：本次发布在门禁抓出并消除编译二进制里的两处真实开发机路径泄漏后通过（见上文工程说明）。
+
+macOS 用户下载 DMG 后可正常打开，并把 `回声记忆.app` 拖入 `/Applications`。
