@@ -456,9 +456,92 @@ fn instruction_block(instruction: Option<&str>) -> String {
     };
     format!(
         "用户补充要求（本轮最高优先级）：{text}\n\
-         补充要求决定关注重点、详略、语气与栏目取舍：用户没有要求的栏目返回空数组，不要因为默认栏目而补充未要求的内容；补充要求可以要求新增 custom_sections 栏目。\n\
+         补充要求决定关注重点、详略、语气与栏目取舍：用户要求排除的栏目必须返回空数组 []，不要因为“保留一点也不影响”而填充被排除的栏目；用户未要求的内容不得补充；补充要求可以要求新增 custom_sections 栏目。\n\
          补充要求不得改变：所有非空条目必须有逐字引用、quote_text 必须逐字匹配、安全规则不可覆盖。\n"
     )
+}
+
+/// 排他措辞：出现这些短语时，「只保留 X」的栏目取舍交给确定性裁剪，不赌模型遵从度。
+const EXCLUSIVE_INSTRUCTION_MARKERS: [&str; 7] = [
+    "只保留",
+    "只输出",
+    "只需要",
+    "只需",
+    "仅保留",
+    "仅输出",
+    "不要其他",
+];
+
+fn instruction_names_section(instruction: &str, names: &[&str]) -> bool {
+    names.iter().any(|name| instruction.contains(name))
+}
+
+/// 把显式的「只保留/只输出 X」要求落成确定性行为：清空指令未点名的栏目，
+/// 只留下点名的栏目与 summary。识别不出点名栏目时不裁剪（宁可少动，不可清空用户内容）。
+/// 7B 级本地模型会被"保留一点也不影响"带偏，仅靠提示词无法保证这条语义。
+pub fn apply_instruction_section_filter(
+    draft: &mut AnalysisDraft,
+    instruction: Option<&str>,
+    template: Option<&AnalysisTemplate>,
+) {
+    let Some(instruction) = instruction.map(str::trim).filter(|text| !text.is_empty()) else {
+        return;
+    };
+    if !EXCLUSIVE_INSTRUCTION_MARKERS
+        .iter()
+        .any(|marker| instruction.contains(marker))
+    {
+        return;
+    }
+    let keep_key_points = instruction_names_section(instruction, &["关键观点", "要点", "观点"]);
+    let keep_decisions = instruction_names_section(instruction, &["决策", "决定", "结论"]);
+    let keep_actions = instruction_names_section(instruction, &["待办", "行动", "任务", "跟进"]);
+    let keep_questions = instruction_names_section(instruction, &["未决", "疑问", "问题"]);
+    let keep_chapters = instruction_names_section(instruction, &["章节", "分段"]);
+    let keep_highlights = instruction_names_section(instruction, &["金句", "原话"]);
+    let kept_custom: Vec<bool> = template.map_or_else(Vec::new, |template| {
+        template
+            .custom_sections
+            .iter()
+            .map(|section| {
+                !section.title.trim().is_empty() && instruction.contains(section.title.trim())
+            })
+            .collect()
+    });
+    let names_any_section = keep_key_points
+        || keep_decisions
+        || keep_actions
+        || keep_questions
+        || keep_chapters
+        || keep_highlights
+        || kept_custom.iter().any(|kept| *kept);
+    if !names_any_section {
+        return;
+    }
+    if !keep_key_points {
+        draft.key_points.clear();
+    }
+    if !keep_decisions {
+        draft.decisions.clear();
+    }
+    if !keep_actions {
+        draft.action_items.clear();
+    }
+    if !keep_questions {
+        draft.open_questions.clear();
+    }
+    if !keep_chapters {
+        draft.chapters.clear();
+    }
+    if !keep_highlights {
+        draft.highlights.clear();
+    }
+    for (index, section) in draft.custom_sections.iter_mut().enumerate() {
+        if !kept_custom.get(index).copied().unwrap_or(false) {
+            section.text.clear();
+            section.items.clear();
+        }
+    }
 }
 
 fn analyze_single_with_generator<G>(
@@ -498,6 +581,7 @@ where
     let prompt = format!(
         "你是会议文稿分析器。所有内容必须使用简体中文。仅返回合法 JSON，不要 Markdown。根字段必须为 summary、key_points、decisions、action_items、open_questions、custom_sections、chapters、highlights。\n\
          {key_points_rule}decisions 只写已经明确确认的选择。action_items 只写对话中明确要求未来执行的任务，普通陈述、已经发生的事情和疑问不得写成待办。open_questions 只写明确提出但尚未回答的问题；没有证据就返回空数组，各栏目不得互相复制，禁止编造。\n\
+         不确定性规则：只有当逐字稿里确实存在听不清、含义含糊或缺失的内容时，才在 summary 末尾用一句话说明缺口（例如「原始转写有 2 处内容不清晰，相关结论未提取」）；材料完整时必须照常输出，不得杜撰缺口说明。听不清或含糊的内容不写入任何栏目，不得用常识或推测补齐。\n\
          每个列表条目必须是 {{\"text\":\"结论\",\"citation_segment_ids\":[\"片段编号\"],\"quote_text\":\"逐字稿中的连续原文\"}}。引用只能使用逐字稿方括号中的片段编号，quote_text 必须逐字匹配对应片段。\n\
          章节规则：只有当逐字稿较长且存在明显话题转换时，才输出 2 到 6 个按时间顺序的章节；每章 {{\"title\":\"不超过 16 字的小标题\",\"summary\":\"一到两句该章内容\",\"citation_segment_ids\":[\"该章开头片段编号\"]}}。内容短、话题单一时 chapters 返回空数组。\n\
          金句规则：highlights 为 0 到 5 条 {{\"quote_text\":\"逐字稿原话\",\"citation_segment_ids\":[\"原话所在片段编号\"]}}，quote_text 必须与逐字稿完全一致，禁止改写、拼接或润色；没有值得保留的原话就返回空数组。\n\
@@ -718,7 +802,7 @@ fn build_long_merge_prompt(
     format!(
         "你是本地长文会议分析合并器。所有内容必须使用简体中文。下面是按时间顺序生成的分段分析。仅返回约定 JSON。\n\
          合并摘要必须覆盖开头、中段和结尾；关键观点保留 3 到 8 条并去重。决策必须是明确确认的选择；待办必须是明确要求未来执行的任务，普通陈述不得写成待办。\n\
-         只能沿用输入中已有的 citation_segment_ids 和 quote_text，不得新造、改写或跨条目拼接引用。没有可靠证据的栏目返回空数组。chapters 合并后必须按时间顺序且互不重叠，highlights 只保留输入中已有的逐字原话。{template_note}{instruction_note}\n\
+         只能沿用输入中已有的 citation_segment_ids 和 quote_text，不得新造、改写或跨条目拼接引用。没有可靠证据的栏目返回空数组。chapters 合并后必须按时间顺序且互不重叠，highlights 只保留输入中已有的逐字原话。材料存在缺口时在摘要末尾保留一句显式说明，不得用推测补写。{template_note}{instruction_note}\n\
          分段分析：\n{partial_json}"
     )
 }
@@ -1178,6 +1262,23 @@ fn parse_prepared_analysis(input: &str) -> AppResult<AnalysisDraft> {
         !key.is_empty() && seen_highlights.insert(key)
     });
     Ok(draft)
+}
+
+/// 分析落库前的统一收口：别名解析 → 指令栏目裁剪 → 引用校验。
+/// run_analysis、重新校验与 E2E 三条路径共用同一收口，避免各处顺序漂移。
+pub fn finalize_analysis_draft(
+    draft: &AnalysisDraft,
+    segments: &[TranscriptSegment],
+    instruction: Option<&str>,
+    template: Option<&AnalysisTemplate>,
+) -> AnalysisDraft {
+    let instruction_present = instruction
+        .map(str::trim)
+        .is_some_and(|text| !text.is_empty());
+    let mut draft = draft.clone();
+    resolve_citation_aliases(&mut draft, segments);
+    apply_instruction_section_filter(&mut draft, instruction, template);
+    verify_citations_with_instruction(&draft, segments, instruction_present)
 }
 
 /// References must belong to this record and the supplied quote must match its source text.
@@ -1877,6 +1978,121 @@ mod tests {
         assert!(assessment
             .warning
             .contains("没有按补充要求返回任何可用内容"));
+    }
+
+    #[test]
+    fn exclusive_instruction_prunes_unrequested_sections() {
+        // 「只保留待办事项」：命中排他措辞且点名了待办，其余栏目确定性清空。
+        let mut draft = quality_test_draft(3, "这是可核对的连续原文");
+        draft.action_items = vec![AnalysisItemDraft {
+            text: "周三前按负责人分组发出待办".to_owned(),
+            citation_segment_ids: vec!["segment-1".to_owned()],
+            owner: Some("张三".to_owned()),
+            quote_text: "这是可核对的连续原文".to_owned(),
+            start_ms: None,
+            end_ms: None,
+        }];
+        draft.highlights = vec![AnalysisHighlightDraft {
+            quote_text: "这是可核对的连续原文".to_owned(),
+            citation_segment_ids: vec!["segment-1".to_owned()],
+            ..Default::default()
+        }];
+        apply_instruction_section_filter(&mut draft, Some("只保留待办事项，按负责人分组"), None);
+        assert!(draft.key_points.is_empty());
+        assert!(draft.highlights.is_empty());
+        assert_eq!(draft.action_items.len(), 1);
+
+        // 非排他措辞不动结构。
+        let mut draft = quality_test_draft(3, "这是可核对的连续原文");
+        apply_instruction_section_filter(&mut draft, Some("把要点整理成三条，语气口语化"), None);
+        assert_eq!(draft.key_points.len(), 3);
+
+        // 识别不出点名栏目时宁可少动，避免清空用户内容。
+        let mut draft = quality_test_draft(3, "这是可核对的连续原文");
+        apply_instruction_section_filter(&mut draft, Some("只保留重点"), None);
+        assert_eq!(draft.key_points.len(), 3);
+    }
+
+    #[test]
+    fn exclusive_instruction_keeps_only_named_custom_section() {
+        let template = AnalysisTemplate {
+            id: "t".to_owned(),
+            name: "客户访谈".to_owned(),
+            description: String::new(),
+            focus_instructions: String::new(),
+            custom_sections: vec![
+                crate::types::TemplateSection {
+                    key: "needs".to_owned(),
+                    title: "核心需求".to_owned(),
+                    format: "list".to_owned(),
+                    instruction: String::new(),
+                },
+                crate::types::TemplateSection {
+                    key: "pain_points".to_owned(),
+                    title: "痛点".to_owned(),
+                    format: "list".to_owned(),
+                    instruction: String::new(),
+                },
+            ],
+            is_builtin: true,
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        let mut draft = quality_test_draft(2, "这是可核对的连续原文");
+        draft.custom_sections = vec![
+            AnalysisCustomSectionDraft {
+                key: "needs".to_owned(),
+                title: "核心需求".to_owned(),
+                format: "list".to_owned(),
+                text: String::new(),
+                items: vec![AnalysisItemDraft {
+                    text: "客户希望资料只保存在本机".to_owned(),
+                    citation_segment_ids: vec!["segment-1".to_owned()],
+                    owner: None,
+                    quote_text: "这是可核对的连续原文".to_owned(),
+                    start_ms: None,
+                    end_ms: None,
+                }],
+            },
+            AnalysisCustomSectionDraft {
+                key: "pain_points".to_owned(),
+                title: "痛点".to_owned(),
+                format: "list".to_owned(),
+                text: String::new(),
+                items: vec![AnalysisItemDraft {
+                    text: "现有工具导出麻烦".to_owned(),
+                    citation_segment_ids: vec!["segment-1".to_owned()],
+                    owner: None,
+                    quote_text: "这是可核对的连续原文".to_owned(),
+                    start_ms: None,
+                    end_ms: None,
+                }],
+            },
+        ];
+        apply_instruction_section_filter(&mut draft, Some("只保留核心需求"), Some(&template));
+        assert!(draft.key_points.is_empty());
+        assert_eq!(draft.custom_sections[0].items.len(), 1);
+        assert!(draft.custom_sections[1].items.is_empty());
+    }
+
+    #[test]
+    fn finalize_pipeline_prunes_sections_and_verifies_citations() {
+        let segments = vec![
+            chapter_test_segment("s1", 1, 0, 10_000, "开场介绍项目背景"),
+            chapter_test_segment("s2", 2, 10_000, 20_000, "请张三在下周前给出结论"),
+        ];
+        let draft = parse_analysis_json(
+            r#"{"summary":"这是一段足够完整的摘要，用于说明本次讨论的主题与结论。",
+                "key_points":[{"text":"讨论了项目背景","citation_segment_ids":["1"],"quote_text":"开场介绍项目背景"}],
+                "action_items":[{"text":"张三下周前给出结论","citation_segment_ids":["2"],"quote_text":"请张三在下周前给出结论"}]}"#,
+        )
+        .unwrap();
+        // 收口顺序：别名（序号）解析 → 只保留待办 → 引用逐字校验。
+        let finalized = finalize_analysis_draft(&draft, &segments, Some("只保留待办事项"), None);
+        assert!(finalized.key_points.is_empty());
+        assert_eq!(finalized.action_items.len(), 1);
+        assert_eq!(finalized.action_items[0].citation_segment_ids, vec!["s2"]);
+        assert_eq!(finalized.action_items[0].start_ms, Some(10_000));
     }
 
     #[test]

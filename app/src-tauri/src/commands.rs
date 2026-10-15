@@ -1,6 +1,5 @@
 use crate::analysis::{
-    analyze_with_generator_instruction_progress, resolve_citation_aliases,
-    verify_citations_with_instruction, AnalysisTextGenerator, OllamaAdapter,
+    analyze_with_generator_instruction_progress, AnalysisTextGenerator, OllamaAdapter,
 };
 use crate::audio::{
     is_overlap_duplicate, merge_overlap_continuation, normalize_segment_timestamps, plan_chunks,
@@ -2200,20 +2199,23 @@ pub fn revalidate_analysis_with_library(
         .map_err(|error| crate::error::AppError::Analysis(format!("分析 JSON 无效: {error}")))?;
     draft.quality_warning = None;
     draft.quality_severity = None;
-    resolve_citation_aliases(&mut draft, &segments);
-    let instruction_present = !stored.analysis_instruction.trim().is_empty();
-    let verified = verify_citations_with_instruction(&draft, &segments, instruction_present);
-    if crate::analysis::analysis_is_blocking(&verified) {
-        return Err(crate::error::AppError::Analysis(
-            "仍有分析条目无法匹配可靠出处".to_owned(),
-        ));
-    }
     let template = stored
         .template_id
         .as_deref()
         .and_then(|id| repository.get_analysis_template(id).ok())
         .or_else(|| serde_json::from_str(&stored.template_snapshot_json).ok())
         .unwrap_or(repository.get_analysis_template("builtin-standard")?);
+    let verified = crate::analysis::finalize_analysis_draft(
+        &draft,
+        &segments,
+        Some(stored.analysis_instruction.as_str()),
+        Some(&template),
+    );
+    if crate::analysis::analysis_is_blocking(&verified) {
+        return Err(crate::error::AppError::Analysis(
+            "仍有分析条目无法匹配可靠出处".to_owned(),
+        ));
+    }
     repository.save_analysis_with_provider_and_template(
         &stored.record_id,
         &stored.source_transcript_version_id,
@@ -2317,7 +2319,7 @@ fn run_analysis(
             )?;
             Ok(())
         };
-        let (provider, model, mut draft) = if let Some(client) = external_client {
+        let (provider, model, draft) = if let Some(client) = external_client {
             let generator = ExternalAnalysisGenerator { client: &client };
             let draft = analyze_with_generator_instruction_progress(
                 &generator,
@@ -2339,8 +2341,13 @@ fn run_analysis(
             ("ollama", model, draft)
         };
         repository.update_job_progress(&job.id, "validating", 1, 1)?;
-        resolve_citation_aliases(&mut draft, &segments);
-        let verified = verify_citations_with_instruction(&draft, &segments, instruction.is_some());
+        // 统一收口：别名解析 → 「只保留 X」栏目裁剪 → 引用逐字校验（fail-closed）。
+        let verified = crate::analysis::finalize_analysis_draft(
+            &draft,
+            &segments,
+            instruction,
+            Some(&template),
+        );
         repository.update_job_progress(&job.id, "saving", 1, 1)?;
         repository.save_analysis_with_provider_and_template(
             record_id,
