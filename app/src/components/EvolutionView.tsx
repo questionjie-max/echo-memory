@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { SparklesIcon } from "./icons";
 import MemoryViewControls from "./MemoryViewControls";
+import ProfileCard from "./ProfileCard";
 import { changeTypeLabel, changeTypeSlug } from "../lib/changeType";
 import type { EvolutionItem, MemoryFeedback, MemoryScope, MemorySnapshot, MemorySourceReference } from "../shared/types";
 import { listMemoryFeedback, updateMemoryFeedback, updateMemoryFeedbackBatch } from "../lib/tauri";
@@ -126,13 +127,18 @@ export default function EvolutionView({ scope, onOpenSource, onOpenSettings }: P
       onCancel={data.cancel}
       onOpenSettings={onOpenSettings}
     />
-    {feedbackStatus && <p className="inline-notice memory-notice" role="status" aria-live="polite">{feedbackStatus}</p>}
-    {data.loading ? <div className="memory-empty" role="status" aria-live="polite"><strong>正在加载认知演化…</strong></div> : data.error || feedbackError ? <div className="memory-empty memory-error-state" role="alert"><strong>认知演化加载失败</strong><p>{[data.error, feedbackError].filter(Boolean).join("；")}</p><button type="button" className="secondary-button" onClick={() => { setFeedbackError(""); void data.reload(); }}>重试</button></div> : !data.selectedSnapshot ? (data.settings && !isExternalAiReady(data.settings) ? <ConfiguredEmpty onOpenSettings={onOpenSettings} /> : <NoSnapshotEmpty />) : <div className="evolution-content">
+    {/* .memory-view 的 grid 行数是写死的两行：控件行 + 内容行。总述卡与通知是
+        条件子元素，绝不能作为 grid 直接子元素，全部包进滚动体内。 */}
+    <div className="evolution-body">
+      <ProfileCard onOpenSettings={onOpenSettings} refreshToken={items.length + pendingCount} />
+      {feedbackStatus && <p className="inline-notice memory-notice" role="status" aria-live="polite">{feedbackStatus}</p>}
+      {data.loading ? <div className="memory-empty" role="status" aria-live="polite"><strong>正在加载认知演化…</strong></div> : data.error || feedbackError ? <div className="memory-empty memory-error-state" role="alert"><strong>认知演化加载失败</strong><p>{[data.error, feedbackError].filter(Boolean).join("；")}</p><button type="button" className="secondary-button" onClick={() => { setFeedbackError(""); void data.reload(); }}>重试</button></div> : !data.selectedSnapshot ? (data.settings && !isExternalAiReady(data.settings) ? <ConfiguredEmpty onOpenSettings={onOpenSettings} /> : <NoSnapshotEmpty />) : <div className="evolution-content">
       {items.length > 0 && <EvolutionSummary items={items} snapshot={data.selectedSnapshot} pendingCount={pendingCount} onConfirmAll={confirmAll} busy={confirmAllBusy} />}
       {groups.length === 0 ? <div className="memory-empty"><strong>当前快照还没有可展示的观点变化</strong><p>生成快照后，模型会在可匹配来源的范围内提取观点演化。</p></div> : groups.map(([topic, topicItems]) => <section className="evolution-topic" key={topic}><div className="evolution-topic-heading"><h3>{topic}</h3><span>{topicItems.length} 次变化</span></div><div className="evolution-chain">{topicItems.map((item) => <EvolutionCard key={item.id} item={item} feedback={feedback.find((entry) => entry.itemId === item.id)} busy={feedbackBusy.has(`${data.selectedSnapshot?.id}:${item.id}`)} onDecide={decide} onOpenSource={onOpenSource} />)}</div></section>)}
       <Watchlist title="长期未推进的问题" items={data.selectedSnapshot.result.dormantQuestions} empty="没有识别到长期未推进的问题。" />
       <Watchlist title="持续有任务但缺少里程碑变化的项目" items={data.selectedSnapshot.result.stalledProjects} empty="没有识别到停滞项目。" />
     </div>}
+    </div>
   </section>;
 }
 

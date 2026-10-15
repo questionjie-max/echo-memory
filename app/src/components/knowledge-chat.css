@@ -89,3 +89,85 @@
 @keyframes knowledge-chat-pulse { 50% { opacity: .45; } }
 @media (max-width: 760px) { .knowledge-chat-header { padding-inline: 16px; } .knowledge-chat-title-group > p:last-child { display: none; } .knowledge-chat-index-bar { padding-inline: 16px; } .knowledge-chat-index-copy span { display: none; } .knowledge-chat-progress { width: 90px; } .knowledge-chat-conversation, .knowledge-chat-composer { padding-inline: 16px; } .knowledge-chat-suggestions { grid-template-columns: 1fr; } .knowledge-chat-user-message { max-width: 92%; } }
 @media (prefers-reduced-motion: reduce) { .knowledge-chat-loader, .knowledge-chat-status-dot.indexing { animation: none; } .knowledge-chat-conversation { scroll-behavior: auto; } }
+
+/* v0.8：记忆引用 */
+.knowledge-chat-memory-chip {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border: 1px solid var(--em-hairline);
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--em-text-secondary);
+}
+
+.knowledge-chat-citations.memory-citations h4 {
+  color: var(--em-text-secondary);
+}
+
+.knowledge-chat-memory-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  text-align: left;
+  border: 1px solid var(--em-hairline);
+  border-radius: 10px;
+  background: var(--em-surface-raised);
+}
+
+.knowledge-chat-memory-card + .knowledge-chat-memory-card {
+  margin-top: 8px;
+}
+
+.knowledge-chat-memory-card .knowledge-chat-citation-copy {
+  flex: 1;
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.knowledge-chat-memory-card strong {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.knowledge-chat-memory-badge {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--em-hairline);
+  font-size: 10px;
+  font-style: normal;
+  color: var(--em-text-secondary);
+}
+
+.knowledge-chat-memory-card small {
+  font-size: 12px;
+  color: var(--em-text-secondary);
+}
+
+.knowledge-chat-memory-quote {
+  opacity: 0.85;
+}
+
+.knowledge-chat-memory-actions {
+  flex-shrink: 0;
+  display: flex;
+  gap: 8px;
+}
+
+.knowledge-chat-memory-actions button {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 12px;
+  color: var(--em-accent);
+  cursor: pointer;
+}
+
+.knowledge-chat-memory-actions button:hover {
+  text-decoration: underline;
+}

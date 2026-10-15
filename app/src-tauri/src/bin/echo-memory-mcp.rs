@@ -46,6 +46,7 @@ fn tools() -> Vec<Value> {
         ("list_projects", "List local projects.", json!({})),
         ("get_project_context", "List recent records for a project.", json!({"project_id":{"type":"string"}})),
         ("list_action_items", "List local action items. Alpha currently returns no external writes.", json!({"project_id":{"type":"string"},"status":{"type":"string"}})),
+        ("get_my_context", "Get the user's L3 profile summary and recently confirmed memory items (read-only personal context).", json!({})),
     ].into_iter().map(|(name, description, properties)| json!({"name":name,"description":description,"inputSchema":{"type":"object","properties":properties}})).collect()
 }
 
@@ -140,6 +141,29 @@ fn call_tool(library: &ManagedLibrary, params: &Value, id: Value) -> Value {
             repo.list_action_items(project_id, status)
                 .map(|items| json!(items))
                 .map_err(|e| e.to_string())
+        }
+        "get_my_context" => {
+            repo.log_mcp_access(name, None, None)
+                .map_err(|e| e.to_string())?;
+            let profile = repo
+                .latest_profile_snapshot()
+                .map_err(|e| e.to_string())?
+                .map(|(snapshot, profile)| {
+                    json!({
+                        "summary": profile.summary,
+                        "stances": profile.stances,
+                        "preferences": profile.preferences,
+                        "trajectory": profile.trajectory,
+                        "watching": profile.watching,
+                        "isStale": snapshot.is_stale,
+                        "updatedAt": snapshot.updated_at,
+                    })
+                })
+                .unwrap_or(Value::Null);
+            let confirmed = repo
+                .confirmed_memory_items(20)
+                .map_err(|e| e.to_string())?;
+            Ok(json!({"profile": profile, "confirmedItems": confirmed}))
         }
         _ => Err("unknown tool".to_owned()),
     })();

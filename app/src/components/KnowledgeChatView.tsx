@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { askKnowledgeBase, getKnowledgeIndexStatus, listProjects, rebuildKnowledgeIndex } from "../lib/tauri";
-import type { KnowledgeAnswer, KnowledgeAnswerCitation, KnowledgeIndexStatus } from "../shared/types";
+import { askKnowledgeBase, getKnowledgeIndexStatus, getMemoryIndexStatus, listProjects, rebuildKnowledgeIndex } from "../lib/tauri";
+import type { KnowledgeAnswer, KnowledgeAnswerCitation, KnowledgeIndexStatus, MemoryAnswerCitation } from "../shared/types";
 import "./knowledge-chat.css";
 
 export interface KnowledgeChatViewProps {
@@ -10,6 +10,7 @@ export interface KnowledgeChatViewProps {
   unfiledOnly: boolean;
   refreshKey: number;
   onOpenCitation: (citation: KnowledgeAnswerCitation) => void;
+  onOpenMemory: () => void;
   onOpenSettings: () => void;
 }
 
@@ -27,15 +28,16 @@ const MAX_REQUEST_CHARS = 500;
 const SUGGESTED_QUESTIONS = [
   "最近有哪些重要会议结论？",
   "有哪些尚未完成的行动项？",
-  "围绕当前范围做过哪些关键决策？",
+  "我之前对哪些问题的看法发生过变化？",
   "帮我梳理重要讨论的时间线。",
 ];
 
-export default function KnowledgeChatView({ scope, projectId, unfiledOnly, refreshKey, onOpenCitation, onOpenSettings }: KnowledgeChatViewProps) {
+export default function KnowledgeChatView({ scope, projectId, unfiledOnly, refreshKey, onOpenCitation, onOpenMemory, onOpenSettings }: KnowledgeChatViewProps) {
   const fallbackScopeName = scope === "all" ? "全部资料" : unfiledOnly || scope === "unfiled" ? "未归档资料" : "当前项目";
   const scopeRequestKey = `${scope}:${projectId ?? "all"}:${unfiledOnly ? "unfiled" : "filed"}`;
   const [scopeName, setScopeName] = useState(fallbackScopeName);
   const [indexStatus, setIndexStatus] = useState<KnowledgeIndexStatus | null>(null);
+  const [memoryStatus, setMemoryStatus] = useState<KnowledgeIndexStatus | null>(null);
   const [indexLoading, setIndexLoading] = useState(true);
   const [indexError, setIndexError] = useState("");
   const [rebuilding, setRebuilding] = useState(false);
@@ -55,13 +57,15 @@ export default function KnowledgeChatView({ scope, projectId, unfiledOnly, refre
     const requestId = ++metadataRequestRef.current;
     if (showLoading) setIndexLoading(true);
     setIndexError("");
-    const [statusResult, projectsResult] = await Promise.allSettled([
+    const [statusResult, projectsResult, memoryResult] = await Promise.allSettled([
       getKnowledgeIndexStatus(projectId, unfiledOnly),
       includeProjects ? listProjects() : Promise.resolve(null),
+      getMemoryIndexStatus(),
     ]);
     if (activeScopeRef.current !== targetScope || metadataRequestRef.current !== requestId) return;
     if (statusResult.status === "fulfilled") setIndexStatus(statusResult.value);
     else setIndexError(toErrorMessage(statusResult.reason));
+    if (memoryResult.status === "fulfilled") setMemoryStatus(memoryResult.value);
     if (projectsResult.status === "fulfilled" && projectsResult.value) {
       const project = projectId ? projectsResult.value.find((item) => item.id === projectId) : null;
       setScopeName(project?.name ?? fallbackScopeName);
@@ -189,12 +193,12 @@ export default function KnowledgeChatView({ scope, projectId, unfiledOnly, refre
       </div>
     </header>
 
-    <IndexStatusBar status={indexStatus} loading={indexLoading} rebuilding={rebuilding} error={indexError} onRetry={() => void loadScopeData(true, true)} onRebuild={() => void handleRebuildIndex()} />
+    <IndexStatusBar status={indexStatus} memoryStatus={memoryStatus} loading={indexLoading} rebuilding={rebuilding} error={indexError} onRetry={() => void loadScopeData(true, true)} onRebuild={() => void handleRebuildIndex()} />
 
     <div className={`knowledge-chat-main ${indexReady ? "ready" : ""}`}>
       {indexLoading && !indexStatus ? <LoadingState /> : indexError && !indexStatus ? <MetadataErrorState error={indexError} onRetry={() => void loadScopeData(true, true)} onOpenSettings={onOpenSettings} /> : !indexReady ? <IndexGuide status={indexStatus} rebuilding={rebuilding} onRebuild={() => void handleRebuildIndex()} onOpenSettings={onOpenSettings} /> : <>
         <div className="knowledge-chat-conversation" aria-live="polite" aria-busy={pendingTurnId !== null}>
-          {turns.length === 0 ? <ChatEmptyState scopeName={scopeName} onAsk={(question) => void submitQuestion(question)} /> : turns.map((turn) => <ConversationTurnView key={turn.id} turn={turn} onRetry={() => void submitQuestion(turn.question, turn.id)} onOpenCitation={onOpenCitation} />)}
+          {turns.length === 0 ? <ChatEmptyState scopeName={scopeName} onAsk={(question) => void submitQuestion(question)} /> : turns.map((turn) => <ConversationTurnView key={turn.id} turn={turn} onRetry={() => void submitQuestion(turn.question, turn.id)} onOpenCitation={onOpenCitation} onOpenMemory={onOpenMemory} />)}
           <div ref={conversationEndRef} />
         </div>
         <form className="knowledge-chat-composer" onSubmit={(event) => { event.preventDefault(); void submitQuestion(draft); }}>
@@ -210,11 +214,13 @@ export default function KnowledgeChatView({ scope, projectId, unfiledOnly, refre
   </section>;
 }
 
-function IndexStatusBar({ status, loading, rebuilding, error, onRetry, onRebuild }: { status: KnowledgeIndexStatus | null; loading: boolean; rebuilding: boolean; error: string; onRetry: () => void; onRebuild: () => void }) {
+function IndexStatusBar({ status, memoryStatus, loading, rebuilding, error, onRetry, onRebuild }: { status: KnowledgeIndexStatus | null; memoryStatus: KnowledgeIndexStatus | null; loading: boolean; rebuilding: boolean; error: string; onRetry: () => void; onRebuild: () => void }) {
   const tone = status?.status ?? (loading ? "indexing" : "failed");
+  const memoryReady = memoryStatus?.status === "completed" && memoryStatus.chunkCount > 0;
   return <div className="knowledge-chat-index-bar" role="status">
     <span className={`knowledge-chat-status-dot ${tone}`} aria-hidden="true" />
     <div className="knowledge-chat-index-copy"><strong>{indexStatusTitle(status, loading)}</strong><span>{indexStatusDetail(status, loading)}</span></div>
+    {memoryReady && <span className="knowledge-chat-memory-chip" title="你确认过的记忆条目已进入检索，可在提问时引用">记忆 {memoryStatus.chunkCount}</span>}
     {status?.status === "indexing" && <div className="knowledge-chat-progress" aria-label={indexStatusDetail(status, false)}><span style={{ width: `${indexProgress(status)}%` }} /></div>}
     {error && <span className="knowledge-chat-index-error" title={error}>状态更新失败</span>}
     {error && <button type="button" className="knowledge-chat-inline-button" onClick={onRetry}>重试</button>}
@@ -246,15 +252,46 @@ function ChatEmptyState({ scopeName, onAsk }: { scopeName: string; onAsk: (quest
   return <div className="knowledge-chat-empty"><div className="knowledge-chat-empty-copy"><span className="knowledge-chat-state-mark" aria-hidden="true">AI</span><h3>从 {scopeName} 中查找答案</h3><p>我会先检索相关原文，再给出回答和可打开的引用。答案不足时会明确说明，不会用猜测代替证据。</p></div><div className="knowledge-chat-suggestions" aria-label="建议问题">{SUGGESTED_QUESTIONS.map((question) => <button type="button" key={question} onClick={() => onAsk(question)}>{question}</button>)}</div></div>;
 }
 
-function ConversationTurnView({ turn, onRetry, onOpenCitation }: { turn: ConversationTurn; onRetry: () => void; onOpenCitation: (citation: KnowledgeAnswerCitation) => void }) {
+function ConversationTurnView({ turn, onRetry, onOpenCitation, onOpenMemory }: { turn: ConversationTurn; onRetry: () => void; onOpenCitation: (citation: KnowledgeAnswerCitation) => void; onOpenMemory: () => void }) {
   return <article className="knowledge-chat-turn">
     <div className="knowledge-chat-user-message"><span>我</span><p>{turn.question}</p></div>
     <div className={`knowledge-chat-assistant-message ${turn.status}`}><span className="knowledge-chat-assistant-label">AI</span>
       {turn.status === "pending" && <div className="knowledge-chat-thinking"><span className="knowledge-chat-loader" aria-hidden="true" /><p>正在检索知识库并整理答案…</p></div>}
       {turn.status === "failed" && <div className="knowledge-chat-turn-error"><strong>本次回答失败</strong><p>{turn.error}</p><button type="button" onClick={onRetry}>重试这个问题</button></div>}
-      {turn.status === "completed" && turn.answer && <><div className={`knowledge-chat-answer ${turn.answer.insufficientEvidence ? "insufficient" : ""}`}>{turn.answer.insufficientEvidence && <strong>现有资料不足以确认</strong>}<p>{turn.answer.answer}</p></div>{turn.answer.citations.length > 0 && <div className="knowledge-chat-citations"><h4>回答依据</h4><div>{turn.answer.citations.map((citation, index) => <button type="button" key={`${citation.chunkId}-${index}`} onClick={() => onOpenCitation(citation)}><span className="knowledge-chat-citation-index">{index + 1}</span><span className="knowledge-chat-citation-copy"><strong>{citation.recordTitle}</strong><small>{citation.quoteText}</small></span><span className="knowledge-chat-citation-action">查看原文</span></button>)}</div></div>}</>}
+      {turn.status === "completed" && turn.answer && <><div className={`knowledge-chat-answer ${turn.answer.insufficientEvidence ? "insufficient" : ""}`}>{turn.answer.insufficientEvidence && <strong>现有资料不足以确认</strong>}<p>{turn.answer.answer}</p></div>{turn.answer.citations.length > 0 && <div className="knowledge-chat-citations"><h4>回答依据</h4><div>{turn.answer.citations.map((citation, index) => <button type="button" key={`${citation.chunkId}-${index}`} onClick={() => onOpenCitation(citation)}><span className="knowledge-chat-citation-index">{index + 1}</span><span className="knowledge-chat-citation-copy"><strong>{citation.recordTitle}</strong><small>{citation.quoteText}</small></span><span className="knowledge-chat-citation-action">查看原文</span></button>)}</div></div>}{(turn.answer.memoryCitations ?? []).length > 0 && <div className="knowledge-chat-citations memory-citations"><h4>你的记忆</h4><div>{turn.answer.memoryCitations.map((citation, index) => <MemoryCitationCard key={`${citation.chunkId}-${index}`} citation={citation} index={index} onOpenCitation={onOpenCitation} onOpenMemory={onOpenMemory} />)}</div></div>}</>}
     </div>
   </article>;
+}
+
+function MemoryCitationCard({ citation, index, onOpenCitation, onOpenMemory }: { citation: MemoryAnswerCitation; index: number; onOpenCitation: (citation: KnowledgeAnswerCitation) => void; onOpenMemory: () => void }) {
+  const hasAudioSource = citation.source !== null;
+  return <div className="knowledge-chat-memory-card">
+    <span className="knowledge-chat-citation-index">{index + 1}</span>
+    <div className="knowledge-chat-citation-copy">
+      <strong>{citation.topic || "记忆条目"}<em className="knowledge-chat-memory-badge">记忆</em></strong>
+      {citation.beforeText && <small>此前：{citation.beforeText}</small>}
+      {citation.afterText && <small>现在：{citation.afterText}</small>}
+      <small className="knowledge-chat-memory-quote">{citation.quoteText}</small>
+    </div>
+    <span className="knowledge-chat-memory-actions">
+      {hasAudioSource && <button type="button" onClick={() => onOpenCitation(synthesizeAudioCitation(citation))}>回听原声</button>}
+      <button type="button" onClick={onOpenMemory}>查看记忆</button>
+    </span>
+  </div>;
+}
+
+/** 记忆来源的片段坐标复用既有引用跳转：合成一个标准资料引用让原导航逻辑处理。 */
+function synthesizeAudioCitation(citation: MemoryAnswerCitation): KnowledgeAnswerCitation {
+  const source = citation.source;
+  return {
+    chunkId: citation.chunkId,
+    recordId: source?.recordId ?? "",
+    recordTitle: source?.recordTitle ?? (citation.topic || "记忆条目"),
+    quoteText: citation.quoteText,
+    segmentId: source?.segmentId ?? "",
+    startMs: source?.startMs ?? 0,
+    endMs: source?.endMs ?? 0,
+  };
 }
 
 function scopeDescription(scopeName: string, scope: string, unfiledOnly: boolean) {

@@ -71,6 +71,15 @@ beforeEach(() => {
   vi.mocked(tauri.getLocalTimeline).mockResolvedValue([]);
   vi.mocked(tauri.listMemorySnapshots).mockResolvedValue([]);
   vi.mocked(tauri.listMemoryFeedback).mockResolvedValue([]);
+  vi.mocked(tauri.getMemoryProfile).mockResolvedValue({
+    id: "",
+    status: "not_built",
+    isStale: false,
+    model: "",
+    errorMessage: null,
+    updatedAt: "",
+    profile: null,
+  });
   vi.mocked(tauri.updateMemoryFeedback).mockResolvedValue({
     id: "f1",
     snapshotId: "snapshot-1",
@@ -239,5 +248,38 @@ describe("认知演化", () => {
     expect(await screen.findByText("已确认 2 条推断。")).toBeTruthy();
     // 确认后无待确认项，批量入口消失
     await waitFor(() => expect(screen.queryByRole("button", { name: /全部确认/ })).toBeNull());
+  });
+
+  it("总述卡与内容包进同一滚动体，grid 直接子元素只有两个", async () => {
+    vi.mocked(tauri.listMemorySnapshots).mockResolvedValue([
+      snapshotFixture([evolutionItem({
+        id: "e1",
+        changeType: "added",
+        beforeText: "",
+        afterText: "开始担心供应商付款周期过长。",
+        reason: "",
+      })]),
+    ]);
+    vi.mocked(tauri.getMemoryProfile).mockResolvedValue({
+      id: "p1",
+      status: "completed",
+      isStale: false,
+      model: "m",
+      errorMessage: null,
+      updatedAt: "2026-10-12T00:00:00.000Z",
+      profile: { summary: "画像摘要", stances: [], preferences: [], trajectory: [], watching: [] },
+    });
+    const { container } = renderEvolution();
+    await screen.findByText("个人总述");
+    const memoryView = container.querySelector(".memory-view");
+    expect(memoryView).toBeTruthy();
+    // .memory-view 的 grid-template-rows 只写死了两行：控件行 + 内容滚动体行。
+    // 总述卡是条件子元素，绝不能成为第三个 grid 直接子元素（那是布局重叠事故的根源）。
+    expect(memoryView!.children.length).toBe(2);
+    expect(memoryView!.children[0].className).toContain("memory-view-controls");
+    const body = memoryView!.querySelector(".evolution-body");
+    expect(body).toBeTruthy();
+    expect(body!.querySelector(".profile-card")).toBeTruthy();
+    expect(body!.querySelector(".evolution-content")).toBeTruthy();
   });
 });

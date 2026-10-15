@@ -140,7 +140,7 @@ fn validate_source_file(path: &Path) -> AppResult<()> {
     Ok(())
 }
 
-fn read_limited(path: &Path, max_bytes: u64) -> AppResult<Vec<u8>> {
+pub(crate) fn read_limited(path: &Path, max_bytes: u64) -> AppResult<Vec<u8>> {
     let mut bytes = Vec::new();
     File::open(path)?
         .take(max_bytes + 1)
@@ -155,7 +155,7 @@ fn parse_text_file(path: &Path) -> AppResult<String> {
     decode_text(read_limited(path, MAX_SOURCE_BYTES)?)
 }
 
-fn decode_text(bytes: Vec<u8>) -> AppResult<String> {
+pub(crate) fn decode_text(bytes: Vec<u8>) -> AppResult<String> {
     if let Some(content) = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
         return String::from_utf8(content.to_vec())
             .map_err(|_| AppError::Import("TXT/Markdown 文档编码无效".into()));

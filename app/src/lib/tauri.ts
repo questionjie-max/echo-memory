@@ -1,7 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  AgentScanResult,
+  AgentSessionSelection,
   AnalysisTemplate,
   AudioPreprocessorStatus,
+  ChatImportOutcome,
   DeleteRecordsResult,
   ExternalAiSettings,
   GrowthGraph,
@@ -18,6 +21,7 @@ import type {
   MemoryScope,
   MemorySnapshot,
   MemoryViewKind,
+  ProfileSnapshot,
   Project,
   RecordBrief,
   SearchResult,
@@ -124,6 +128,40 @@ export function rebuildKnowledgeIndex(projectId?: string | null, unfiledOnly = f
   return invoke<void>("rebuild_knowledge_index", { projectId: projectId ?? null, unfiledOnly });
 }
 
+export function getMemoryIndexStatus(): Promise<KnowledgeIndexStatus> {
+  return invoke<KnowledgeIndexStatus>("get_memory_index_status");
+}
+
+export function getMemoryProfile(): Promise<ProfileSnapshot> {
+  return invoke<ProfileSnapshot>("get_memory_profile");
+}
+
+export function scanLocalAgents(): Promise<AgentScanResult> {
+  return invoke<AgentScanResult>("scan_local_agents");
+}
+
+export function importAgentScans(input: {
+  sessions: AgentSessionSelection[];
+  memoryPaths: string[];
+  projectId?: string | null;
+  duplicateConfirmed: boolean;
+}): Promise<ChatImportOutcome> {
+  return invoke<ChatImportOutcome>("import_agent_scans", {
+    sessions: input.sessions,
+    memoryPaths: input.memoryPaths,
+    projectId: input.projectId ?? null,
+    duplicateConfirmed: input.duplicateConfirmed,
+  });
+}
+
+export function chatArchiveCount(): Promise<number> {
+  return invoke<number>("chat_archive_count");
+}
+
+export function generateChatDigest(): Promise<IngestResult> {
+  return invoke<IngestResult>("generate_chat_digest");
+}
+
 export function askKnowledgeBase(question: string, projectId?: string | null, unfiledOnly = false): Promise<KnowledgeAnswer> {
   return invoke<KnowledgeAnswer>("ask_knowledge_base", { question, projectId: projectId ?? null, unfiledOnly });
 }
@@ -198,6 +236,18 @@ export function importDocument(input: {
 }): Promise<IngestResult> {
   return invoke<IngestResult>("import_document", {
     sourcePath: input.sourcePath,
+    projectId: input.projectId ?? null,
+    duplicateConfirmed: input.duplicateConfirmed,
+  });
+}
+
+export function importChatExports(input: {
+  sourcePaths: string[];
+  projectId?: string | null;
+  duplicateConfirmed: boolean;
+}): Promise<ChatImportOutcome> {
+  return invoke<ChatImportOutcome>("import_chat_exports", {
+    sourcePaths: input.sourcePaths,
     projectId: input.projectId ?? null,
     duplicateConfirmed: input.duplicateConfirmed,
   });

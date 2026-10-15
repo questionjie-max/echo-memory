@@ -246,7 +246,37 @@ pub struct KnowledgeAnswerCitation {
 pub struct KnowledgeAnswer {
     pub answer: String,
     pub citations: Vec<KnowledgeAnswerCitation>,
+    #[serde(default)]
+    pub memory_citations: Vec<MemoryAnswerCitation>,
     pub insufficient_evidence: bool,
+}
+
+/// 记忆引用：来自用户确认过的记忆条目，落点在记忆视图而非音频时间点；
+/// sources 里带片段坐标时额外提供回听入口。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryAnswerCitation {
+    pub chunk_id: String,
+    pub item_id: String,
+    pub item_type: String,
+    pub topic: String,
+    pub before_text: String,
+    pub after_text: String,
+    pub occurred_at: String,
+    pub snapshot_id: String,
+    pub quote_text: String,
+    #[serde(default)]
+    pub source: Option<MemoryCitationSource>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryCitationSource {
+    pub record_id: String,
+    pub record_title: String,
+    pub segment_id: String,
+    pub start_ms: i64,
+    pub end_ms: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -279,6 +309,42 @@ pub struct KnowledgeChunkRecord {
     pub embedding: Vec<f32>,
 }
 
+/// 记忆块写入载荷：由确认过的记忆条目投影而来。
+#[derive(Debug, Clone)]
+pub struct MemoryChunkInput {
+    pub id: String,
+    pub snapshot_id: String,
+    pub view_kind: String,
+    pub item_id: String,
+    pub item_type: String,
+    pub topic: String,
+    pub before_text: String,
+    pub after_text: String,
+    pub body: String,
+    pub occurred_at: String,
+    pub sources: Vec<MemorySourceReference>,
+    pub content_hash: String,
+    pub embedding_model: String,
+    pub embedding: Vec<f32>,
+}
+
+/// 记忆块读取载荷：检索时与知识块并行召回。
+#[derive(Debug, Clone)]
+pub struct MemoryChunkRecord {
+    pub id: String,
+    pub snapshot_id: String,
+    pub item_id: String,
+    pub item_type: String,
+    pub topic: String,
+    pub body: String,
+    pub occurred_at: String,
+    pub before_text: String,
+    pub after_text: String,
+    pub sources: Vec<MemorySourceReference>,
+    pub embedding_model: String,
+    pub embedding: Vec<f32>,
+}
+
 /* -------------------------- external memory views -------------------------- */
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -305,6 +371,7 @@ pub enum MemoryViewKind {
     Timeline,
     Map,
     Evolution,
+    Profile,
 }
 
 impl MemoryViewKind {
@@ -313,6 +380,7 @@ impl MemoryViewKind {
             Self::Timeline => "timeline",
             Self::Map => "map",
             Self::Evolution => "evolution",
+            Self::Profile => "profile",
         }
     }
 }
@@ -538,6 +606,35 @@ pub struct MemoryGenerationRequest {
     pub range_end: Option<String>,
 }
 
+/// L3 个人总述：跨快照聚合的中文第一人称画像，独立于逐条记忆条目。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileSummary {
+    #[serde(default)]
+    pub summary: String,
+    #[serde(default)]
+    pub stances: Vec<String>,
+    #[serde(default)]
+    pub preferences: Vec<String>,
+    #[serde(default)]
+    pub trajectory: Vec<String>,
+    #[serde(default)]
+    pub watching: Vec<String>,
+}
+
+/// `get_memory_profile` 命令的返回：最新 profile 快照元数据 + 总述内容。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileSnapshot {
+    pub id: String,
+    pub status: String,
+    pub is_stale: bool,
+    pub model: String,
+    pub error_message: Option<String>,
+    pub updated_at: String,
+    pub profile: Option<ProfileSummary>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MemoryGenerationJob {
@@ -632,6 +729,33 @@ pub struct IngestResult {
     pub duplicate: bool,
     pub duration_ms: i64,
     pub title: String,
+}
+
+/// `import_chat_exports` 返回的单条跳过明细。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatImportSkip {
+    pub file: String,
+    pub title: Option<String>,
+    pub reason: String,
+}
+
+/// `import_chat_exports` 命令的返回：逐会话导入结果 + 跳过明细。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatImportOutcome {
+    pub imported: Vec<IngestResult>,
+    pub skipped: Vec<ChatImportSkip>,
+}
+
+/// `import_agent_scans` 的单个选中本机 Agent 会话。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSessionSelection {
+    /// "claude-code" | "codex"
+    pub agent: String,
+    /// 会话文件的绝对路径（后端会做白名单校验）
+    pub path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

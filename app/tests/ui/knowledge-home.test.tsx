@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import KnowledgeHome from "../../src/components/KnowledgeHome";
 import * as tauri from "../../src/lib/tauri";
 import type { KnowledgeIndexStatus, KnowledgeOverview } from "../../src/shared/types";
@@ -69,6 +69,7 @@ beforeEach(() => {
   vi.mocked(tauri.getKnowledgeOverview).mockResolvedValue(overviewFixture());
   vi.mocked(tauri.getKnowledgeIndexStatus).mockResolvedValue(indexFixture());
   vi.mocked(tauri.listProjects).mockResolvedValue([]);
+  vi.mocked(tauri.chatArchiveCount).mockResolvedValue(0);
 });
 
 describe("知识库主页", () => {
@@ -148,5 +149,16 @@ describe("知识库主页", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("AI 对话档案卡显示数量，生成梳理走外部 AI 门禁", async () => {
+    vi.mocked(tauri.chatArchiveCount).mockResolvedValue(182);
+    vi.mocked(tauri.generateChatDigest).mockRejectedValue(new Error("请先在设置中启用外部 AI"));
+    renderHome();
+    await screen.findByText("AI 对话档案");
+    expect(screen.getByText(/182 条导入的 AI 对话/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "生成梳理报告" }));
+    expect(await screen.findByText(/请先在设置中启用外部 AI/)).toBeTruthy();
+    expect(vi.mocked(tauri.generateChatDigest).mock.calls.length).toBe(1);
   });
 });

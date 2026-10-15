@@ -1,0 +1,151 @@
+/* L3 个人总述卡。颜色走 --em-* token，与记忆视图风格一致。 */
+.profile-card {
+  margin: 0 0 18px;
+  padding: 16px 18px;
+  border: 1px solid var(--em-hairline);
+  border-radius: 13px;
+  background: var(--em-dialog-bg);
+}
+
+.profile-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.profile-card-heading {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.profile-card-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  background: var(--em-accent-soft, var(--em-surface-raised));
+  color: var(--em-accent);
+}
+
+.profile-card-heading h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.profile-card-heading p {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--em-text-secondary);
+}
+
+.profile-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.profile-card-stale {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--em-warning, #b45309);
+}
+
+.profile-card-busy {
+  font-size: 12px;
+  color: var(--em-text-secondary);
+}
+
+.profile-card-loading,
+.profile-card-hint {
+  margin: 12px 0 0;
+  font-size: 13px;
+  color: var(--em-text-secondary);
+}
+
+.profile-card-error {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  font-size: 13px;
+  color: var(--em-danger, #b91c1c);
+}
+
+.profile-card-error p {
+  margin: 0;
+  flex: 1;
+  min-width: 200px;
+}
+
+.profile-card-error button {
+  border: 1px solid var(--em-hairline);
+  border-radius: 8px;
+  background: none;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--em-text-primary);
+  cursor: pointer;
+}
+
+.profile-card-summary-line {
+  width: 100%;
+  margin-top: 12px;
+  padding: 0;
+  border: none;
+  background: none;
+  text-align: left;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--em-text-primary);
+  cursor: pointer;
+}
+
+.profile-card-body {
+  margin-top: 12px;
+  display: grid;
+  gap: 12px;
+}
+
+.profile-card-summary {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.profile-card-section h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: var(--em-text-secondary);
+}
+
+.profile-card-section ul {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.profile-card-section p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--em-text-secondary);
+}
+
+.profile-card-collapse {
+  margin-top: 10px;
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 12px;
+  color: var(--em-text-secondary);
+  cursor: pointer;
+}

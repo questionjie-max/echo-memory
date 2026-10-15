@@ -1,5 +1,8 @@
+pub mod agent_scan;
 pub mod analysis;
 pub mod audio;
+pub mod chat_import;
+pub mod chat_digest;
 pub mod commands;
 pub mod db;
 pub mod degeneration;
@@ -13,6 +16,7 @@ pub mod inbox;
 pub mod knowledge;
 pub mod library;
 pub mod memory;
+pub mod memory_index;
 pub mod record_commands;
 pub mod state;
 pub mod transcript;
@@ -76,6 +80,8 @@ pub fn run() {
             commands::get_knowledge_overview,
             commands::get_knowledge_index_status,
             commands::rebuild_knowledge_index,
+            commands::rebuild_memory_index,
+            commands::get_memory_index_status,
             commands::ask_knowledge_base,
             commands::export_record,
             commands::export_knowledge_base,
@@ -91,6 +97,11 @@ pub fn run() {
             commands::list_jobs,
             commands::import_audio,
             commands::import_document,
+            commands::import_chat_exports,
+            commands::scan_local_agents,
+            commands::import_agent_scans,
+            commands::generate_chat_digest,
+            commands::chat_archive_count,
             commands::list_transcript_segments,
             commands::list_transcript_blocks,
             commands::update_transcript_segment,
@@ -116,6 +127,7 @@ pub fn run() {
             commands::update_memory_feedback,
             commands::update_memory_feedback_batch,
             commands::list_memory_feedback,
+            commands::get_memory_profile,
             commands::get_onboarding_status,
             commands::complete_onboarding,
             commands::reset_onboarding,

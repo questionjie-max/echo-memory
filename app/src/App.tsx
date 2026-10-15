@@ -161,7 +161,7 @@ export default function App() {
             <KnowledgeHome scope={scope} projectId={projectId} unfiledOnly={unfiledOnly} refreshKey={refreshKey} onOpenCitation={(citation) => void openCitation(citation)} onOpenKnowledgeChat={() => setMainView("chat")} />
           )}
         </> : <div className="memory-main-content">
-          {mainView === "chat" && <KnowledgeChatView scope={scope} projectId={projectId} unfiledOnly={unfiledOnly} refreshKey={refreshKey} onOpenCitation={(citation) => void openCitation(citation)} onOpenSettings={() => setSettingsOpen(true)} />}
+          {mainView === "chat" && <KnowledgeChatView scope={scope} projectId={projectId} unfiledOnly={unfiledOnly} refreshKey={refreshKey} onOpenCitation={(citation) => void openCitation(citation)} onOpenMemory={() => setMainView("evolution")} onOpenSettings={() => setSettingsOpen(true)} />}
           {mainView === "growth" && <GrowthView scope={memoryScope} onOpenSource={(source) => void openMemorySource(source)} onOpenSettings={() => setSettingsOpen(true)} />}
           {mainView === "evolution" && <EvolutionView scope={memoryScope} onOpenSource={(source) => void openMemorySource(source)} onOpenSettings={() => setSettingsOpen(true)} />}
           {mainView === "actions" && <ActionDashboard onOpenRecord={openActionRecord} />}

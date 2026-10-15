@@ -234,6 +234,8 @@ export interface KnowledgeAnswerCitation {
 export interface KnowledgeAnswer {
   answer: string;
   citations: KnowledgeAnswerCitation[];
+  /** 用户确认过的记忆条目引用（v0.8 记忆召回） */
+  memoryCitations: MemoryAnswerCitation[];
   insufficientEvidence: boolean;
 }
 
@@ -305,9 +307,74 @@ export interface IngestResult {
   title: string;
 }
 
+/** import_chat_exports 返回的单条跳过明细 */
+export interface ChatImportSkip {
+  file: string;
+  title: string | null;
+  reason: string;
+}
+
+/** import_chat_exports 命令返回：逐会话导入结果 + 跳过明细 */
+export interface ChatImportOutcome {
+  imported: IngestResult[];
+  skipped: ChatImportSkip[];
+}
+
+/** 扫描到的本机 Agent 会话 */
+export interface DiscoveredSession {
+  agent: "claude-code" | "codex";
+  path: string;
+  title: string;
+  startedAt: string;
+  sizeBytes: number;
+  oversized: boolean;
+}
+
+/** 扫描到的 Agent 记忆/规则文件 */
+export interface DiscoveredMemoryFile {
+  agentLabel: string;
+  path: string;
+  sizeBytes: number;
+}
+
+/** scan_local_agents 命令返回 */
+export interface AgentScanResult {
+  sessions: DiscoveredSession[];
+  memoryFiles: DiscoveredMemoryFile[];
+}
+
+/** import_agent_scans 的单个选中会话 */
+export interface AgentSessionSelection {
+  agent: "claude-code" | "codex";
+  path: string;
+}
+
 export interface DeleteRecordsResult {
   deletedCount: number;
   fileCleanupFailures: string[];
+}
+
+/** 记忆引用的证据坐标：指向逐字稿片段，供「回听原声」使用 */
+export interface MemoryCitationSource {
+  recordId: string;
+  recordTitle: string;
+  segmentId: string;
+  startMs: number;
+  endMs: number;
+}
+
+/** 记忆引用：来自用户确认过的记忆条目，落点在记忆视图 */
+export interface MemoryAnswerCitation {
+  chunkId: string;
+  itemId: string;
+  itemType: string;
+  topic: string;
+  beforeText: string;
+  afterText: string;
+  occurredAt: string;
+  snapshotId: string;
+  quoteText: string;
+  source: MemoryCitationSource | null;
 }
 
 /* -------------------------- external memory views -------------------------- */
@@ -327,7 +394,7 @@ export interface ExternalAiSettings {
   audioUploadConsentAt: string | null;
 }
 
-export type MemoryViewKind = "timeline" | "map" | "evolution";
+export type MemoryViewKind = "timeline" | "map" | "evolution" | "profile";
 export type MemoryGenerationStatus = "generating" | "completed" | "partial" | "failed" | "cancelled";
 
 export interface MemoryScope {
@@ -341,6 +408,26 @@ export interface MemorySourceReference {
   startMs: number | null;
   endMs: number | null;
   quoteText: string;
+}
+
+/** L3 个人总述：跨快照聚合的中文第一人称画像 */
+export interface ProfileSummary {
+  summary: string;
+  stances: string[];
+  preferences: string[];
+  trajectory: string[];
+  watching: string[];
+}
+
+/** get_memory_profile 命令返回 */
+export interface ProfileSnapshot {
+  id: string;
+  status: string;
+  isStale: boolean;
+  model: string;
+  errorMessage: string | null;
+  updatedAt: string;
+  profile: ProfileSummary | null;
 }
 
 export interface TimelineItem {

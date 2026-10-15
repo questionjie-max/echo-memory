@@ -18,6 +18,7 @@ import {
 import { formatMinutesSeconds as formatDuration, isProcessingStatus as isProcessing } from "../lib/format";
 import { getInboxStatus } from "../lib/tauri";
 import DocumentImportDialog from "./DocumentImportDialog";
+import ChatImportDialog from "./ChatImportDialog";
 import { InboxIcon, MoreIcon, PlayIcon } from "./icons";
 
 interface Props {
@@ -91,6 +92,8 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
   const [notice, setNotice] = useState("");
   const [documentImportOpen, setDocumentImportOpen] = useState(false);
   const [documentImportChanged, setDocumentImportChanged] = useState(false);
+  const [chatImportOpen, setChatImportOpen] = useState(false);
+  const [chatImportChanged, setChatImportChanged] = useState(false);
 
   async function refresh() {
     try {
@@ -450,6 +453,15 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
               选择文档
             </button>
           </div>
+          <div className="import-strip document-import-entry">
+            <div>
+              <strong>导入 AI 对话</strong>
+              <span>ChatGPT / Claude 导出、对话式 Markdown</span>
+            </div>
+            <button type="button" className="secondary-button" onClick={() => { setChatImportChanged(false); setChatImportOpen(true); }} disabled={busy}>
+              选择导出
+            </button>
+          </div>
         </div>
       )}
 
@@ -504,7 +516,7 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
                   />
                 </label>
               )}
-              {record.sourceType !== "document" && (
+              {record.sourceType !== "document" && record.sourceType !== "chat" && (
                 <button
                   type="button"
                   className="record-play"
@@ -517,7 +529,7 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
               )}
               <button type="button" className="record-main" onClick={() => onSelect(record)}>
                 <strong>{record.title}</strong>
-                <span>{new Date(record.importedAt).toLocaleString()} · {record.sourceType === "document" ? "文字文档" : formatDuration(record.audioDurationMs, true)}</span>
+                <span>{new Date(record.importedAt).toLocaleString()} · {record.sourceType === "document" ? "文字文档" : record.sourceType === "chat" ? "AI 对话" : formatDuration(record.audioDurationMs, true)}</span>
                 <span className="record-library">{record.projectName ?? "未归档"}</span>
               </button>
               <div className="record-actions">
@@ -671,6 +683,23 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
           if (created) setDocumentImportChanged(true);
           void refresh();
           onSelect(record);
+        }}
+      />
+
+      <ChatImportDialog
+        open={chatImportOpen}
+        projectId={projectId}
+        onClose={() => {
+          setChatImportOpen(false);
+          if (chatImportChanged) {
+            setChatImportChanged(false);
+            onImported();
+          }
+        }}
+        onImported={() => {
+          setNotice("AI 对话已导入，分析正在后台进行。");
+          setChatImportChanged(true);
+          void refresh();
         }}
       />
     </section>

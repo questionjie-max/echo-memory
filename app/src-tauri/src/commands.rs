@@ -17,15 +17,15 @@ use crate::memory::{self, OpenAiCompatibleClient};
 use crate::state::AppState;
 use crate::transcript::effective_text;
 use crate::types::{
-    ActionDashboard, AnalysisTemplate, AppInfo, DockReply, DockStatus, ExternalAiSettings,
-    GrowthGraph, Hotword, InboxStatus, InboxWatchFolder, IngestResult, KnowledgeAnswer,
-    KnowledgeIndexStatus, KnowledgeOverview, KnowledgeSettings, LocalAiStatus, LocalModelInfo,
-    LocalWhisperModel, McpStatus, MemoryFeedback, MemoryGenerationJob, MemoryGenerationRequest,
-    MemoryScope, MemorySnapshot, MemoryViewKind, ModelDownloadProgress, OnboardingStatus,
-    OutputStatus, PendingModelDownload, ProcessingJob, Project, RecommendedModel, RecordBrief,
-    RelatedRecord, SearchResult, SpeakerSummary, SuggestedWatchFolder, TemplateDraft,
-    TemplateSection, TimelineItem, TranscriptBlock, TranscriptSegment, TranscriptSegmentInput,
-    TranscriptionEngineStatus,
+    ActionDashboard, AnalysisTemplate, AppInfo, ChatImportOutcome, DockReply, DockStatus,
+    ExternalAiSettings, GrowthGraph, Hotword, InboxStatus, InboxWatchFolder, IngestResult,
+    KnowledgeAnswer, KnowledgeIndexStatus, KnowledgeOverview, KnowledgeSettings, LocalAiStatus,
+    LocalModelInfo, LocalWhisperModel, McpStatus, MemoryFeedback, MemoryGenerationJob,
+    MemoryGenerationRequest, MemoryScope, MemorySnapshot, MemoryViewKind, ModelDownloadProgress,
+    OnboardingStatus, OutputStatus, PendingModelDownload, ProcessingJob, ProfileSnapshot, Project,
+    RecommendedModel, RecordBrief, RelatedRecord, SearchResult, SpeakerSummary, SuggestedWatchFolder,
+    AgentSessionSelection, TemplateDraft, TemplateSection, TimelineItem, TranscriptBlock,
+    TranscriptSegment, TranscriptSegmentInput, TranscriptionEngineStatus,
 };
 use crate::whisper::{
     library_model_files, localize_speaker_label, WhisperAdapter, WhisperSession,
@@ -55,6 +55,30 @@ fn emit_processing_progress(app: &AppHandle, record_id: &str) {
 
 fn emit_knowledge_index_update(app: &AppHandle) {
     let _ = app.emit("knowledge-index-update", ());
+}
+
+/// 记忆块索引重建：确认反馈或快照生成完成后触发；不阻塞调用方，
+/// 无 AppHandle 的内部路径不发光发事件，界面状态靠下一次事件刷新。
+pub(crate) fn spawn_memory_index_rebuild(app: Option<AppHandle>, library_root: PathBuf) {
+    let heavy_jobs = crate::state::heavy_job_limiter().clone();
+    std::thread::spawn(move || {
+        let _permit = heavy_jobs.acquire();
+        match ManagedLibrary::open(library_root.clone()) {
+            Ok(library) => {
+                if let Err(error) = crate::memory_index::rebuild_memory_index(&library) {
+                    let _ = library
+                        .repository()
+                        .mark_knowledge_indexes_failed(&error.to_string());
+                }
+            }
+            Err(error) => {
+                mark_knowledge_indexes_failed(&library_root, &error.to_string());
+            }
+        }
+        if let Some(app) = app {
+            emit_knowledge_index_update(&app);
+        }
+    });
 }
 
 #[tauri::command]
@@ -485,7 +509,14 @@ pub fn pull_ollama_model(app: AppHandle, model: String) -> Result<(), String> {
     std::thread::spawn(move || {
         let result = (|| -> Result<(), PullError> {
             let failed = |message: String| PullError::Failed(message);
-            let response = ureq::post(&format!("{}/api/pull", crate::analysis::ollama_base_url()))
+            // 流式下载不能设整体超时（大模型要下几十分钟），只对「连接」和
+            // 「单次读」限时：只要进度行还在持续到达就不会触发。
+            let pull_agent = ureq::AgentBuilder::new()
+                .timeout_connect(std::time::Duration::from_secs(10))
+                .timeout_read(std::time::Duration::from_secs(120))
+                .build();
+            let response = pull_agent
+                .post(&format!("{}/api/pull", crate::analysis::ollama_base_url()))
                 .send_json(serde_json::json!({ "model": model, "stream": true }))
                 .map_err(|error| failed(format!("无法启动模型下载：{error}")))?;
             for line in BufReader::new(response.into_reader()).lines() {
@@ -546,6 +577,7 @@ pub fn pull_ollama_model(app: AppHandle, model: String) -> Result<(), String> {
 fn ollama_models() -> Result<Vec<LocalModelInfo>, String> {
     let response: serde_json::Value =
         ureq::get(&format!("{}/api/tags", crate::analysis::ollama_base_url()))
+            .timeout(crate::analysis::OLLAMA_TAGS_TIMEOUT)
             .call()
             .map_err(|error| error.to_string())?
             .into_json()
@@ -836,6 +868,32 @@ pub fn rebuild_knowledge_index(
     Ok(())
 }
 
+/// 记忆块索引状态（问知识库状态条与引用卡引导用）。
+#[tauri::command]
+pub fn get_memory_index_status(state: State<AppState>) -> Result<KnowledgeIndexStatus, String> {
+    let settings = state
+        .library
+        .repository()
+        .knowledge_settings()
+        .map_err(|error| error.to_frontend())?;
+    state
+        .library
+        .repository()
+        .get_knowledge_index_status(crate::knowledge::MEMORY_SCOPE_KEY, &settings.embedding_model)
+        .map_err(|error| error.to_frontend())
+}
+
+/// 手动重建记忆块索引（确认反馈/快照生成会自动触发，这里是排障入口）。
+#[tauri::command]
+pub fn rebuild_memory_index(
+    app: AppHandle,
+    state: State<AppState>,
+) -> Result<(), String> {
+    let library_root = state.library.root().to_path_buf();
+    spawn_memory_index_rebuild(Some(app), library_root);
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn ask_knowledge_base(
     state: State<'_, AppState>,
@@ -1088,6 +1146,201 @@ pub fn import_document(
         });
     }
     Ok(result)
+}
+
+/// AI 对话导入：同步完成解析与落库，索引与分析在后台按记录串行执行，
+/// 全部结束后调度一次记忆更新。逐会话的失败在 skipped 明细里返回。
+#[tauri::command]
+pub fn import_chat_exports(
+    app: AppHandle,
+    state: State<AppState>,
+    source_paths: Vec<String>,
+    project_id: Option<String>,
+    duplicate_confirmed: bool,
+) -> Result<ChatImportOutcome, String> {
+    let paths = source_paths.into_iter().map(PathBuf::from).collect::<Vec<_>>();
+    if paths.is_empty() {
+        return Err("未选择任何文件".to_owned());
+    }
+    let outcome = crate::chat_import::import_chat_exports(
+        &state.library,
+        &paths,
+        project_id.as_deref(),
+        duplicate_confirmed,
+    )
+    .map_err(|error| error.to_frontend())?;
+    spawn_chat_import_pipeline(app, &state, &outcome);
+    Ok(outcome)
+}
+
+/// 导入后的共享后台管线：逐记录增量索引 + 限流串行分析 + 一次记忆更新调度。
+/// AI 对话（source_type=chat）走独立车道：只建检索索引，不做逐条分析，
+/// 也不触发记忆链更新——它的结构化产出是「梳理报告」，不是记忆视图。
+fn spawn_chat_import_pipeline(app: AppHandle, state: &AppState, outcome: &ChatImportOutcome) {
+    let record_ids = outcome
+        .imported
+        .iter()
+        .map(|item| item.record_id.clone())
+        .collect::<Vec<_>>();
+    if record_ids.is_empty() {
+        return;
+    }
+    let repository = state.library.repository();
+    let mut memory_chain_record_ids = Vec::new();
+    for record_id in &record_ids {
+        let is_chat = repository
+            .get_record(record_id)
+            .map(|record| record.source_type == "chat")
+            .unwrap_or(false);
+        if !is_chat {
+            memory_chain_record_ids.push(record_id.clone());
+        }
+    }
+    let library_root = state.library.root().to_path_buf();
+    let app_state = state.clone();
+    for record_id in &record_ids {
+        spawn_incremental_index(app.clone(), library_root.clone(), record_id.clone());
+    }
+    let heavy_jobs = crate::state::heavy_job_limiter().clone();
+    let has_memory_chain = !memory_chain_record_ids.is_empty();
+    std::thread::spawn(move || {
+        for record_id in memory_chain_record_ids {
+            let _permit = heavy_jobs.acquire();
+            match ManagedLibrary::open(library_root.clone()) {
+                Ok(library) => {
+                    if analyze_with_library(&library, &record_id).is_err() {
+                        mark_processing_failed(
+                            &library_root,
+                            &record_id,
+                            None,
+                            "analyze",
+                            "AI 对话分析失败",
+                        );
+                    }
+                }
+                Err(error) => mark_processing_failed(
+                    &library_root,
+                    &record_id,
+                    None,
+                    "analyze",
+                    &error.to_string(),
+                ),
+            }
+        }
+        if has_memory_chain {
+            schedule_memory_update(app_state);
+        }
+    });
+}
+
+/// 扫描本机 Agent 会话与记忆文件（白名单位置，纯本地只读）。
+#[tauri::command]
+pub fn scan_local_agents() -> Result<crate::agent_scan::AgentScanResult, String> {
+    crate::agent_scan::scan_agent_sessions().map_err(|error| error.to_frontend())
+}
+
+/// AI 对话档案计数（知识库主页档案卡）。
+#[tauri::command]
+pub fn chat_archive_count(state: State<AppState>) -> Result<i64, String> {
+    state
+        .library
+        .repository()
+        .chat_record_count()
+        .map_err(|error| error.to_frontend())
+}
+
+/// AI 对话档案梳理：把导入的全部 AI 对话聚合成一份结构化报告（外部 AI，双同意门禁）。
+/// 报告以 chat 记录落库：可搜索、可被知识问答引用，不进录音记忆链。
+#[tauri::command]
+pub async fn generate_chat_digest(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<IngestResult, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let settings = crate::external_ai_gate::require_external_ai_consent(&state.library)
+            .map_err(|error| error.to_frontend())?;
+        if !settings.enabled {
+            return Err("请先在设置中启用外部 AI".to_owned());
+        }
+        let api_key = crate::external_ai_gate::get_api_key()
+            .map_err(|error| error.to_frontend())?
+            .ok_or_else(|| "请先配置外部 AI API Key".to_owned())?;
+        let client = crate::memory::OpenAiCompatibleClient::new(
+            &settings.base_url,
+            &settings.model,
+            &api_key,
+        )
+        .map_err(|error| error.to_frontend())?;
+        let result = crate::chat_digest::generate(&state.library, &client)
+            .map_err(|error| error.to_frontend())?;
+        if !result.duplicate {
+            spawn_incremental_index(app, state.library.root().to_path_buf(), result.record_id.clone());
+        }
+        Ok(result)
+    })
+    .await
+    .map_err(|_| "梳理报告后台任务异常".to_owned())?
+}
+
+/// 导入勾选的本机 Agent 会话与记忆/规则文件。
+/// 所有路径先过白名单校验，杜绝任意路径读取。
+#[tauri::command]
+pub fn import_agent_scans(
+    app: AppHandle,
+    state: State<AppState>,
+    sessions: Vec<AgentSessionSelection>,
+    memory_paths: Vec<String>,
+    project_id: Option<String>,
+    duplicate_confirmed: bool,
+) -> Result<ChatImportOutcome, String> {
+    if sessions.is_empty() && memory_paths.is_empty() {
+        return Err("未选择任何内容".to_owned());
+    }
+    let mut selections = Vec::new();
+    for session in &sessions {
+        let Some(agent) = crate::agent_scan::AgentKind::parse(&session.agent) else {
+            return Err(format!("未知的 Agent 类型：{}", session.agent));
+        };
+        if !crate::agent_scan::is_session_path_allowed(agent, &session.path) {
+            return Err(format!("路径不在允许的扫描范围内：{}", session.path));
+        }
+        selections.push((agent, session.path.clone()));
+    }
+    for path in &memory_paths {
+        if !crate::agent_scan::is_memory_path_allowed(path) {
+            return Err(format!("路径不在允许的扫描范围内：{path}"));
+        }
+    }
+
+    let mut outcome = if selections.is_empty() {
+        ChatImportOutcome { imported: Vec::new(), skipped: Vec::new() }
+    } else {
+        crate::chat_import::import_agent_sessions(
+            &state.library,
+            &selections,
+            project_id.as_deref(),
+            duplicate_confirmed,
+        )
+        .map_err(|error| error.to_frontend())?
+    };
+    for path in &memory_paths {
+        match crate::document::import_document(
+            &state.library,
+            Path::new(path),
+            project_id.as_deref(),
+            duplicate_confirmed,
+        ) {
+            Ok(result) => outcome.imported.push(result),
+            Err(error) => outcome.skipped.push(crate::types::ChatImportSkip {
+                file: path.clone(),
+                title: None,
+                reason: error.to_string(),
+            }),
+        }
+    }
+    spawn_chat_import_pipeline(app, &state, &outcome);
+    Ok(outcome)
 }
 
 #[tauri::command]
@@ -2163,7 +2416,10 @@ pub(crate) fn schedule_memory_update(state: AppState) {
                 continue;
             }
             match memory::generate_snapshot(&state, &request) {
-                Ok(snapshot) => state.finish_generation_job(&generation_id, &snapshot),
+                Ok(snapshot) => {
+                    state.finish_generation_job(&generation_id, &snapshot);
+                    spawn_memory_index_rebuild(None, state.library.root().to_path_buf());
+                }
                 Err(error) => state.fail_generation_job(&generation_id, error.to_frontend()),
             }
             state.clear_generation_cancel(&generation_id);
@@ -2306,13 +2562,18 @@ pub fn get_local_growth_graph(
 
 #[tauri::command]
 pub async fn generate_memory_snapshot(
+    app: AppHandle,
     state: State<'_, AppState>,
     request: MemoryGenerationRequest,
 ) -> Result<MemorySnapshot, String> {
     let state = state.inner().clone();
     state.clear_generation_cancel(&request.generation_id);
     tauri::async_runtime::spawn_blocking(move || {
-        memory::generate_snapshot(&state, &request).map_err(|error| error.to_frontend())
+        memory::generate_snapshot(&state, &request)
+            .inspect(|_| {
+                spawn_memory_index_rebuild(Some(app.clone()), state.library.root().to_path_buf());
+            })
+            .map_err(|error| error.to_frontend())
     })
     .await
     .map_err(|_| "外部 AI 生成后台任务异常，请重试".to_owned())?
@@ -2320,21 +2581,29 @@ pub async fn generate_memory_snapshot(
 
 #[tauri::command]
 pub fn start_memory_generation(
+    app: AppHandle,
     state: State<AppState>,
     request: MemoryGenerationRequest,
 ) -> Result<MemoryGenerationJob, String> {
-    start_memory_generation_with_state(state.inner().clone(), request)
+    start_memory_generation_with_state(state.inner().clone(), app, request)
         .map_err(|error| error.to_frontend())
 }
 
 fn start_memory_generation_with_state(
     state: AppState,
+    app: AppHandle,
     request: MemoryGenerationRequest,
 ) -> crate::error::AppResult<MemoryGenerationJob> {
     let job = state.start_generation_job(&request.generation_id)?;
     std::thread::spawn(move || {
         match memory::generate_snapshot(&state, &request) {
-            Ok(snapshot) => state.finish_generation_job(&request.generation_id, &snapshot),
+            Ok(snapshot) => {
+                state.finish_generation_job(&request.generation_id, &snapshot);
+                spawn_memory_index_rebuild(
+                    Some(app.clone()),
+                    state.library.root().to_path_buf(),
+                );
+            }
             Err(error) => state.fail_generation_job(&request.generation_id, error.to_frontend()),
         }
         state.clear_generation_cancel(&request.generation_id);
@@ -2350,6 +2619,36 @@ pub fn get_memory_generation_job(
     state
         .generation_job(&generation_id)
         .ok_or_else(|| "未找到该生成任务".to_owned())
+}
+
+/// 最新 L3 个人总述（含快照元数据；未生成过返回 null profile）。
+#[tauri::command]
+pub fn get_memory_profile(state: State<AppState>) -> Result<ProfileSnapshot, String> {
+    match state
+        .library
+        .repository()
+        .latest_profile_snapshot()
+        .map_err(|error| error.to_frontend())?
+    {
+        Some((snapshot, profile)) => Ok(ProfileSnapshot {
+            id: snapshot.id,
+            status: snapshot.status.as_str().to_owned(),
+            is_stale: snapshot.is_stale,
+            model: snapshot.model,
+            error_message: snapshot.error_message,
+            updated_at: snapshot.updated_at,
+            profile: Some(profile),
+        }),
+        None => Ok(ProfileSnapshot {
+            id: String::new(),
+            status: "not_built".to_owned(),
+            is_stale: false,
+            model: String::new(),
+            error_message: None,
+            updated_at: String::new(),
+            profile: None,
+        }),
+    }
 }
 
 #[tauri::command]
@@ -2396,30 +2695,38 @@ pub fn cancel_memory_generation(
 
 #[tauri::command]
 pub fn update_memory_feedback(
+    app: AppHandle,
     state: State<AppState>,
     snapshot_id: String,
     item_id: String,
     decision: String,
     note: String,
 ) -> Result<MemoryFeedback, String> {
-    state
+    let feedback = state
         .library
         .repository()
         .update_memory_feedback(&snapshot_id, &item_id, &decision, &note)
-        .map_err(|error| error.to_frontend())
+        .map_err(|error| error.to_frontend())?;
+    // 单条确认/驳回同样改变记忆块收录集合；与批量确认行为保持一致。
+    spawn_memory_index_rebuild(Some(app), state.library.root().to_path_buf());
+    Ok(feedback)
 }
 
 #[tauri::command]
 pub fn update_memory_feedback_batch(
+    app: AppHandle,
     state: State<AppState>,
     snapshot_id: String,
     entries: Vec<(String, String, String)>,
 ) -> Result<Vec<MemoryFeedback>, String> {
-    state
+    let feedback = state
         .library
         .repository()
         .update_memory_feedback_batch(&snapshot_id, &entries)
-        .map_err(|error| error.to_frontend())
+        .map_err(|error| error.to_frontend())?;
+    // 确认/驳回会改变记忆块索引的收录集合，提交后立即重建。
+    spawn_memory_index_rebuild(Some(app), state.library.root().to_path_buf());
+    Ok(feedback)
 }
 
 #[tauri::command]

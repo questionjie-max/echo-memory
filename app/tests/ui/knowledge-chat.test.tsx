@@ -46,6 +46,7 @@ function renderChat() {
       unfiledOnly={false}
       refreshKey={0}
       onOpenCitation={() => undefined}
+      onOpenMemory={() => undefined}
       onOpenSettings={() => undefined}
     />,
   );
@@ -56,6 +57,9 @@ beforeEach(() => {
   eventMock.handlers.clear();
   Element.prototype.scrollIntoView = vi.fn();
   vi.mocked(tauri.getKnowledgeIndexStatus).mockResolvedValue(indexFixture());
+  vi.mocked(tauri.getMemoryIndexStatus).mockResolvedValue(
+    indexFixture({ scopeKey: "memory", chunkCount: 0 }),
+  );
   vi.mocked(tauri.listProjects).mockResolvedValue([]);
 });
 
@@ -141,6 +145,7 @@ describe("知识库问答视图", () => {
     vi.mocked(tauri.askKnowledgeBase).mockResolvedValueOnce({
       answer: "关键结论是先验证。",
       citations: [],
+      memoryCitations: [],
       insufficientEvidence: false,
     });
 
@@ -158,6 +163,7 @@ describe("知识库问答视图", () => {
     vi.mocked(tauri.askKnowledgeBase).mockResolvedValueOnce({
       answer: "还有一项待办。",
       citations: [],
+      memoryCitations: [],
       insufficientEvidence: false,
     });
     fireEvent.click(screen.getByRole("button", { name: "重试这个问题" }));

@@ -353,3 +353,224 @@
   .document-import-header,
   .document-import-actions { background: var(--em-pane); backdrop-filter: none; }
 }
+
+/* AI 对话导入追加元素 */
+.chat-import-file-list {
+  margin: 10px 0 0;
+  padding: 0 14px;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--em-text-secondary);
+}
+
+.chat-import-file-list li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-import-duplicate-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--em-text-secondary);
+  cursor: pointer;
+}
+
+.chat-import-duplicate-toggle input {
+  accent-color: var(--em-accent);
+}
+
+.chat-import-skipped {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--em-hairline);
+  border-radius: 10px;
+  background: var(--em-surface-raised);
+}
+
+.chat-import-skipped strong {
+  font-size: 13px;
+}
+
+.chat-import-skipped ul {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.chat-import-skipped li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--em-text-secondary);
+}
+
+.chat-import-skipped li span:first-child {
+  color: var(--em-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-import-skipped li span:last-child {
+  flex-shrink: 0;
+}
+
+/* 扫描本机 Agent */
+.chat-import-scan-entry {
+  width: 100%;
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px dashed var(--em-hairline);
+  border-radius: 11px;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  color: var(--em-text-primary);
+}
+
+.chat-import-scan-entry:hover {
+  border-color: var(--em-accent);
+}
+
+.chat-import-scan-entry strong {
+  display: block;
+  font-size: 13px;
+}
+
+.chat-import-scan-entry span:last-of-type,
+.chat-import-scan-entry small {
+  display: block;
+  font-size: 12px;
+  color: var(--em-text-secondary);
+}
+
+.chat-import-agent-list {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.chat-import-agent-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--em-hairline);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.chat-import-agent-row span {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.chat-import-agent-row small {
+  flex: 1;
+  text-align: right;
+  font-size: 11px;
+  color: var(--em-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-import-scan-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.chat-import-scan-results {
+  margin-top: 12px;
+  display: grid;
+  gap: 12px;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.chat-import-agent-group {
+  border: 1px solid var(--em-hairline);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.chat-import-agent-group header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--em-surface-raised);
+}
+
+.chat-import-agent-group header strong {
+  font-size: 13px;
+}
+
+.chat-import-agent-group header span {
+  flex: 1;
+  font-size: 12px;
+  color: var(--em-text-secondary);
+}
+
+.chat-import-agent-group header button {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 12px;
+  color: var(--em-accent);
+  cursor: pointer;
+}
+
+.chat-import-agent-group ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+}
+
+.chat-import-agent-group li {
+  border-top: 1px solid var(--em-hairline);
+}
+
+.chat-import-agent-group li.oversized {
+  opacity: 0.55;
+}
+
+.chat-import-agent-group li label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.chat-import-session-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.chat-import-agent-group li small {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--em-text-secondary);
+}

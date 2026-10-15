@@ -5,6 +5,13 @@ use crate::transcript::{effective_text, normalize_chinese};
 use crate::types::{AnalysisTemplate, TranscriptSegment};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::time::Duration;
+
+/// Ollama 调用超时：不给整体时限的话，Ollama 卡死会让界面永远等待。
+/// 标签查询应当秒回；嵌入是批量小请求；生成本地大模型最长，给足余量。
+pub const OLLAMA_TAGS_TIMEOUT: Duration = Duration::from_secs(10);
+pub const OLLAMA_EMBED_TIMEOUT: Duration = Duration::from_secs(120);
+pub const OLLAMA_GENERATE_TIMEOUT: Duration = Duration::from_secs(600);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnalysisItemDraft {
@@ -95,6 +102,7 @@ impl OllamaAdapter {
         let base_url = ollama_base_url();
         let url = format!("{}/api/tags", base_url.trim_end_matches('/'));
         let tags: serde_json::Value = ureq::get(&url)
+            .timeout(OLLAMA_TAGS_TIMEOUT)
             .call()
             .map_err(|_| AppError::Analysis("Ollama 不可用。请启动本机 Ollama 服务。".into()))?
             .into_json()
@@ -141,6 +149,7 @@ impl OllamaAdapter {
             "options": { "num_ctx": 8192, "num_predict": num_predict, "temperature": temperature }
         });
         let response: serde_json::Value = ureq::post(&url)
+            .timeout(OLLAMA_GENERATE_TIMEOUT)
             .send_json(body)
             .map_err(|_| {
                 AppError::Analysis("Ollama 对话请求失败。请确认本机服务仍在运行。".into())
@@ -169,6 +178,7 @@ impl OllamaAdapter {
             "options": { "num_ctx": 8192, "num_predict": 2048, "temperature": 0.6 }
         });
         let response: serde_json::Value = ureq::post(&url)
+            .timeout(OLLAMA_GENERATE_TIMEOUT)
             .send_json(body)
             .map_err(|_| {
                 AppError::Analysis("Ollama 对话请求失败。请确认本机服务仍在运行。".into())
@@ -198,6 +208,7 @@ impl OllamaAdapter {
             "options": { "num_ctx": 16384, "num_predict": num_predict, "temperature": 0.1 }
         });
         let response: serde_json::Value = ureq::post(&url)
+            .timeout(OLLAMA_GENERATE_TIMEOUT)
             .send_json(body)
             .map_err(|_| AppError::Analysis("Ollama 请求失败。请确认本机服务仍在运行。".into()))?
             .into_json()
@@ -286,6 +297,7 @@ impl OllamaAdapter {
         });
         let url = format!("{}/api/generate", self.base_url.trim_end_matches('/'));
         let response: serde_json::Value = ureq::post(&url)
+            .timeout(OLLAMA_GENERATE_TIMEOUT)
             .send_json(body)
             .map_err(|_| {
                 AppError::Analysis("Ollama 分析请求失败。请确认本机服务仍在运行。".into())
