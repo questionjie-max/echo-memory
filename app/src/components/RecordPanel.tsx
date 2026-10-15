@@ -238,7 +238,7 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
     const selection = await open({
       multiple: true,
       directory: false,
-      filters: [{ name: "音频", extensions: ["mp3", "m4a", "wav"] }],
+      filters: [{ name: "音频", extensions: ["mp3", "m4a", "wav", "aac"] }],
     });
     if (!selection) return;
     await ingestPaths(Array.isArray(selection) ? selection : [selection]);
@@ -466,7 +466,7 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
           <div className="import-strip">
             <div>
               <strong>导入录音</strong>
-              <span>MP3、M4A、WAV，也可拖入窗口</span>
+              <span>MP3、M4A、WAV、AAC，也可拖入窗口</span>
             </div>
             <button type="button" className="primary-button" onClick={() => void chooseFiles()} disabled={busy}>
               {busy ? "处理中…" : "选择音频"}

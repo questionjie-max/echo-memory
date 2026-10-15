@@ -2129,6 +2129,47 @@ fn memory_feedback_batch_writes_atomically_and_validates_entries() {
         .is_empty());
 }
 
+/// 启动恢复候选：只有「应用退出中断」文案的转写任务入选，且受尝试次数上限约束。
+#[test]
+fn interrupted_transcriptions_are_listed_until_attempt_limit() {
+    use echo_memory_lib::db::repository::INTERRUPTED_JOB_ERROR;
+    let repository = LibraryRepository::new(database_path()).unwrap();
+    let record = repository
+        .create_record(
+            "中断恢复",
+            None,
+            Path::new("audio/interrupted.wav"),
+            "interrupted-hash",
+            1_000,
+        )
+        .unwrap();
+    let job = repository.create_job(&record.id, "transcribe").unwrap();
+    // 普通失败不属于恢复候选。
+    repository
+        .update_job_status(&job.id, "failed", Some("Ollama 未返回内容"))
+        .unwrap();
+    assert!(repository.interrupted_transcriptions().unwrap().is_empty());
+
+    repository
+        .update_job_status(&job.id, "failed", Some(INTERRUPTED_JOB_ERROR))
+        .unwrap();
+    let candidates = repository.interrupted_transcriptions().unwrap();
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].0, record.id);
+    assert_eq!(candidates[0].1, job.id);
+
+    // 尝试次数达到上限后不再自动重排（preparing 每次累加 attempt_count）。
+    for _ in 0..3 {
+        repository
+            .update_job_status(&job.id, "preparing", None)
+            .unwrap();
+        repository
+            .update_job_status(&job.id, "failed", Some(INTERRUPTED_JOB_ERROR))
+            .unwrap();
+    }
+    assert!(repository.interrupted_transcriptions().unwrap().is_empty());
+}
+
 /// 单条记录「补充信息」随分析版本落库并在 latest_analysis 完整回读；
 /// 未填写时是空串（迁移默认值），而不是 NULL。
 #[test]

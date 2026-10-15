@@ -6,6 +6,7 @@ use crate::audio::{
     preprocess, preprocessor_status, read_normalized_wav, AudioPreprocessorStatus,
 };
 use crate::db::repository::LibraryRepository;
+use crate::error::AppError;
 use crate::error::AppResult;
 use crate::external_ai_gate::{
     clear_api_key, clear_asr_api_key, external_settings, get_api_key, get_asr_api_key,
@@ -1440,15 +1441,23 @@ pub fn transcribe_record(
         let _permit = heavy_jobs.acquire();
         match ManagedLibrary::open(library_root.clone()) {
             Ok(library) => {
-                if process_record_with_transcription_job(
+                let transcription = run_pipeline_with_finite_retry(
                     Some(&progress_app),
                     &library,
                     &record_id,
-                    &job,
-                    &settings,
-                )
-                .is_ok()
-                {
+                    job.clone(),
+                    &TRANSCRIPTION_RETRY_DELAYS,
+                    |attempt_job| {
+                        process_record_with_transcription_job(
+                            Some(&progress_app),
+                            &library,
+                            &record_id,
+                            attempt_job,
+                            &settings,
+                        )
+                    },
+                );
+                if transcription.is_ok() {
                     schedule_memory_update(app_state);
                 }
             }
@@ -1488,7 +1497,170 @@ pub fn transcribe_with_library(library: &ManagedLibrary, record_id: &str) -> App
 pub fn process_record_with_library(library: &ManagedLibrary, record_id: &str) -> AppResult<()> {
     let job = reserve_transcription(library, record_id)?;
     let settings = library.repository().knowledge_settings()?;
-    process_record_with_transcription_job(None, library, record_id, &job, &settings)
+    run_pipeline_with_finite_retry(
+        None,
+        library,
+        record_id,
+        job,
+        &TRANSCRIPTION_RETRY_DELAYS,
+        |attempt_job| {
+            process_record_with_transcription_job(None, library, record_id, attempt_job, &settings)
+        },
+    )
+}
+
+/* ------------------------- v0.9：转写失败有限自动重试 ------------------------- */
+
+/// 自动重试上限与退避节奏（60 秒、180 秒）：两次之后交还用户手动重试。
+const TRANSCRIPTION_AUTO_RETRIES: usize = 2;
+const TRANSCRIPTION_RETRY_DELAYS: [std::time::Duration; TRANSCRIPTION_AUTO_RETRIES] = [
+    std::time::Duration::from_secs(60),
+    std::time::Duration::from_secs(180),
+];
+
+/// 哪些失败值得自动重试（白名单 + 永久类关键词，默认不重试）。
+///
+/// 确定性失败（模型未安装、格式不支持、退化检测、磁盘不足、未配置凭据）重试只会白等；
+/// 只兜 I/O 抖动、Ollama/第三方服务暂时不可用、预处理进程偶发失败这类可恢复类别。
+fn transcription_failure_is_retryable(error: &AppError) -> bool {
+    const PERMANENT_MARKERS: [&str; 14] = [
+        "未安装",
+        "尚未安装",
+        "不存在",
+        "不支持",
+        "仅支持",
+        "退化",
+        "校验",
+        "无效",
+        "损坏",
+        "磁盘可用空间不足",
+        "API Key",
+        "未启用",
+        "同意",
+        "尚未配置",
+    ];
+    let message = error.to_string();
+    if PERMANENT_MARKERS
+        .iter()
+        .any(|marker| message.contains(marker))
+    {
+        return false;
+    }
+    match error {
+        AppError::Io(_) => true,
+        AppError::Analysis(_) | AppError::ExternalAi(_) => true,
+        // 预处理失败（增强与系统兼容两条路都倒下）多为瞬时资源问题；格式类错误已在上面的关键词里拦截。
+        AppError::Import(message) => message.contains("预处理"),
+        _ => false,
+    }
+}
+
+/// 转写流水线的有限自动重试（只针对转写阶段）。
+///
+/// 用「逐字稿版本是否新增」区分失败阶段：转写成功后再失败的是分析，重跑转写只会白烧
+/// 时间，因此这种情况不重试。重试沿用同一个 job（attempt_count 继续累加），
+/// 失败期间 last_error 会带上「N 秒后自动重试」，前端轮询可见。
+fn run_pipeline_with_finite_retry<F>(
+    progress_app: Option<&AppHandle>,
+    library: &ManagedLibrary,
+    record_id: &str,
+    first_job: ProcessingJob,
+    delays: &[std::time::Duration],
+    mut attempt_once: F,
+) -> AppResult<()>
+where
+    F: FnMut(&ProcessingJob) -> AppResult<()>,
+{
+    let mut job = first_job;
+    let mut retries = 0usize;
+    loop {
+        let before = library
+            .repository()
+            .latest_transcript_version(record_id)
+            .ok()
+            .map(|version| version.id);
+        match attempt_once(&job) {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                let after = library
+                    .repository()
+                    .latest_transcript_version(record_id)
+                    .ok()
+                    .map(|version| version.id);
+                let transcription_succeeded = after.is_some() && after != before;
+                if transcription_succeeded
+                    || retries >= delays.len()
+                    || !transcription_failure_is_retryable(&error)
+                {
+                    return Err(error);
+                }
+                let delay = delays[retries];
+                retries += 1;
+                let wait_note = format!("{error}（{} 秒后自动重试）", delay.as_secs());
+                let repository = library.repository();
+                repository.update_job_status(&job.id, "failed", Some(&wait_note))?;
+                if let Some(app) = progress_app {
+                    emit_processing_progress(app, record_id);
+                }
+                std::thread::sleep(delay);
+                // 重试走同一 job：置回 preparing 会继续累加 attempt_count。
+                repository.update_job_status(&job.id, "preparing", None)?;
+                repository.update_record_status(record_id, "preparing")?;
+                job = repository.get_job(&job.id)?;
+                if let Some(app) = progress_app {
+                    emit_processing_progress(app, record_id);
+                }
+            }
+        }
+    }
+}
+
+/// 启动自动重排：把「上次应用退出中断」的转写任务按同一条带重试的管线重跑一次。
+/// 串行执行（每条占一个重任务额度），逐条 emit 进度让界面如实反映状态。
+pub fn resume_interrupted_transcriptions(app: AppHandle, library_root: PathBuf) {
+    std::thread::spawn(move || {
+        let Ok(library) = ManagedLibrary::open(library_root) else {
+            return;
+        };
+        let Ok(candidates) = library.repository().interrupted_transcriptions() else {
+            return;
+        };
+        for (record_id, job_id) in candidates {
+            let Ok(job) = library.repository().get_job(&job_id) else {
+                continue;
+            };
+            let Ok(settings) = library.repository().knowledge_settings() else {
+                continue;
+            };
+            let repository = library.repository();
+            if repository
+                .update_job_status(&job_id, "preparing", None)
+                .is_err()
+            {
+                continue;
+            }
+            let _ = repository.update_record_status(&record_id, "preparing");
+            let _permit = crate::state::heavy_job_limiter().acquire();
+            emit_processing_progress(&app, &record_id);
+            let _ = run_pipeline_with_finite_retry(
+                Some(&app),
+                &library,
+                &record_id,
+                job,
+                &TRANSCRIPTION_RETRY_DELAYS,
+                |attempt_job| {
+                    process_record_with_transcription_job(
+                        Some(&app),
+                        &library,
+                        &record_id,
+                        attempt_job,
+                        &settings,
+                    )
+                },
+            );
+            emit_processing_progress(&app, &record_id);
+        }
+    });
 }
 
 fn process_record_with_transcription_job(
@@ -1608,17 +1780,25 @@ pub fn retranscribe_record(
         let _permit = heavy_jobs.acquire();
         match ManagedLibrary::open(library_root.clone()) {
             Ok(library) => {
-                if run_transcription_with_engine(
+                let transcription = run_pipeline_with_finite_retry(
                     Some(&progress_app),
                     &library,
                     &record_id,
-                    &job,
-                    &language,
-                    model_path.as_deref(),
-                    engine.as_deref(),
-                )
-                .is_ok()
-                {
+                    job.clone(),
+                    &TRANSCRIPTION_RETRY_DELAYS,
+                    |attempt_job| {
+                        run_transcription_with_engine(
+                            Some(&progress_app),
+                            &library,
+                            &record_id,
+                            attempt_job,
+                            &language,
+                            model_path.as_deref(),
+                            engine.as_deref(),
+                        )
+                    },
+                );
+                if transcription.is_ok() {
                     schedule_memory_update(app_state);
                 }
             }
@@ -4012,6 +4192,149 @@ mod tests {
             !jobs.iter().any(|job| job.job_type == "analyze"),
             "转写失败后不得继续创建分析任务"
         );
+        let _ = std::fs::remove_dir_all(library.root());
+    }
+
+    #[test]
+    fn retry_classification_separates_transient_from_permanent() {
+        // 瞬时：值得自动重试。
+        assert!(transcription_failure_is_retryable(&AppError::Io(
+            std::io::Error::other("disk hiccup")
+        )));
+        assert!(transcription_failure_is_retryable(&AppError::Analysis(
+            "Ollama 请求失败。请确认本机服务仍在运行。".to_owned()
+        )));
+        assert!(transcription_failure_is_retryable(&AppError::ExternalAi(
+            "第三方转写请求超时".to_owned()
+        )));
+        assert!(transcription_failure_is_retryable(&AppError::Import(
+            "增强与系统兼容预处理均失败，原始音频仍已保留".to_owned()
+        )));
+        // 永久：重试只会白等。
+        assert!(!transcription_failure_is_retryable(&AppError::Analysis(
+            "未安装模型“qwen2.5:7b”。请先在本机执行 ollama pull qwen2.5:7b。".to_owned()
+        )));
+        assert!(!transcription_failure_is_retryable(&AppError::Import(
+            "仅支持 MP3、M4A、WAV、AAC 文件".to_owned()
+        )));
+        assert!(!transcription_failure_is_retryable(&AppError::Storage(
+            "磁盘可用空间不足：本次操作约需 1.0 GB，当前可用 200.0 MB。".to_owned()
+        )));
+        assert!(!transcription_failure_is_retryable(&AppError::ExternalAi(
+            "请先配置第三方转写 API Key".to_owned()
+        )));
+        assert!(!transcription_failure_is_retryable(&AppError::Analysis(
+            "转写结果疑似退化，已保留旧转写".to_owned()
+        )));
+        assert!(!transcription_failure_is_retryable(&AppError::Invalid(
+            "没有可重试的转写任务".to_owned()
+        )));
+    }
+
+    fn retry_test_setup(library: &ManagedLibrary, name: &str) -> (String, ProcessingJob) {
+        let repository = library.repository();
+        let (record, job) = repository
+            .create_record_with_transcription_job(
+                name,
+                &format!("自动重试-{name}"),
+                None,
+                Path::new("audio/retry.wav"),
+                &format!("hash-{name}"),
+                1_000,
+            )
+            .unwrap();
+        repository
+            .update_job_status(&job.id, "preparing", None)
+            .unwrap();
+        let job = repository.get_job(&job.id).unwrap();
+        (record.id, job)
+    }
+
+    #[test]
+    fn transient_failure_is_retried_once_then_succeeds() {
+        let library = scratch_library("retry-transient");
+        let (record_id, job) = retry_test_setup(&library, "transient");
+        let calls = std::cell::Cell::new(0);
+        let delays = [Duration::from_millis(1), Duration::from_millis(1)];
+        run_pipeline_with_finite_retry(None, &library, &record_id, job, &delays, |_job| {
+            calls.set(calls.get() + 1);
+            if calls.get() == 1 {
+                Err(AppError::Io(std::io::Error::other("transient")))
+            } else {
+                Ok(())
+            }
+        })
+        .unwrap();
+        assert_eq!(calls.get(), 2);
+        let _ = std::fs::remove_dir_all(library.root());
+    }
+
+    #[test]
+    fn permanent_failure_is_not_retried() {
+        let library = scratch_library("retry-permanent");
+        let (record_id, job) = retry_test_setup(&library, "permanent");
+        let calls = std::cell::Cell::new(0);
+        let delays = [Duration::from_millis(1), Duration::from_millis(1)];
+        let error =
+            run_pipeline_with_finite_retry(None, &library, &record_id, job, &delays, |_job| {
+                calls.set(calls.get() + 1);
+                Err(AppError::Analysis("未安装模型“small”。".to_owned()))
+            })
+            .unwrap_err();
+        assert_eq!(calls.get(), 1);
+        assert!(error.to_string().contains("未安装"));
+        let _ = std::fs::remove_dir_all(library.root());
+    }
+
+    #[test]
+    fn retry_budget_is_finite() {
+        let library = scratch_library("retry-budget");
+        let (record_id, job) = retry_test_setup(&library, "budget");
+        let calls = std::cell::Cell::new(0);
+        let delays = [Duration::from_millis(1), Duration::from_millis(1)];
+        assert!(
+            run_pipeline_with_finite_retry(None, &library, &record_id, job, &delays, |_job| {
+                calls.set(calls.get() + 1);
+                Err(AppError::Io(std::io::Error::other("always")))
+            })
+            .is_err()
+        );
+        // 首次 + 2 次重试后停止。
+        assert_eq!(calls.get(), 3);
+        let _ = std::fs::remove_dir_all(library.root());
+    }
+
+    #[test]
+    fn failure_after_transcription_succeeded_is_not_retried() {
+        let library = scratch_library("retry-stage");
+        let (record_id, job) = retry_test_setup(&library, "stage");
+        let calls = std::cell::Cell::new(0);
+        let delays = [Duration::from_millis(1), Duration::from_millis(1)];
+        let repository = library.repository();
+        let result =
+            run_pipeline_with_finite_retry(None, &library, &record_id, job, &delays, |_job| {
+                calls.set(calls.get() + 1);
+                // 模拟：转写已落库（新增逐字稿版本），随后分析阶段失败。
+                repository
+                    .save_transcript(
+                        &record_id,
+                        "whisper.cpp",
+                        "small",
+                        &[crate::types::TranscriptSegmentInput {
+                            start_ms: 0,
+                            end_ms: 1_000,
+                            speaker_label: None,
+                            original_text: "转写已经成功落库的逐字稿".to_owned(),
+                        }],
+                    )
+                    .unwrap();
+                Err(AppError::Analysis(
+                    "Ollama 请求失败。请确认本机服务仍在运行。".to_owned(),
+                ))
+            });
+        assert!(result.is_err());
+        // 转写已经成功，失败属于分析阶段：不得重跑转写。
+        assert_eq!(calls.get(), 1);
         let _ = std::fs::remove_dir_all(library.root());
     }
 }

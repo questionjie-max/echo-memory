@@ -49,7 +49,8 @@ pub fn run() {
                 .allow_directory(audio_scope_root(&library_root), true)
                 .map_err(|error| error.to_string())?;
             let handle = app.handle().clone();
-            inbox::start(handle, library_root);
+            inbox::start(handle.clone(), library_root.clone());
+            commands::resume_interrupted_transcriptions(handle, library_root);
             Ok(())
         })
         .manage(app_state)
