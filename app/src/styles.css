@@ -388,24 +388,19 @@ input::placeholder, textarea::placeholder { color: var(--em-ink-4); }
 .import-strip div { display: grid; gap: 2px; min-width: 0; }
 .import-strip strong { font-size: 12px; }
 .import-strip span { color: var(--em-ink-4); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.import-actions-grid { display: grid; gap: 0; }
-.import-actions-grid .import-strip { margin: 8px 0 0; }
-.document-import-entry { margin-top: 0 !important; }
-/* 导入组：三种入口（自然录音 / 文档 / AI 对话）收进一个可折叠容器，默认收起省纵向空间 */
-.import-group { margin: 8px 0 0; border: 1px solid var(--em-hairline-soft); border-radius: 8px; background: var(--em-surface-2); }
-.import-group-header { display: flex; align-items: center; gap: 8px; width: 100%; padding: 9px 10px; border: 0; border-radius: 8px; background: transparent; cursor: pointer; font: inherit; text-align: left; }
-.import-group-header:hover { background: var(--em-accent-soft); }
-.import-group-chevron { display: grid; place-items: center; color: var(--em-ink-3); transition: transform 0.15s ease; }
-.import-group.open .import-group-chevron { transform: rotate(180deg); }
-.import-group-header strong { font-size: 12px; }
-.import-group-summary { color: var(--em-ink-4); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.import-group-body { padding: 0 10px 10px; }
-/* 内容归类筛选条：录音 / 文档 / AI 对话；仅在混有两种以上类型时出现 */
-.kind-filter { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 2px; }
-.kind-filter button { padding: 3px 9px; border: 1px solid var(--em-hairline); border-radius: 999px; background: transparent; color: var(--em-ink-3); cursor: pointer; font-size: 10px; }
-.kind-filter button:hover { border-color: var(--em-accent-border); color: var(--em-accent-ink); }
-.kind-filter button.selected { border-color: var(--em-accent-border); background: var(--em-accent-soft); color: var(--em-accent-ink); font-weight: 650; }
-.kind-filter button span { margin-left: 3px; color: var(--em-ink-4); font-size: 9px; }
+/* 内容分组：录音 / 文档 / AI 对话各成一组，组头即该类的入口，可点击折叠 */
+.record-group { border-bottom: 1px solid var(--em-hairline-soft); }
+.record-group:last-child { border-bottom: 0; }
+.record-group-header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 8px; padding: 6px 4px 6px 0; background: var(--em-panel); }
+.record-group-toggle { display: flex; align-items: center; gap: 7px; flex: 1; min-width: 0; padding: 5px 6px; border: 0; border-radius: 6px; background: transparent; cursor: pointer; font: inherit; text-align: left; }
+.record-group-toggle:hover { background: var(--em-accent-soft); }
+.record-group-chevron { flex: 0 0 auto; display: grid; place-items: center; color: var(--em-ink-3); transition: transform 0.15s ease; }
+.record-group-toggle[aria-expanded="false"] .record-group-chevron { transform: rotate(-90deg); }
+.record-group-toggle strong { flex: 0 0 auto; white-space: nowrap; font-size: 12px; }
+.record-group-count { flex: 0 0 auto; min-width: 18px; padding: 1px 5px; border-radius: 999px; background: var(--em-surface-2); color: var(--em-ink-3); font-size: 10px; text-align: center; }
+.record-group-hint { flex: 1 1 auto; min-width: 0; color: var(--em-ink-4); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.record-group-items { margin: 0; padding: 0; list-style: none; }
+.record-group-items .record-empty { min-height: 44px !important; }
 .record-list { flex: 1; min-height: 0; margin: 0; padding: 0 2px 0 0; overflow: auto; list-style: none; }
 .record-list li { display: flex; align-items: center; gap: 8px; min-height: 72px; padding: 9px 8px; border-bottom: 1px solid var(--em-hairline-soft); border-radius: 6px; }
 .record-list li.selected { background: var(--em-accent-soft); box-shadow: inset 2px 0 0 var(--em-accent); }

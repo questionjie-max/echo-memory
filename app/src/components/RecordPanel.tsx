@@ -2,7 +2,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { DiskSpaceStatus, InboxStatus, Project, RecordBrief, RecordStatus } from "../shared/types";
 import {
   deleteRecords,
@@ -35,13 +35,35 @@ interface Props {
 type WorkspaceView = "pending" | "recent" | "archived";
 type RecordMenuMode = "menu" | "move" | "rename";
 type ContentKind = "audio" | "document" | "chat";
-type ContentFilter = "all" | ContentKind;
 
+/**
+ * 三种输入方式即三类内容：录音 / 文档 / AI 对话。
+ * 工作区列表按这三类分组，组头可点击折叠，组头右侧就是这一类的导入入口——
+ * 折叠的既是内容也是入口，点开哪一类就看到哪一类。
+ */
 const CONTENT_KINDS: ContentKind[] = ["audio", "document", "chat"];
-const CONTENT_KIND_LABEL: Record<ContentKind, string> = {
-  audio: "录音",
-  document: "文档",
-  chat: "AI 对话",
+const CONTENT_KIND_META: Record<
+  ContentKind,
+  { label: string; hint: string; action: string; primary: boolean }
+> = {
+  audio: {
+    label: "录音",
+    hint: "MP3、M4A、WAV、AAC，也可拖入窗口",
+    action: "选择音频",
+    primary: true,
+  },
+  document: {
+    label: "文档",
+    hint: "Markdown、TXT、Word 文档",
+    action: "选择文档",
+    primary: false,
+  },
+  chat: {
+    label: "AI 对话",
+    hint: "ChatGPT / Claude 导出、对话式 Markdown",
+    action: "选择导出",
+    primary: false,
+  },
 };
 
 /** 记录的内容归类：音频导入 ⇒ 录音；文档与 AI 对话各有自己的类目词。 */
@@ -51,15 +73,30 @@ function contentKind(record: RecordBrief): ContentKind {
   return "audio";
 }
 
-const IMPORT_COLLAPSE_KEY = "workspace.import-collapse";
+const GROUP_COLLAPSE_KEY = "workspace.group-collapse";
 
-/** 读取导入组折叠记忆：null=从未设置过；"collapsed"=用户收起了；"expanded"=用户展开了。 */
-function readImportPreference(): "collapsed" | "expanded" | null {
+/** 分组折叠记忆：存「已收起」的类目数组；解析失败按全部展开处理。 */
+function readCollapsedKinds(): Set<ContentKind> {
   try {
-    const raw = window.localStorage.getItem(IMPORT_COLLAPSE_KEY);
-    return raw === "collapsed" || raw === "expanded" ? raw : null;
+    const raw = window.localStorage.getItem(GROUP_COLLAPSE_KEY);
+    if (!raw) return new Set();
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return new Set();
+    const kinds = parsed.filter(
+      (kind): kind is ContentKind =>
+        typeof kind === "string" && (CONTENT_KINDS as string[]).includes(kind),
+    );
+    return new Set(kinds);
   } catch {
-    return null;
+    return new Set();
+  }
+}
+
+function writeCollapsedKinds(collapsed: Set<ContentKind>) {
+  try {
+    window.localStorage.setItem(GROUP_COLLAPSE_KEY, JSON.stringify([...collapsed]));
+  } catch {
+    // 存储不可用只影响下次打开的记忆，不影响本次折叠
   }
 }
 
@@ -83,13 +120,9 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
   const [records, setRecords] = useState<RecordBrief[]>([]);
   const [archivedRecords, setArchivedRecords] = useState<RecordBrief[]>([]);
   const [view, setView] = useState<WorkspaceView>("pending");
-  const [kindFilter, setKindFilter] = useState<ContentFilter>("all");
   const [inbox, setInbox] = useState<InboxStatus | null>(null);
   const [diskSpace, setDiskSpace] = useState<DiskSpaceStatus | null>(null);
-  // 导入组折叠：默认收起省纵向空间；用户手动开合后按记忆值走，空资料库首次打开自动展开。
-  const [importExpanded, setImportExpanded] = useState(() => readImportPreference() === "expanded");
-  const importPreferenceSet = useRef(readImportPreference() !== null);
-  const firstLoadDone = useRef(false);
+  const [collapsedKinds, setCollapsedKinds] = useState<Set<ContentKind>>(() => readCollapsedKinds());
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [projects, setProjects] = useState<Project[]>([]);
   const [moveTarget, setMoveTarget] = useState("");
@@ -158,13 +191,6 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
       ]);
       setRecords(active);
       setArchivedRecords(archived);
-      // 首次加载完成：从未手动设置过时，空资料库展开导入组（首用引导），有内容则保持默认收起。
-      if (!firstLoadDone.current) {
-        firstLoadDone.current = true;
-        if (!importPreferenceSet.current && active.length === 0 && archived.length === 0) {
-          setImportExpanded(true);
-        }
-      }
     } catch (reason) {
       setError(String(reason));
     }
@@ -290,16 +316,104 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
     : view === "archived"
       ? archivedRecords
       : records;
-  // 内容归类：录音 / 文档 / AI 对话。两种以上类型混在一起时才显示筛选条。
-  const kindCounts = useMemo(() => {
-    const counts: Record<ContentKind, number> = { audio: 0, document: 0, chat: 0 };
-    for (const record of viewRecords) counts[contentKind(record)] += 1;
-    return counts;
-  }, [viewRecords]);
-  const distinctKinds = CONTENT_KINDS.filter((kind) => kindCounts[kind] > 0).length;
-  const visible = kindFilter === "all"
-    ? viewRecords
-    : viewRecords.filter((record) => contentKind(record) === kindFilter);
+  // 待处理视图只可能有录音与文档两类待办内容：对话导入即可检索，不进这个队列。
+  const groupKinds = useMemo(
+    () => (view === "pending" ? CONTENT_KINDS.filter((kind) => kind !== "chat") : CONTENT_KINDS),
+    [view],
+  );
+  const groups = useMemo(
+    () =>
+      groupKinds.map((kind) => ({
+        kind,
+        items: viewRecords.filter((record) => contentKind(record) === kind),
+      })),
+    [groupKinds, viewRecords],
+  );
+  const visible = viewRecords;
+
+  function toggleKind(kind: ContentKind) {
+    setCollapsedKinds((current) => {
+      const next = new Set(current);
+      if (next.has(kind)) next.delete(kind);
+      else next.add(kind);
+      writeCollapsedKinds(next);
+      return next;
+    });
+  }
+
+  function startImport(kind: ContentKind) {
+    if (kind === "audio") {
+      void chooseFiles();
+      return;
+    }
+    if (kind === "document") {
+      setDocumentImportChanged(false);
+      setDocumentImportOpen(true);
+      return;
+    }
+    setChatImportChanged(false);
+    setChatImportOpen(true);
+  }
+
+  /** 记录行：分组只改变它挂在哪个 section 下，行内的勾选/播放/菜单/右键行为完全不变。 */
+  function renderRow(record: RecordBrief) {
+    const label = statusLabel(record);
+    return (
+      <li
+        key={record.id}
+        className={selectedId === record.id ? "selected" : ""}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          openRecordMenu(record, event.clientX, event.clientY);
+        }}
+      >
+        {view !== "archived" && (
+          <label className="record-check" onClick={(event) => event.stopPropagation()}>
+            <input
+              type="checkbox"
+              checked={selected.has(record.id)}
+              onChange={() => toggleOne(record.id)}
+              aria-label={`选择 ${record.title}`}
+            />
+          </label>
+        )}
+        {record.sourceType !== "document" && record.sourceType !== "chat" && (
+          <button
+            type="button"
+            className="record-play"
+            aria-label={`播放 ${record.title}`}
+            title={`播放 ${record.title}`}
+            onClick={() => onPlay(record)}
+          >
+            <PlayIcon size={13} />
+          </button>
+        )}
+        <button type="button" className="record-main" onClick={() => onSelect(record)}>
+          <strong>{record.title}</strong>
+          <span>{new Date(record.importedAt).toLocaleString()} · {record.sourceType === "document" ? "文字文档" : record.sourceType === "chat" ? "AI 对话" : formatDuration(record.audioDurationMs, true)}</span>
+          <span className="record-library">{record.projectName ?? "未归档"}</span>
+        </button>
+        <div className="record-actions">
+          <span className={`status-pill status-${view === "archived" ? "attention" : statusTone(record)}`}>
+            {view === "archived" ? "已归档" : label}
+          </span>
+          <button
+            type="button"
+            className="record-menu-button"
+            aria-label={`${record.title}操作`}
+            title="更多操作"
+            onClick={(event) => {
+              event.stopPropagation();
+              const rect = event.currentTarget.getBoundingClientRect();
+              openRecordMenu(record, rect.right - 216, rect.bottom + 4);
+            }}
+          >
+            <MoreIcon size={16} />
+          </button>
+        </div>
+      </li>
+    );
+  }
 
   const selectedIds = useMemo(
     () => visible.filter((record) => selected.has(record.id)).map((record) => record.id),
@@ -511,66 +625,6 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
         <button type="button" className={view === "archived" ? "selected" : ""} onClick={() => setView("archived")}>归档 <span>{archivedRecords.length}</span></button>
       </div>
 
-      {view !== "archived" && (
-        <section className={`import-group${importExpanded ? " open" : ""}`} aria-label="导入内容">
-          <button
-            type="button"
-            className="import-group-header"
-            aria-expanded={importExpanded}
-            aria-controls="import-group-body"
-            onClick={() => {
-              importPreferenceSet.current = true;
-              setImportExpanded((current) => {
-                const next = !current;
-                try {
-                  window.localStorage.setItem(IMPORT_COLLAPSE_KEY, next ? "expanded" : "collapsed");
-                } catch {
-                  // 存储不可用只影响下次打开的记忆，不影响本次折叠
-                }
-                return next;
-              });
-            }}
-          >
-            <span className="import-group-chevron" aria-hidden="true"><ChevronDownIcon size={13} /></span>
-            <strong>导入内容</strong>
-            <span className="import-group-summary">自然录音 · 文档 · AI 对话</span>
-          </button>
-          {importExpanded && (
-            <div className="import-group-body" id="import-group-body">
-              <div className="import-actions-grid">
-                <div className="import-strip">
-                  <div>
-                    <strong>导入录音</strong>
-                    <span>MP3、M4A、WAV、AAC，也可拖入窗口</span>
-                  </div>
-                  <button type="button" className="primary-button" onClick={() => void chooseFiles()} disabled={busy}>
-                    {busy ? "处理中…" : "选择音频"}
-                  </button>
-                </div>
-                <div className="import-strip document-import-entry">
-                  <div>
-                    <strong>导入文档</strong>
-                    <span>Markdown、TXT、Word 文档</span>
-                  </div>
-                  <button type="button" className="secondary-button" onClick={() => { setDocumentImportChanged(false); setDocumentImportOpen(true); }} disabled={busy}>
-                    选择文档
-                  </button>
-                </div>
-                <div className="import-strip document-import-entry">
-                  <div>
-                    <strong>导入 AI 对话</strong>
-                    <span>ChatGPT / Claude 导出、对话式 Markdown</span>
-                  </div>
-                  <button type="button" className="secondary-button" onClick={() => { setChatImportChanged(false); setChatImportOpen(true); }} disabled={busy}>
-                    选择导出
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-        </section>
-      )}
-
       {view !== "archived" && someSelected && (
         <div className="bulk-bar" role="group" aria-label="批量操作">
           <span className="bulk-count">已选 {selectedIds.length} 条</span>
@@ -600,99 +654,55 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
         </div>
       )}
 
-      {distinctKinds >= 2 && (
-        <div className="kind-filter" role="group" aria-label="按内容类型筛选">
-          <button
-            type="button"
-            className={kindFilter === "all" ? "selected" : ""}
-            onClick={() => setKindFilter("all")}
-          >
-            全部 <span>{viewRecords.length}</span>
-          </button>
-          {CONTENT_KINDS.filter((kind) => kindCounts[kind] > 0).map((kind) => (
-            <button
-              key={kind}
-              type="button"
-              className={kindFilter === kind ? "selected" : ""}
-              onClick={() => setKindFilter(kind)}
-            >
-              {CONTENT_KIND_LABEL[kind]} <span>{kindCounts[kind]}</span>
-            </button>
-          ))}
-        </div>
-      )}
-
-      <ul className="record-list" aria-live="polite">
-        {visible.map((record) => {
-          const label = statusLabel(record);
-          return (
-            <li
-              key={record.id}
-              className={selectedId === record.id ? "selected" : ""}
-              onContextMenu={(event) => {
-                event.preventDefault();
-                openRecordMenu(record, event.clientX, event.clientY);
-              }}
-            >
-              {view !== "archived" && (
-                <label className="record-check" onClick={(event) => event.stopPropagation()}>
-                  <input
-                    type="checkbox"
-                    checked={selected.has(record.id)}
-                    onChange={() => toggleOne(record.id)}
-                    aria-label={`选择 ${record.title}`}
-                  />
-                </label>
-              )}
-              {record.sourceType !== "document" && record.sourceType !== "chat" && (
-                <button
-                  type="button"
-                  className="record-play"
-                  aria-label={`播放 ${record.title}`}
-                  title={`播放 ${record.title}`}
-                  onClick={() => onPlay(record)}
-                >
-                  <PlayIcon size={13} />
-                </button>
-              )}
-              <button type="button" className="record-main" onClick={() => onSelect(record)}>
-                <strong>{record.title}</strong>
-                <span>{new Date(record.importedAt).toLocaleString()} · {record.sourceType === "document" ? "文字文档" : record.sourceType === "chat" ? "AI 对话" : formatDuration(record.audioDurationMs, true)}</span>
-                <span className="record-library">{record.projectName ?? "未归档"}</span>
-              </button>
-              <div className="record-actions">
-                <span className={`status-pill status-${view === "archived" ? "attention" : statusTone(record)}`}>
-                  {view === "archived" ? "已归档" : label}
-                </span>
-                <button
-                  type="button"
-                  className="record-menu-button"
-                  aria-label={`${record.title}操作`}
-                  title="更多操作"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    const rect = event.currentTarget.getBoundingClientRect();
-                    openRecordMenu(record, rect.right - 216, rect.bottom + 4);
-                  }}
-                >
-                  <MoreIcon size={16} />
-                </button>
-              </div>
-            </li>
-          );
-        })}
-        {visible.length === 0 && (
-          <li className="record-empty">
-            {kindFilter !== "all" && viewRecords.length > 0
-              ? `当前视图没有${CONTENT_KIND_LABEL[kindFilter]}内容。`
-              : view === "archived"
-                ? "没有已归档资料。"
-                : view === "pending"
-                  ? "当前没有待处理资料。录音与文档转写分析完成后，AI 对话在「最近」里查看。"
-                  : "尚未导入录音或文档。"}
-          </li>
+      <div className="record-list" aria-live="polite">
+        {view === "archived" && visible.length === 0 ? (
+          <p className="record-empty">没有已归档资料。</p>
+        ) : (
+          groups.map(({ kind, items }) => {
+            const meta = CONTENT_KIND_META[kind];
+            const collapsed = collapsedKinds.has(kind);
+            return (
+              <section className="record-group" key={kind} aria-label={`${meta.label}分组`}>
+                <div className="record-group-header">
+                  <button
+                    type="button"
+                    className="record-group-toggle"
+                    aria-expanded={!collapsed}
+                    aria-label={`${meta.label}分组（${items.length} 条）`}
+                    onClick={() => toggleKind(kind)}
+                  >
+                    <span className="record-group-chevron" aria-hidden="true"><ChevronDownIcon size={12} /></span>
+                    <strong>{meta.label}</strong>
+                    <span className="record-group-count">{items.length}</span>
+                    <span className="record-group-hint">{meta.hint}</span>
+                  </button>
+                  {view !== "archived" && (
+                    <button
+                      type="button"
+                      className={meta.primary ? "primary-button" : "secondary-button"}
+                      onClick={() => startImport(kind)}
+                      disabled={busy}
+                    >
+                      {busy && kind === "audio" ? "处理中…" : meta.action}
+                    </button>
+                  )}
+                </div>
+                {!collapsed && (
+                  <ul className="record-group-items">
+                    {items.length === 0 ? (
+                      <li className="record-empty">
+                        {view === "archived" ? "这一类暂无归档内容。" : "这一类暂无内容，可从上方导入。"}
+                      </li>
+                    ) : (
+                      items.map((record) => renderRow(record))
+                    )}
+                  </ul>
+                )}
+              </section>
+            );
+          })
         )}
-      </ul>
+      </div>
 
       {recordMenu && (
         <div

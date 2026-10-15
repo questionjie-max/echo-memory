@@ -1,11 +1,13 @@
 /**
- * 工作区「导入组折叠 + 内容归类」的行为测试。
+ * 工作区「内容分组」的行为测试。
  *
- * 盯住这次改动的三件承诺：
- *  1. 三种导入入口（自然录音 / 文档 / AI 对话）收进一个可折叠组：有内容默认收起、
- *     点击展开、偏好记入 localStorage；空资料库首次打开时自动展开；
- *  2. 内容按来源归类：AI 对话是「档案」不进「待处理」队列，徽标显示「对话档案」；
- *  3. 列表混有两种以上类型时出现筛选条，可按类型过滤。
+ * 三种输入方式即三类内容，各自是一个可折叠的分类组：组头即该类入口，组内即该类记录。
+ * 盯着这几件承诺：
+ *  1. 录音 / 文档 / AI 对话 三组默认展开，组头显示计数、格式提示与该类导入按钮；
+ *  2. 点击组头收起/展开该组内容，状态记入 localStorage 并在下次挂载生效；
+ *  3. 分组不改变行内行为：勾选、播放、更多菜单、批量选择照旧；
+ *  4. AI 对话不进「待处理」（那是待办队列），在「最近」里显示类目词「对话档案」；
+ *  5. 归档视图保留分组但不再显示导入按钮。
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
@@ -61,6 +63,14 @@ function renderPanel() {
   );
 }
 
+const mixedRecords = [
+  record("r1", "季度产品评审会议"),
+  record("r2", "客户访谈：房产系统二期"),
+  record("d1", "需求说明与验收口径", { sourceType: "document" }),
+  record("c1", "AI 对话 2026-10-14 17:20", { sourceType: "chat", hasAnalysis: false, analysisStatus: null }),
+  record("c2", "AI 对话 2026-10-13 18:03", { sourceType: "chat", hasAnalysis: false, analysisStatus: null }),
+];
+
 beforeEach(() => {
   vi.resetAllMocks();
   window.localStorage.clear();
@@ -78,98 +88,117 @@ beforeEach(() => {
   vi.mocked(tauri.listArchivedRecords).mockResolvedValue([]);
 });
 
-describe("工作区导入组与内容归类", () => {
-  it("有内容的资料库默认收起导入组，展开后可见三种入口并记住偏好", async () => {
-    vi.mocked(tauri.listRecords).mockResolvedValue([record("r1", "季度产品评审")]);
+describe("工作区内容分组", () => {
+  it("三组默认展开，组头带计数、格式提示与该类导入按钮", async () => {
+    vi.mocked(tauri.listRecords).mockResolvedValue(mixedRecords);
     renderPanel();
-    await screen.findByText("季度产品评审");
+    await screen.findByText("季度产品评审会议");
 
-    const header = screen.getByRole("button", { name: /导入内容/ });
-    expect(header.getAttribute("aria-expanded")).toBe("false");
-    // 收起时三种入口不占版面。
-    expect(screen.queryByText("导入录音")).toBeNull();
-    expect(screen.queryByText("导入 AI 对话")).toBeNull();
+    // 切到「最近」：三组齐全（待处理视图不含 AI 对话，见下一条用例）。
+    fireEvent.click(screen.getByRole("button", { name: /最近/ }));
+    await screen.findByText("AI 对话 2026-10-14 17:20");
 
-    fireEvent.click(header);
-    expect(await screen.findByText("导入录音")).toBeTruthy();
-    expect(screen.getByText("导入文档")).toBeTruthy();
-    expect(screen.getByText("导入 AI 对话")).toBeTruthy();
-    expect(header.getAttribute("aria-expanded")).toBe("true");
-    expect(window.localStorage.getItem("workspace.import-collapse")).toBe("expanded");
+    expect(screen.getByRole("button", { name: "录音分组（2 条）" }).getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByRole("button", { name: "文档分组（1 条）" }).getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByRole("button", { name: "AI 对话分组（2 条）" }).getAttribute("aria-expanded")).toBe("true");
 
-    fireEvent.click(header);
-    expect(screen.queryByText("导入录音")).toBeNull();
-    expect(window.localStorage.getItem("workspace.import-collapse")).toBe("collapsed");
+    // 组头显示该类支持的格式提示。
+    expect(screen.getByText(/MP3、M4A、WAV、AAC/)).toBeTruthy();
+    expect(screen.getByText(/Markdown、TXT、Word 文档/)).toBeTruthy();
+
+    // 组头右侧就是该类的导入入口。
+    expect(screen.getByRole("button", { name: "选择音频" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "选择文档" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "选择导出" })).toBeTruthy();
   });
 
-  it("记住的收起偏好优先于空库默认展开", async () => {
-    window.localStorage.setItem("workspace.import-collapse", "collapsed");
-    vi.mocked(tauri.listRecords).mockResolvedValue([]);
+  it("点击组头收起该类内容并记住，再点恢复", async () => {
+    vi.mocked(tauri.listRecords).mockResolvedValue(mixedRecords);
     renderPanel();
-    await screen.findByText(/当前没有待处理资料/);
-    expect(screen.queryByText("导入录音")).toBeNull();
+    await screen.findByText("季度产品评审会议");
+    fireEvent.click(screen.getByRole("button", { name: /最近/ }));
+    await screen.findByText("需求说明与验收口径");
+
+    const documentHeader = screen.getByRole("button", { name: "文档分组（1 条）" });
+    fireEvent.click(documentHeader);
+
+    // 内容收起：该类记录行不再渲染，但组头与格式提示仍在。
+    expect(screen.queryByText("需求说明与验收口径")).toBeNull();
+    expect(screen.queryByText(/Markdown、TXT、Word 文档/)).toBeTruthy();
+    expect(documentHeader.getAttribute("aria-expanded")).toBe("false");
+    expect(window.localStorage.getItem("workspace.group-collapse")).toBe('["document"]');
+
+    // 其他组不受影响。
+    expect(screen.getByText("季度产品评审会议")).toBeTruthy();
+
+    fireEvent.click(documentHeader);
+    expect(await screen.findByText("需求说明与验收口径")).toBeTruthy();
+    expect(window.localStorage.getItem("workspace.group-collapse")).toBe("[]");
   });
 
-  it("空资料库首次打开时自动展开导入组", async () => {
-    vi.mocked(tauri.listRecords).mockResolvedValue([]);
+  it("挂载时应用已记住的收起状态", async () => {
+    window.localStorage.setItem("workspace.group-collapse", '["chat"]');
+    vi.mocked(tauri.listRecords).mockResolvedValue(mixedRecords);
     renderPanel();
-    // 首次加载完成且一条记录都没有：导入组自动展开，引导首次导入。
-    expect(await screen.findByText("导入录音")).toBeTruthy();
-    expect(screen.getByText("导入文档")).toBeTruthy();
+    await screen.findByText("季度产品评审会议");
+    fireEvent.click(screen.getByRole("button", { name: /最近/ }));
+    await screen.findByText("季度产品评审会议");
+
+    expect(screen.getByRole("button", { name: "AI 对话分组（2 条）" }).getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByText("AI 对话 2026-10-14 17:20")).toBeNull();
+    expect(screen.getByText("需求说明与验收口径")).toBeTruthy();
+  });
+
+  it("分组不改变行内行为：勾选仍可批量操作，全选作用于当前视图", async () => {
+    vi.mocked(tauri.listRecords).mockResolvedValue(mixedRecords.slice(0, 3));
+    renderPanel();
+    await screen.findByText("季度产品评审会议");
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择 季度产品评审会议" }));
+    await screen.findByText("已选 1 条");
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "全选当前列表" }));
+    await screen.findByText("已选 3 条");
   });
 
   it("AI 对话不进待处理队列，在最近里显示「对话档案」", async () => {
-    vi.mocked(tauri.listRecords).mockResolvedValue([
-      record("r1", "季度产品评审"),
-      record("c1", "AI 对话 2026-10-14 17:20", {
-        sourceType: "chat",
-        hasAnalysis: false,
-        analysisStatus: null,
-        lastAnalysisError: "分析失败",
-      }),
-    ]);
+    vi.mocked(tauri.listRecords).mockResolvedValue(mixedRecords);
     renderPanel();
-    await screen.findByText("季度产品评审");
+    await screen.findByText("季度产品评审会议");
 
-    // 待处理只算真正的待办内容：对话不进来（此前 185 条对话会把队列淹没）。
+    // 待处理只可能是录音与文档：对话组不出现。
+    expect(screen.queryByRole("button", { name: "AI 对话分组（2 条）" })).toBeNull();
     expect(screen.queryByText("AI 对话 2026-10-14 17:20")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: /最近/ }));
     await screen.findByText("AI 对话 2026-10-14 17:20");
-    expect(screen.getByText("对话档案")).toBeTruthy();
-    // 对话的类目词不是待办状态：不再显示「分析失败」这类噪音。
-    expect(screen.queryByText("分析失败")).toBeNull();
+    // 对话的类目词是「对话档案」而不是待办状态。
+    expect(screen.getAllByText("对话档案").length).toBe(2);
+    expect(screen.queryByText("待分析")).toBeNull();
   });
 
-  it("混有两种类型时出现筛选条，可按类型过滤", async () => {
-    vi.mocked(tauri.listRecords).mockResolvedValue([
-      record("r1", "季度产品评审"),
-      record("d1", "需求说明文档", { sourceType: "document" }),
-      record("c1", "AI 对话 2026-10-14 17:20", { sourceType: "chat", hasAnalysis: false }),
+  it("无待处理内容时最近视图仍给全三组入口，归档视图不显示导入按钮", async () => {
+    vi.mocked(tauri.listRecords).mockResolvedValue([]);
+    vi.mocked(tauri.listArchivedRecords).mockResolvedValue([
+      record("a1", "已归档的访谈", { archivedAt: "2026-10-01T00:00:00.000Z" }),
     ]);
     renderPanel();
-    await screen.findByText("季度产品评审");
+    // 待处理视图：录音 / 文档两组入口仍在，组内提示可从这里导入。
+    expect(await screen.findByRole("button", { name: "选择音频" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "选择文档" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "选择导出" })).toBeNull();
+    expect(screen.getAllByText("这一类暂无内容，可从上方导入。").length).toBe(2);
 
-    const audioChip = screen.getByRole("button", { name: /^录音/ });
-    expect(audioChip.textContent).toContain("1");
-    expect(screen.getByRole("button", { name: /^文档/ }).textContent).toContain("1");
+    // 切到最近：三组齐全（AI 对话组此时才有意义）。
+    fireEvent.click(screen.getByRole("button", { name: /最近/ }));
+    expect(screen.getByRole("button", { name: "选择导出" })).toBeTruthy();
+    expect(screen.getAllByText("这一类暂无内容，可从上方导入。").length).toBe(3);
 
-    fireEvent.click(audioChip);
-    expect(screen.queryByText("需求说明文档")).toBeNull();
-    expect(screen.queryByText("AI 对话 2026-10-14 17:20")).toBeNull();
-    expect(screen.getByText("季度产品评审")).toBeTruthy();
-
-    fireEvent.click(screen.getByRole("button", { name: /^全部/ }));
-    expect(screen.getByText("需求说明文档")).toBeTruthy();
-  });
-
-  it("只有单一类型时不出现筛选条", async () => {
-    vi.mocked(tauri.listRecords).mockResolvedValue([
-      record("r1", "季度产品评审"),
-      record("r2", "客户访谈"),
-    ]);
-    renderPanel();
-    await screen.findByText("季度产品评审");
-    expect(screen.queryByRole("button", { name: /^全部/ })).toBeNull();
+    // 归档视图：保留分组但不给导入按钮，行徽标固定为「已归档」。
+    fireEvent.click(screen.getByRole("button", { name: /归档/ }));
+    await screen.findByText("已归档的访谈");
+    expect(screen.queryByRole("button", { name: "选择音频" })).toBeNull();
+    expect(screen.getByRole("button", { name: "录音分组（1 条）" })).toBeTruthy();
+    expect(screen.getByText("已归档")).toBeTruthy();
   });
 });
