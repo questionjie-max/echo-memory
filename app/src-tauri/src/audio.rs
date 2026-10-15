@@ -358,8 +358,21 @@ fn find_ffmpeg() -> Option<PathBuf> {
             candidates.push(macos.join("../Resources/ffmpeg"));
         }
     }
-    candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/ffmpeg"));
+    if let Some(path) = development_ffmpeg_candidate() {
+        candidates.push(path);
+    }
     candidates.into_iter().find(|path| path.is_file())
+}
+
+/// 开发构建才带源码目录回退；`#[cfg]` 门控保证 release 二进制不记录编译机路径。
+#[cfg(debug_assertions)]
+fn development_ffmpeg_candidate() -> Option<PathBuf> {
+    Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/ffmpeg"))
+}
+
+#[cfg(not(debug_assertions))]
+fn development_ffmpeg_candidate() -> Option<PathBuf> {
+    None
 }
 
 #[cfg(test)]

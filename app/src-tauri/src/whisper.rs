@@ -365,9 +365,21 @@ pub fn nltk_data_dir() -> Option<std::path::PathBuf> {
             candidates.push(macos.join("../Resources/nltk_data"));
         }
     }
-    candidates
-        .push(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/nltk_data"));
+    if let Some(path) = development_nltk_candidate() {
+        candidates.push(path);
+    }
     candidates.into_iter().find(|path| path.is_dir())
+}
+
+/// 开发构建才带源码目录回退；`#[cfg]` 门控保证 release 二进制不记录编译机路径。
+#[cfg(debug_assertions)]
+fn development_nltk_candidate() -> Option<std::path::PathBuf> {
+    Some(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/nltk_data"))
+}
+
+#[cfg(not(debug_assertions))]
+fn development_nltk_candidate() -> Option<std::path::PathBuf> {
+    None
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]

@@ -1046,12 +1046,24 @@ fn find_mcp_executable() -> Option<PathBuf> {
         }
     }
     // 编译机上的 target 目录只对开发环境有意义，release 包不应探测出开发路径。
-    if cfg!(debug_assertions) {
-        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        candidates.push(manifest_dir.join("target/debug/echo-memory-mcp"));
-        candidates.push(manifest_dir.join("target/release/echo-memory-mcp"));
-    }
+    candidates.extend(development_mcp_candidates());
     candidates.into_iter().find(|path| path.is_file())
+}
+
+/// 开发构建才带源码目录回退。必须用 `#[cfg]` 而不是 `cfg!()`：后者只是运行时判断，
+/// `env!("CARGO_MANIFEST_DIR")` 的绝对路径照样会编进 release 二进制（发布审计会拦）。
+#[cfg(debug_assertions)]
+fn development_mcp_candidates() -> Vec<PathBuf> {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    vec![
+        manifest_dir.join("target/debug/echo-memory-mcp"),
+        manifest_dir.join("target/release/echo-memory-mcp"),
+    ]
+}
+
+#[cfg(not(debug_assertions))]
+fn development_mcp_candidates() -> Vec<PathBuf> {
+    Vec::new()
 }
 
 #[tauri::command]

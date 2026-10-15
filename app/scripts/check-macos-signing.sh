@@ -75,6 +75,16 @@ else
 fi
 
 echo "-- Apple notarization credentials --"
+# 三种方式任一可用即可（与 release-macos.sh 的提交分支一一对应）：
+#   1) 钥匙串凭据档 NOTARYTOOL_KEYCHAIN_PROFILE（凭据不落环境变量，推荐）
+#   2) Apple ID + app-specific password + Team ID
+#   3) App Store Connect API Key 三件套
+profile_ready=0
+if [ -n "${NOTARYTOOL_KEYCHAIN_PROFILE:-}" ]; then
+  profile_ready=1
+  ok "notarytool keychain profile (${NOTARYTOOL_KEYCHAIN_PROFILE})"
+fi
+
 apple_id_ready=1
 apple_id_missing=""
 for name in APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
@@ -122,8 +132,8 @@ if [ "$api_key_ready" -eq 0 ] && [ -n "$api_key_missing" ]; then
   fi
 fi
 
-if [ "$apple_id_ready" -eq 0 ] && [ "$api_key_ready" -eq 0 ]; then
-  missing "Notarization credentials (set APPLE_ID + APPLE_PASSWORD + APPLE_TEAM_ID, or APPLE_API_ISSUER + APPLE_API_KEY + APPLE_API_KEY_PATH)"
+if [ "$profile_ready" -eq 0 ] && [ "$apple_id_ready" -eq 0 ] && [ "$api_key_ready" -eq 0 ]; then
+  missing "Notarization credentials (set NOTARYTOOL_KEYCHAIN_PROFILE, or APPLE_ID + APPLE_PASSWORD + APPLE_TEAM_ID, or APPLE_API_ISSUER + APPLE_API_KEY + APPLE_API_KEY_PATH)"
 fi
 
 echo "--------------------------"

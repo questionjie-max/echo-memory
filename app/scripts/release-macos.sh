@@ -45,20 +45,30 @@ if [ -z "$dmg_path" ]; then
   exit 1
 fi
 
-echo "== Auditing app bundle before notarization =="
-# 公证前审计：开发残留/本机路径/开发端点/sourcemap 有问题就直接中止，省掉一次无效公证。
-app_dir="$ROOT_DIR/src-tauri/target/release/bundle/macos"
-app_path=""
-while IFS= read -r candidate; do
-  if [ -z "$app_path" ] || [ "$candidate" -nt "$app_path" ]; then
-    app_path="$candidate"
-  fi
-done < <(find "$app_dir" -maxdepth 1 -type d -name "*.app" -print 2>/dev/null)
-if [ -z "$app_path" ]; then
-  echo "No built .app found in $app_dir; cannot audit" >&2
+echo "== Auditing the built DMG before notarization =="
+# 审计对象是 DMG 里的 .app：Tauri 打完 DMG 会清掉中间产物目录里的 .app，
+# 而 DMG 内的才是用户真正拿到的东西。有问题直接中止，省掉一次无效公证。
+audit_mount="$(mktemp -d "${TMPDIR:-/tmp}/echo-memory-audit.XXXXXX")"
+if ! hdiutil attach "$dmg_path" -nobrowse -readonly -mountpoint "$audit_mount" -quiet; then
+  echo "Failed to mount $dmg_path for auditing" >&2
   exit 1
 fi
-bash "$ROOT_DIR/scripts/audit-bundle.sh" "$app_path"
+audited_app="$(find "$audit_mount" -maxdepth 1 -name '*.app' -print -quit 2>/dev/null)"
+if [ -z "$audited_app" ]; then
+  hdiutil detach "$audit_mount" -quiet || true
+  echo "No .app found inside $dmg_path; cannot audit" >&2
+  exit 1
+fi
+set +e
+bash "$ROOT_DIR/scripts/audit-bundle.sh" "$audited_app"
+audit_status=$?
+set -e
+hdiutil detach "$audit_mount" -quiet || true
+rmdir "$audit_mount" 2>/dev/null || true
+if [ "$audit_status" -ne 0 ]; then
+  echo "Bundle audit failed; aborting before notarization" >&2
+  exit 1
+fi
 
 echo "== Notarizing and stapling DMG =="
 if [ -n "${NOTARYTOOL_KEYCHAIN_PROFILE:-}" ]; then
