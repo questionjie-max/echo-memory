@@ -21,6 +21,7 @@ import {
   type NavItem,
 } from "./SettingsKit";
 import { getStoredTheme, setTheme, type Theme } from "../lib/theme";
+import { formatBytes } from "../lib/format";
 import { useModelDownloads } from "./useModelDownloads";
 import type {
   AnalysisTemplate,
@@ -32,12 +33,14 @@ import type {
   KnowledgeSettings,
   LocalAiStatus,
   OutputStatus,
+  StorageReport,
   TemplateSection,
   TranscriptionEngineStatus,
 } from "../shared/types";
 import {
   addHotword,
   addInboxWatchFolder,
+  cleanupStorage,
   clearExternalAiApiKey,
   clearExternalAsrApiKey,
   clearHfToken,
@@ -49,6 +52,7 @@ import {
   getInboxStatus,
   getLocalAiStatus,
   getOutputStatus,
+  getStorageReport,
   getTranscriptCorrectionEnabled,
   getTranscriptionEngineStatus,
   listAnalysisTemplates,
@@ -78,7 +82,7 @@ interface Props {
   onOpenKnowledge?: () => void;
 }
 
-type SettingsTab = "models" | "templates" | "inbox" | "hotwords" | "output" | "about";
+type SettingsTab = "models" | "templates" | "inbox" | "hotwords" | "output" | "storage" | "about";
 
 /**
  * 六个分区按「用户带着什么问题来」划分：
@@ -91,6 +95,7 @@ const NAV: NavItem[] = [
   { id: "inbox", label: "收件箱" },
   { id: "hotwords", label: "词汇库" },
   { id: "output", label: "产出" },
+  { id: "storage", label: "存储" },
   { id: "about", label: "关于" },
 ];
 
@@ -100,6 +105,7 @@ const TAB_TITLES: Record<SettingsTab, { title: string; subtitle: string }> = {
   inbox: { title: "收件箱", subtitle: "监听文件夹，新音频一出现就自动导入并转写。" },
   hotwords: { title: "词汇库", subtitle: "专有名词、人名、产品名，避免被写成同音字。" },
   output: { title: "产出", subtitle: "分析、逐字稿和成稿以 Markdown 写到你的文件夹。" },
+  storage: { title: "存储", subtitle: "看清资料库占用了多少磁盘；清理只动可再生的中间文件。" },
   about: { title: "关于", subtitle: "版本、数据目录和首次启动引导。" },
 };
 
@@ -115,6 +121,9 @@ export default function SettingsPanel({ open: visible, onClose, onOpenKnowledge 
   const [hotwordInput, setHotwordInput] = useState("");
   const [correctionEnabled, setCorrectionEnabled] = useState(false);
   const [output, setOutput] = useState<OutputStatus | null>(null);
+  const [storage, setStorage] = useState<StorageReport | null>(null);
+  const [storageBusy, setStorageBusy] = useState(false);
+  const [storageNotice, setStorageNotice] = useState("");
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [editing, setEditing] = useState<AnalysisTemplate | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
@@ -169,6 +178,9 @@ export default function SettingsPanel({ open: visible, onClose, onOpenKnowledge 
     void refresh();
     if (tab === "output") {
       void getOutputStatus().then(setOutput).catch(() => setOutput(null));
+    }
+    if (tab === "storage") {
+      void getStorageReport().then(setStorage).catch(() => setStorage(null));
     }
     if (tab === "inbox" || tab === "hotwords") {
       void loadInbox();
@@ -665,6 +677,72 @@ export default function SettingsPanel({ open: visible, onClose, onOpenKnowledge 
             </Stack>
           ) : (
             <p className="em-empty">正在读取产出设置…</p>
+          )
+        ) : tab === "storage" ? (
+          storage ? (
+            <Stack>
+              <Card
+                title="占用总览"
+                description="音轨是本地资产：清理只删除可再生的中间文件，原件与产出永不自动删除。"
+                status={<Pill tone={storage.availableBytes < storage.lowSpaceThresholdBytes ? "warn" : "accent"}>{`磁盘可用 ${formatBytes(storage.availableBytes)}`}</Pill>}
+              >
+                <List>
+                  <ListRow static title="录音原件" meta="audio/ —— 回听与重新分析的依据" trail={formatBytes(storage.audioBytes)} />
+                  <ListRow static title="转写中间文件" meta="raw/ —— 预处理产物，可安全清理" trail={formatBytes(storage.rawBytes)} />
+                  <ListRow static title="Whisper 模型" meta="models/ —— 删除后需重新下载" trail={formatBytes(storage.modelsBytes)} />
+                  <ListRow static title="产出文件" meta="exports/ —— 你的导出结果" trail={formatBytes(storage.exportsBytes)} />
+                  <ListRow static title="数据库" meta="memory.db 及日志" trail={formatBytes(storage.databaseBytes)} />
+                  <ListRow static title="合计" trail={formatBytes(storage.totalBytes)} />
+                </List>
+              </Card>
+              <Card
+                title="清理可再生的中间文件"
+                description="删除失败或中断转写留下的预处理音频、已删除记录的无主残留。活跃转写任务与未知目录一律不碰。"
+              >
+                <div className="em-field-row">
+                  <input
+                    className="em-input"
+                    readOnly
+                    value={
+                      storage.cleanupFiles > 0
+                        ? `可清理 ${storage.cleanupFiles} 个文件 / ${formatBytes(storage.cleanupBytes)}`
+                        : "当前没有可清理的中间文件"
+                    }
+                  />
+                  <div className="em-card-actions">
+                    <Button
+                      disabled={storageBusy || storage.cleanupFiles === 0}
+                      onClick={() => {
+                        setStorageBusy(true);
+                        setStorageNotice("");
+                        void cleanupStorage()
+                          .then((result) => {
+                            setStorageNotice(`已释放 ${formatBytes(result.removedBytes)}（${result.removedFiles} 个文件）`);
+                            return getStorageReport().then(setStorage);
+                          })
+                          .catch((reason) => setError(String(reason)))
+                          .finally(() => setStorageBusy(false));
+                      }}
+                    >
+                      {storageBusy ? "清理中…" : "立即清理"}
+                    </Button>
+                  </div>
+                </div>
+                {storageNotice && <p className="em-empty">{storageNotice}</p>}
+              </Card>
+              <Card title="为什么不自动删除录音" description="得到大脑等云端产品的原件只是云端副本的本地缓存，7 天过期删掉没有损失；回声记忆的音频是本地资产，删掉就永久失去回听与重新分析能力。因此这里只做「可见 + 可控 + 低空间提醒」，把删除的决定权留给你。">
+                <Field label="资料库位置" hint="所有音频、逐字稿、分析与数据库都在这个目录里；备份它等于备份全部数据。">
+                  <div className="em-field-row">
+                    <input className="em-input" readOnly value={storage.libraryPath} />
+                    <div className="em-card-actions">
+                      <Button onClick={() => void navigator.clipboard.writeText(storage.libraryPath).then(() => show("saved", "已复制路径"))}>复制路径</Button>
+                    </div>
+                  </div>
+                </Field>
+              </Card>
+            </Stack>
+          ) : (
+            <p className="em-empty">正在读取存储信息…</p>
           )
         ) : (
           <Stack>

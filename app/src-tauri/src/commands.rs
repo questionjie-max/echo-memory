@@ -3378,6 +3378,21 @@ pub struct DiskSpaceStatus {
     pub low_space_threshold_bytes: u64,
 }
 
+/// 资料库存储占用报表：分类体量 + 磁盘可用 + 可清理预览（不删任何东西）。
+#[tauri::command]
+pub fn get_storage_report(state: State<AppState>) -> Result<crate::storage::StorageReport, String> {
+    crate::storage::storage_report(&state.library).map_err(|error| error.to_frontend())
+}
+
+/// 无损清理可再生的中间文件（raw/ 下的预处理产物），返回释放体量。
+/// 原件与产出永不自动删除——音轨是本地资产，删掉就失去回听与重新分析能力。
+#[tauri::command]
+pub fn cleanup_storage(
+    state: State<AppState>,
+) -> Result<crate::storage::StorageCleanupResult, String> {
+    crate::storage::run_cleanup(&state.library).map_err(|error| error.to_frontend())
+}
+
 /// 资料库所在卷的可用空间与提醒阈值：前端据此显示低空间横幅（只提醒，不阻塞使用）。
 #[tauri::command]
 pub fn get_disk_space_status(state: State<AppState>) -> Result<DiskSpaceStatus, String> {

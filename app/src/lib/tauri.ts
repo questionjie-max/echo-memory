@@ -26,6 +26,8 @@ import type {
   Project,
   RecordBrief,
   SearchResult,
+  StorageCleanupResult,
+  StorageReport,
   StoredAnalysis,
   TemplateSection,
   TimelineItem,
@@ -512,6 +514,14 @@ export function getAppInfo(): Promise<AppInfo> {
 
 export function getDiskSpaceStatus(): Promise<DiskSpaceStatus> {
   return invoke<DiskSpaceStatus>("get_disk_space_status");
+}
+
+export function getStorageReport(): Promise<StorageReport> {
+  return invoke<StorageReport>("get_storage_report");
+}
+
+export function cleanupStorage(): Promise<StorageCleanupResult> {
+  return invoke<StorageCleanupResult>("cleanup_storage");
 }
 
 export function getTranscriptionEngineStatus(): Promise<TranscriptionEngineStatus> {

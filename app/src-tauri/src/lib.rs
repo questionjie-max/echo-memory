@@ -20,6 +20,7 @@ pub mod memory;
 pub mod memory_index;
 pub mod record_commands;
 pub mod state;
+pub mod storage;
 pub mod transcript;
 pub mod types;
 pub mod whisper;
@@ -55,6 +56,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::app_info,
             commands::get_disk_space_status,
+            commands::get_storage_report,
+            commands::cleanup_storage,
             commands::get_transcription_engine_status,
             commands::set_transcription_engine,
             commands::set_hf_token,

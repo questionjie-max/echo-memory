@@ -775,6 +775,29 @@ export interface DiskSpaceStatus {
   lowSpaceThresholdBytes: number;
 }
 
+/** get_storage_report 返回：资料库分类占用 + 可清理预览。 */
+export interface StorageReport {
+  libraryPath: string;
+  totalBytes: number;
+  audioBytes: number;
+  rawBytes: number;
+  modelsBytes: number;
+  exportsBytes: number;
+  databaseBytes: number;
+  availableBytes: number;
+  /** 低空间提醒阈值（后端下发，前端不硬编码）。 */
+  lowSpaceThresholdBytes: number;
+  /** 可再生的中间文件体量（预览值，清理前不删除）。 */
+  cleanupBytes: number;
+  cleanupFiles: number;
+}
+
+/** cleanup_storage 返回：本次释放的体量。 */
+export interface StorageCleanupResult {
+  removedBytes: number;
+  removedFiles: number;
+}
+
 export interface SpeakerSummary {
   label: string;
   segmentCount: number;
