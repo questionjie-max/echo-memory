@@ -221,6 +221,15 @@ export function PlayIcon({ size = 14 }: { size?: number }) {
   );
 }
 
+/** 折叠开关：收起态指向下，展开后由外层 CSS 旋转 -180°。 */
+export function ChevronDownIcon({ size = 14 }: { size?: number }) {
+  return (
+    <Icon size={size}>
+      <path d="m6 9 6 6 6-6" />
+    </Icon>
+  );
+}
+
 export function MoreIcon({ size = 16 }: { size?: number }) {
   return (
     <Icon size={size}>

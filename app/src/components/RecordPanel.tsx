@@ -2,7 +2,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { DiskSpaceStatus, InboxStatus, Project, RecordBrief, RecordStatus } from "../shared/types";
 import {
   deleteRecords,
@@ -20,7 +20,7 @@ import { formatBytes, formatMinutesSeconds as formatDuration, isProcessingStatus
 import { getInboxStatus } from "../lib/tauri";
 import DocumentImportDialog from "./DocumentImportDialog";
 import ChatImportDialog from "./ChatImportDialog";
-import { InboxIcon, MoreIcon, PlayIcon } from "./icons";
+import { InboxIcon, ChevronDownIcon, MoreIcon, PlayIcon } from "./icons";
 
 interface Props {
   projectId: string | null;
@@ -34,6 +34,34 @@ interface Props {
 
 type WorkspaceView = "pending" | "recent" | "archived";
 type RecordMenuMode = "menu" | "move" | "rename";
+type ContentKind = "audio" | "document" | "chat";
+type ContentFilter = "all" | ContentKind;
+
+const CONTENT_KINDS: ContentKind[] = ["audio", "document", "chat"];
+const CONTENT_KIND_LABEL: Record<ContentKind, string> = {
+  audio: "录音",
+  document: "文档",
+  chat: "AI 对话",
+};
+
+/** 记录的内容归类：音频导入 ⇒ 录音；文档与 AI 对话各有自己的类目词。 */
+function contentKind(record: RecordBrief): ContentKind {
+  if (record.sourceType === "document") return "document";
+  if (record.sourceType === "chat") return "chat";
+  return "audio";
+}
+
+const IMPORT_COLLAPSE_KEY = "workspace.import-collapse";
+
+/** 读取导入组折叠记忆：null=从未设置过；"collapsed"=用户收起了；"expanded"=用户展开了。 */
+function readImportPreference(): "collapsed" | "expanded" | null {
+  try {
+    const raw = window.localStorage.getItem(IMPORT_COLLAPSE_KEY);
+    return raw === "collapsed" || raw === "expanded" ? raw : null;
+  } catch {
+    return null;
+  }
+}
 
 interface RecordMenuState {
   record: RecordBrief;
@@ -55,8 +83,13 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
   const [records, setRecords] = useState<RecordBrief[]>([]);
   const [archivedRecords, setArchivedRecords] = useState<RecordBrief[]>([]);
   const [view, setView] = useState<WorkspaceView>("pending");
+  const [kindFilter, setKindFilter] = useState<ContentFilter>("all");
   const [inbox, setInbox] = useState<InboxStatus | null>(null);
   const [diskSpace, setDiskSpace] = useState<DiskSpaceStatus | null>(null);
+  // 导入组折叠：默认收起省纵向空间；用户手动开合后按记忆值走，空资料库首次打开自动展开。
+  const [importExpanded, setImportExpanded] = useState(() => readImportPreference() === "expanded");
+  const importPreferenceSet = useRef(readImportPreference() !== null);
+  const firstLoadDone = useRef(false);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [projects, setProjects] = useState<Project[]>([]);
   const [moveTarget, setMoveTarget] = useState("");
@@ -125,6 +158,13 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
       ]);
       setRecords(active);
       setArchivedRecords(archived);
+      // 首次加载完成：从未手动设置过时，空资料库展开导入组（首用引导），有内容则保持默认收起。
+      if (!firstLoadDone.current) {
+        firstLoadDone.current = true;
+        if (!importPreferenceSet.current && active.length === 0 && archived.length === 0) {
+          setImportExpanded(true);
+        }
+      }
     } catch (reason) {
       setError(String(reason));
     }
@@ -245,11 +285,21 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
   }
 
   const pending = useMemo(() => records.filter(isPending), [records]);
-  const visible = view === "pending"
+  const viewRecords = view === "pending"
     ? pending
     : view === "archived"
       ? archivedRecords
       : records;
+  // 内容归类：录音 / 文档 / AI 对话。两种以上类型混在一起时才显示筛选条。
+  const kindCounts = useMemo(() => {
+    const counts: Record<ContentKind, number> = { audio: 0, document: 0, chat: 0 };
+    for (const record of viewRecords) counts[contentKind(record)] += 1;
+    return counts;
+  }, [viewRecords]);
+  const distinctKinds = CONTENT_KINDS.filter((kind) => kindCounts[kind] > 0).length;
+  const visible = kindFilter === "all"
+    ? viewRecords
+    : viewRecords.filter((record) => contentKind(record) === kindFilter);
 
   const selectedIds = useMemo(
     () => visible.filter((record) => selected.has(record.id)).map((record) => record.id),
@@ -462,35 +512,63 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
       </div>
 
       {view !== "archived" && (
-        <div className="import-actions-grid">
-          <div className="import-strip">
-            <div>
-              <strong>导入录音</strong>
-              <span>MP3、M4A、WAV、AAC，也可拖入窗口</span>
+        <section className={`import-group${importExpanded ? " open" : ""}`} aria-label="导入内容">
+          <button
+            type="button"
+            className="import-group-header"
+            aria-expanded={importExpanded}
+            aria-controls="import-group-body"
+            onClick={() => {
+              importPreferenceSet.current = true;
+              setImportExpanded((current) => {
+                const next = !current;
+                try {
+                  window.localStorage.setItem(IMPORT_COLLAPSE_KEY, next ? "expanded" : "collapsed");
+                } catch {
+                  // 存储不可用只影响下次打开的记忆，不影响本次折叠
+                }
+                return next;
+              });
+            }}
+          >
+            <span className="import-group-chevron" aria-hidden="true"><ChevronDownIcon size={13} /></span>
+            <strong>导入内容</strong>
+            <span className="import-group-summary">自然录音 · 文档 · AI 对话</span>
+          </button>
+          {importExpanded && (
+            <div className="import-group-body" id="import-group-body">
+              <div className="import-actions-grid">
+                <div className="import-strip">
+                  <div>
+                    <strong>导入录音</strong>
+                    <span>MP3、M4A、WAV、AAC，也可拖入窗口</span>
+                  </div>
+                  <button type="button" className="primary-button" onClick={() => void chooseFiles()} disabled={busy}>
+                    {busy ? "处理中…" : "选择音频"}
+                  </button>
+                </div>
+                <div className="import-strip document-import-entry">
+                  <div>
+                    <strong>导入文档</strong>
+                    <span>Markdown、TXT、Word 文档</span>
+                  </div>
+                  <button type="button" className="secondary-button" onClick={() => { setDocumentImportChanged(false); setDocumentImportOpen(true); }} disabled={busy}>
+                    选择文档
+                  </button>
+                </div>
+                <div className="import-strip document-import-entry">
+                  <div>
+                    <strong>导入 AI 对话</strong>
+                    <span>ChatGPT / Claude 导出、对话式 Markdown</span>
+                  </div>
+                  <button type="button" className="secondary-button" onClick={() => { setChatImportChanged(false); setChatImportOpen(true); }} disabled={busy}>
+                    选择导出
+                  </button>
+                </div>
+              </div>
             </div>
-            <button type="button" className="primary-button" onClick={() => void chooseFiles()} disabled={busy}>
-              {busy ? "处理中…" : "选择音频"}
-            </button>
-          </div>
-          <div className="import-strip document-import-entry">
-            <div>
-              <strong>导入文档</strong>
-              <span>Markdown、TXT、Word 文档</span>
-            </div>
-            <button type="button" className="secondary-button" onClick={() => { setDocumentImportChanged(false); setDocumentImportOpen(true); }} disabled={busy}>
-              选择文档
-            </button>
-          </div>
-          <div className="import-strip document-import-entry">
-            <div>
-              <strong>导入 AI 对话</strong>
-              <span>ChatGPT / Claude 导出、对话式 Markdown</span>
-            </div>
-            <button type="button" className="secondary-button" onClick={() => { setChatImportChanged(false); setChatImportOpen(true); }} disabled={busy}>
-              选择导出
-            </button>
-          </div>
-        </div>
+          )}
+        </section>
       )}
 
       {view !== "archived" && someSelected && (
@@ -519,6 +597,28 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
           <button type="button" className="link-button" onClick={() => setSelected(new Set())} disabled={bulkBusy}>
             取消选择
           </button>
+        </div>
+      )}
+
+      {distinctKinds >= 2 && (
+        <div className="kind-filter" role="group" aria-label="按内容类型筛选">
+          <button
+            type="button"
+            className={kindFilter === "all" ? "selected" : ""}
+            onClick={() => setKindFilter("all")}
+          >
+            全部 <span>{viewRecords.length}</span>
+          </button>
+          {CONTENT_KINDS.filter((kind) => kindCounts[kind] > 0).map((kind) => (
+            <button
+              key={kind}
+              type="button"
+              className={kindFilter === kind ? "selected" : ""}
+              onClick={() => setKindFilter(kind)}
+            >
+              {CONTENT_KIND_LABEL[kind]} <span>{kindCounts[kind]}</span>
+            </button>
+          ))}
         </div>
       )}
 
@@ -583,11 +683,13 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
         })}
         {visible.length === 0 && (
           <li className="record-empty">
-            {view === "archived"
-              ? "没有已归档资料。"
-              : view === "pending"
-                ? "当前没有待处理资料。"
-                : "尚未导入录音或文档。"}
+            {kindFilter !== "all" && viewRecords.length > 0
+              ? `当前视图没有${CONTENT_KIND_LABEL[kindFilter]}内容。`
+              : view === "archived"
+                ? "没有已归档资料。"
+                : view === "pending"
+                  ? "当前没有待处理资料。录音与文档转写分析完成后，AI 对话在「最近」里查看。"
+                  : "尚未导入录音或文档。"}
           </li>
         )}
       </ul>
@@ -735,11 +837,14 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
 }
 
 function isPending(record: RecordBrief) {
+  // AI 对话导入即入库可检索，没有「待处理」语义；留在待处理里会把这个队列彻底淹没。
+  if (record.sourceType === "chat") return false;
   return !record.hasTranscript || !record.hasAnalysis || !record.projectId;
 }
 
 function statusLabel(record: RecordBrief) {
   if (isProcessing(record.status) || record.status === "failed") return STATUS_LABEL[record.status];
+  if (record.sourceType === "chat") return "对话档案";
   if (!record.hasAnalysis && record.lastAnalysisError) return "分析失败";
   if (record.analysisStatus === "stale") return "分析需要更新";
   if (record.analysisStatus === "incomplete") return "分析不完整";
@@ -750,8 +855,11 @@ function statusLabel(record: RecordBrief) {
 }
 
 function statusTone(record: RecordBrief) {
-  if (record.status === "failed" || (!record.hasAnalysis && record.lastAnalysisError)) return "error";
+  if (record.status === "failed") return "error";
   if (isProcessing(record.status)) return "progress";
+  // 对话档案是类目词而非待办状态：不用错误/待办色，与「已完成」同色。
+  if (record.sourceType === "chat") return "done";
+  if (!record.hasAnalysis && record.lastAnalysisError) return "error";
   if (record.analysisStatus === "completed" && record.analysisHasQualityWarning) return "attention";
   if (isPending(record)) return "attention";
   return "done";
