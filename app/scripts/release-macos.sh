@@ -26,8 +26,14 @@ version="$(node -p "require('./src-tauri/tauri.conf.json').version")"
 echo "== Building signed and notarized macOS DMG =="
 # 路径重映射：release 二进制的 panic/断点信息会记录编译时的绝对路径（本机用户名与
 # 仓库位置）。发布包面向公开下载，这里统一改写成中性前缀，审计脚本会守住这条。
-# 代价是 RUSTFLAGS 变化会触发一次全量重编译（每个发布周期一次）。
+# 两套都要做：RUSTFLAGS 管 rustc 记录的位置；whisper.cpp 由 whisper-rs-sys 的 cmake
+# 构建，其 __FILE__/调试信息路径只认 CMAKE_* 透传（该 crate 的 build.rs 会把以
+# CMAKE_/WHISPER_ 开头的环境变量 define 进 cmake），CFLAGS/CXXFLAGS 传不到。
+# 工程根先映射到 /project，否则 $HOME 映射后仍会留下 Desktop/SOLOPLAY 这类可识别的目录名。
+# 代价是构建标志变化会触发依赖重编译（每个发布周期一次）。
 export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$HOME=/build"
+export CMAKE_C_FLAGS="${CMAKE_C_FLAGS:-} -ffile-prefix-map=$ROOT_DIR=/project -ffile-prefix-map=$HOME=/build"
+export CMAKE_CXX_FLAGS="${CMAKE_CXX_FLAGS:-} -ffile-prefix-map=$ROOT_DIR=/project -ffile-prefix-map=$HOME=/build"
 "$ROOT_DIR/node_modules/.bin/tauri" build --bundles dmg --ci
 
 bundle_dir="$ROOT_DIR/src-tauri/target/release/bundle/dmg"
