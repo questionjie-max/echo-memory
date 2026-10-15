@@ -13,8 +13,20 @@ pub mod repository;
 /// 开发期回退到源码目录。发布包里的二进制不能依赖编译机上的源码路径 ——
 /// 换台机器那个路径不存在，资料库初始化会直接失败。
 fn migrations_dir() -> PathBuf {
-    bundled_migrations_dir()
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("migrations"))
+    bundled_migrations_dir().unwrap_or_else(source_migrations_dir)
+}
+
+/// 源码目录回退只进开发构建：`env!("CARGO_MANIFEST_DIR")` 会把编译机的绝对路径
+/// 编进二进制（发布审计会把它当本机路径泄漏拦下；`--remap-path-prefix` 管不到 env!）。
+/// 发布包始终走 `Resources/migrations`，不需要这条回退。
+#[cfg(debug_assertions)]
+fn source_migrations_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("migrations")
+}
+
+#[cfg(not(debug_assertions))]
+fn source_migrations_dir() -> PathBuf {
+    PathBuf::from("migrations")
 }
 
 /// 可执行文件在 `Contents/MacOS/`，迁移文件随 resources 落在 `Contents/Resources/`。
