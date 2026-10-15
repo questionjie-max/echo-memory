@@ -603,6 +603,7 @@ input::placeholder, textarea::placeholder { color: var(--em-ink-4); }
 .analysis-action strong { font-size: 13px; }
 .analysis-action p { margin: 3px 0 0; color: var(--em-ink-3); font-size: 10px; }
 .analysis-warning { background: var(--em-warn-soft); color: var(--em-warn-ink); }
+.space-warning { margin: 0 0 8px; padding: 8px 10px; border: 1px solid var(--em-warn-border); border-radius: var(--em-r-sm); background: var(--em-warn-soft); color: var(--em-warn-ink); font-size: 11px; line-height: 1.45; }
 .analysis-sections { display: grid; gap: 0; }
 .analysis-section { padding: 10px 0; border-bottom: 1px solid var(--em-hairline-soft); }
 .analysis-section:last-child { border-bottom: 0; }

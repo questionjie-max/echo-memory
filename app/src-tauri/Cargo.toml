@@ -55,6 +55,10 @@ zip = { version = "2.4", default-features = false, features = ["deflate"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 whisper-rs = { version = "0.13.2", features = ["metal"] }
 
+# 磁盘空间预检（statfs）；libc 本就在 tauri 的依赖闭包里，这里只是直接引用。
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 # 集成测试复用 uuid 解析校验
 uuid = { version = "1", features = ["v4"] }

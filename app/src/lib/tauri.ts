@@ -6,6 +6,7 @@ import type {
   AudioPreprocessorStatus,
   ChatImportOutcome,
   DeleteRecordsResult,
+  DiskSpaceStatus,
   ExternalAiSettings,
   GrowthGraph,
   IngestResult,
@@ -507,6 +508,10 @@ export function saveDockMessageToOutput(title: string, content: string): Promise
 
 export function getAppInfo(): Promise<AppInfo> {
   return invoke<AppInfo>("app_info");
+}
+
+export function getDiskSpaceStatus(): Promise<DiskSpaceStatus> {
+  return invoke<DiskSpaceStatus>("get_disk_space_status");
 }
 
 export function getTranscriptionEngineStatus(): Promise<TranscriptionEngineStatus> {

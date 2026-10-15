@@ -3,9 +3,10 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useMemo, useState } from "react";
-import type { InboxStatus, Project, RecordBrief, RecordStatus } from "../shared/types";
+import type { DiskSpaceStatus, InboxStatus, Project, RecordBrief, RecordStatus } from "../shared/types";
 import {
   deleteRecords,
+  getDiskSpaceStatus,
   importAudio,
   listArchivedRecords,
   listProjects,
@@ -15,7 +16,7 @@ import {
   transcribeRecord,
   updateRecordTitle,
 } from "../lib/tauri";
-import { formatMinutesSeconds as formatDuration, isProcessingStatus as isProcessing } from "../lib/format";
+import { formatBytes, formatMinutesSeconds as formatDuration, isProcessingStatus as isProcessing } from "../lib/format";
 import { getInboxStatus } from "../lib/tauri";
 import DocumentImportDialog from "./DocumentImportDialog";
 import ChatImportDialog from "./ChatImportDialog";
@@ -55,6 +56,7 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
   const [archivedRecords, setArchivedRecords] = useState<RecordBrief[]>([]);
   const [view, setView] = useState<WorkspaceView>("pending");
   const [inbox, setInbox] = useState<InboxStatus | null>(null);
+  const [diskSpace, setDiskSpace] = useState<DiskSpaceStatus | null>(null);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [projects, setProjects] = useState<Project[]>([]);
   const [moveTarget, setMoveTarget] = useState("");
@@ -87,6 +89,26 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
       void stopProcessing.then((unlisten) => unlisten());
     };
   }, []);
+
+  // 磁盘空间提醒：进页面查一次、每分钟刷新；只提示不阻塞（低空间时导入/转写会明确报错）。
+  useEffect(() => {
+    let cancelled = false;
+    const loadDiskSpace = async () => {
+      try {
+        const status = await getDiskSpaceStatus();
+        if (!cancelled) setDiskSpace(status);
+      } catch {
+        if (!cancelled) setDiskSpace(null);
+      }
+    };
+    void loadDiskSpace();
+    const timer = window.setInterval(() => void loadDiskSpace(), 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -424,6 +446,12 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
           {inbox.counts.pending > 0 ? ` · ${inbox.counts.pending} 个文件处理中` : ""}
           {inbox.counts.imported > 0 ? ` · 已自动导入 ${inbox.counts.imported}` : ""}
           {inbox.counts.failed > 0 ? ` · ${inbox.counts.failed} 个失败` : ""}
+        </p>
+      )}
+
+      {diskSpace && diskSpace.availableBytes < diskSpace.lowSpaceThresholdBytes && (
+        <p className="space-warning" role="alert">
+          磁盘可用空间仅剩 {formatBytes(diskSpace.availableBytes)}：导入、转写或模型下载可能失败，请先释放空间。
         </p>
       )}
 

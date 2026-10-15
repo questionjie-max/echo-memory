@@ -769,6 +769,12 @@ export interface AppInfo {
   libraryPath: string;
 }
 
+/** get_disk_space_status 返回：资料库所在卷的可用空间与提醒阈值。 */
+export interface DiskSpaceStatus {
+  availableBytes: number;
+  lowSpaceThresholdBytes: number;
+}
+
 export interface SpeakerSummary {
   label: string;
   segmentCount: number;

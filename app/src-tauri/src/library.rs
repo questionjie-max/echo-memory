@@ -54,6 +54,12 @@ impl ManagedLibrary {
                 return Ok(duplicate_result(existing));
             }
         }
+        // 复制前做空间预检：宁可拒绝导入，也不留下半份拷贝（重复文件已在上面提前返回）。
+        let source_bytes = fs::metadata(source).map(|meta| meta.len()).unwrap_or(0);
+        crate::disk_space::ensure_free_space(
+            &self.root,
+            crate::disk_space::required_import_bytes(source_bytes),
+        )?;
         let duration_ms = audio_duration_ms(source, &extension)?;
         let now = Utc::now();
         let record_id = Uuid::new_v4().to_string();

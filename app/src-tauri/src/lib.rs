@@ -6,6 +6,7 @@ pub mod chat_import;
 pub mod commands;
 pub mod db;
 pub mod degeneration;
+pub mod disk_space;
 pub mod dock;
 pub mod document;
 pub mod error;
@@ -53,6 +54,7 @@ pub fn run() {
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
             commands::app_info,
+            commands::get_disk_space_status,
             commands::get_transcription_engine_status,
             commands::set_transcription_engine,
             commands::set_hf_token,

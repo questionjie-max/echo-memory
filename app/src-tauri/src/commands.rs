@@ -231,6 +231,12 @@ pub fn download_whisper_model(
     }
     clear_cancellation(&model_id);
     let models_dir = state.library.root().join("models");
+    // 574MB 模型 + 临时文件：空间不足立即拒绝，不启动下载（续传也一样先查）。
+    crate::disk_space::ensure_free_space(
+        &models_dir,
+        crate::disk_space::required_model_download_bytes(crate::whisper::RECOMMENDED_MODEL_BYTES),
+    )
+    .map_err(|error| error.to_frontend())?;
     let library = state.library.clone();
     std::thread::spawn(move || {
         let temporary = models_dir.join(crate::whisper::recommended_model_partial());
@@ -1651,6 +1657,7 @@ fn run_whisperx_transcription(
     let audio_path = library.root().join(relative_audio);
     let output_dir = library.root().join("raw").join(record_id);
     std::fs::create_dir_all(&output_dir)?;
+    ensure_preprocess_space(&audio_path, preprocessed)?;
     let metadata = preprocess(&audio_path, preprocessed)?;
     repository.update_job_status(&job.id, "transcribing", None)?;
     repository.update_record_status(record_id, "transcribing")?;
@@ -1711,6 +1718,20 @@ fn run_whisperx_transcription(
         );
     }
     Ok(())
+}
+
+/// 预处理会把音频放大成 16kHz 单声道 WAV：写前确认目标卷有余量。
+/// 三个转写引擎（内嵌 / whisperX / 第三方）共用这一道预检，避免各自漏检。
+fn ensure_preprocess_space(
+    audio_path: &std::path::Path,
+    output: &std::path::Path,
+) -> AppResult<()> {
+    let input_bytes = std::fs::metadata(audio_path).map_or(0, |meta| meta.len());
+    let target = output.parent().unwrap_or(audio_path);
+    crate::disk_space::ensure_free_space(
+        target,
+        crate::disk_space::required_preprocess_bytes(input_bytes),
+    )
 }
 
 fn reserve_transcription(library: &ManagedLibrary, record_id: &str) -> AppResult<ProcessingJob> {
@@ -1795,6 +1816,7 @@ fn run_transcription_with_engine(
         let output_dir = library.root().join("raw").join(record_id);
         std::fs::create_dir_all(&output_dir)?;
         repository.update_job_progress(&job.id, "preprocessing", 0, 1)?;
+        ensure_preprocess_space(&audio_path, &preprocessed)?;
         let metadata = preprocess(&audio_path, &preprocessed)?;
         repository.update_job_progress(&job.id, "chunking", 1, 1)?;
         let samples = read_normalized_wav(&preprocessed)?;
@@ -1971,6 +1993,7 @@ fn run_external_transcription(
             record.audio_duration_ms,
             |mut request| {
                 repository.update_job_progress(&job.id, "preprocessing", 0, 1)?;
+                ensure_preprocess_space(&request.audio_path, &preprocessed)?;
                 let metadata = preprocess(&request.audio_path, &preprocessed)?;
                 request.audio_path = preprocessed.clone();
                 repository.update_job_progress(&job.id, "transcribing", 0, 1)?;
@@ -3346,6 +3369,24 @@ pub fn app_info(state: State<AppState>) -> AppInfo {
         version: env!("CARGO_PKG_VERSION").to_owned(),
         library_path: state.library.root().to_string_lossy().to_string(),
     }
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiskSpaceStatus {
+    pub available_bytes: u64,
+    pub low_space_threshold_bytes: u64,
+}
+
+/// 资料库所在卷的可用空间与提醒阈值：前端据此显示低空间横幅（只提醒，不阻塞使用）。
+#[tauri::command]
+pub fn get_disk_space_status(state: State<AppState>) -> Result<DiskSpaceStatus, String> {
+    let available_bytes = crate::disk_space::available_bytes(state.library.root())
+        .map_err(|error| error.to_frontend())?;
+    Ok(DiskSpaceStatus {
+        available_bytes,
+        low_space_threshold_bytes: crate::disk_space::LOW_SPACE_WARNING_BYTES,
+    })
 }
 
 /* ------------------------------ v0.5.0：说话人分离 ------------------------------ */
