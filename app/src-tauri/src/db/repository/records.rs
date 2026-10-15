@@ -263,7 +263,9 @@ impl LibraryRepository {
 
         let now = Utc::now().to_rfc3339();
         // 记录的展示时间用对话/文档的真实时间；导入时刻只作为 updated_at 兜底。
-        let imported_at = occurred_at.filter(|stamp| !stamp.trim().is_empty()).unwrap_or(now.as_str());
+        let imported_at = occurred_at
+            .filter(|stamp| !stamp.trim().is_empty())
+            .unwrap_or(now.as_str());
         let transcript_version_id = Uuid::new_v4().to_string();
         let preprocessing_json = serde_json::json!({ "sourceFormat": source_format }).to_string();
         let mut connection = self.connect()?;

@@ -121,6 +121,23 @@ export interface AnalysisResultItem {
   end_ms?: number;
 }
 
+/** 长内容的章节导航：start_ms 由首个引用片段推导，可点击跳播。 */
+export interface AnalysisChapter {
+  title: string;
+  summary?: string;
+  citation_segment_ids?: string[];
+  start_ms?: number;
+  end_ms?: number;
+}
+
+/** 逐字金句：quote_text 已通过后端逐字校验。 */
+export interface AnalysisHighlight {
+  quote_text?: string;
+  citation_segment_ids?: string[];
+  start_ms?: number;
+  end_ms?: number;
+}
+
 export interface AnalysisContent {
   summary: string;
   key_points?: AnalysisResultItem[];
@@ -129,6 +146,9 @@ export interface AnalysisContent {
   open_questions?: AnalysisResultItem[];
   quality_warning?: string;
   custom_sections?: AnalysisCustomSection[];
+  /** v0.9：章节与金句；老分析没有这两个字段。 */
+  chapters?: AnalysisChapter[];
+  highlights?: AnalysisHighlight[];
 }
 
 export interface TemplateSection {
@@ -265,6 +285,8 @@ export interface StoredAnalysis {
   templateVersion: string;
   templateId: string | null;
   templateSnapshotJson: string;
+  /** 生成本次分析时填写的「补充信息」；空串表示未填写。 */
+  analysisInstruction: string;
   createdAt: string;
 }
 
@@ -745,6 +767,35 @@ export interface OutputStatus {
 export interface AppInfo {
   version: string;
   libraryPath: string;
+}
+
+/** get_disk_space_status 返回：资料库所在卷的可用空间与提醒阈值。 */
+export interface DiskSpaceStatus {
+  availableBytes: number;
+  lowSpaceThresholdBytes: number;
+}
+
+/** get_storage_report 返回：资料库分类占用 + 可清理预览。 */
+export interface StorageReport {
+  libraryPath: string;
+  totalBytes: number;
+  audioBytes: number;
+  rawBytes: number;
+  modelsBytes: number;
+  exportsBytes: number;
+  databaseBytes: number;
+  availableBytes: number;
+  /** 低空间提醒阈值（后端下发，前端不硬编码）。 */
+  lowSpaceThresholdBytes: number;
+  /** 可再生的中间文件体量（预览值，清理前不删除）。 */
+  cleanupBytes: number;
+  cleanupFiles: number;
+}
+
+/** cleanup_storage 返回：本次释放的体量。 */
+export interface StorageCleanupResult {
+  removedBytes: number;
+  removedFiles: number;
 }
 
 export interface SpeakerSummary {

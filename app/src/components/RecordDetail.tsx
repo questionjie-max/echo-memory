@@ -171,6 +171,10 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
   const [titleDraft, setTitleDraft] = useState(record.title);
   const [templates, setTemplates] = useState<AnalysisTemplate[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState(record.analysisTemplateId ?? "builtin-standard");
+  // 单条记录的「补充信息」：默认回显最近一次分析填过的内容（只在进入记录时回填一次，
+  // 避免处理中的轮询刷新覆盖用户正在输入的文字）。
+  const [instructionDraft, setInstructionDraft] = useState("");
+  const instructionPrefilled = useRef(false);
   const [aiStatus, setAiStatus] = useState<LocalAiStatus | null>(null);
   const [retranscribeOpen, setRetranscribeOpen] = useState(false);
   const [retranscribeEngine, setRetranscribeEngine] = useState<"embedded" | "whisperx">("embedded");
@@ -227,6 +231,10 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
     if (analysisResult.status === "fulfilled") {
       setAnalysis(stored ? parseAnalysis(stored.contentJson) : null);
       if (latest) setSelectedTemplateId(latest.analysisTemplateId ?? stored?.templateId ?? "builtin-standard");
+      if (!instructionPrefilled.current) {
+        instructionPrefilled.current = true;
+        setInstructionDraft(stored?.analysisInstruction ?? "");
+      }
     }
 
     const [audioResult, projectsResult, templatesResult, localAiResult] = await auxiliaryPromise;
@@ -268,6 +276,8 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
     setEditingTitle(false);
     setTitleDraft(record.title);
     setSelectedTemplateId(record.analysisTemplateId ?? "builtin-standard");
+    setInstructionDraft("");
+    instructionPrefilled.current = false;
     setRetranscribeOpen(false);
     completionNotified.current = false;
     void load();
@@ -340,7 +350,7 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
     setError("");
     completionNotified.current = false;
     try {
-      await analyzeRecord(record.id, selectedTemplateId);
+      await analyzeRecord(record.id, selectedTemplateId, instructionDraft);
       setCurrentRecord((value) => ({ ...value, status: "analyzing", lastAnalysisError: null }));
       setActiveTab("analysis");
       onChanged();
@@ -740,6 +750,18 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
                 </button>
               </div>
             </div>
+            <label className="analysis-instruction">
+              <span>补充要求（可选）</span>
+              <textarea
+                rows={2}
+                maxLength={500}
+                value={instructionDraft}
+                disabled={busy || isProcessing(currentRecord.status)}
+                placeholder="告诉 AI 这次分析多关注什么、怎么组织，例如：只保留待办事项，按负责人分组"
+                onChange={(event) => setInstructionDraft(event.target.value)}
+              />
+              <em>补充要求优先于模板与默认结构；引用与证据规则始终生效，留空即按模板默认输出。</em>
+            </label>
             {currentRecord.analysisStatus === "stale" && (
               <p className="analysis-warning">{isDocument ? "文档正文" : "逐字稿"}已变化，当前分析基于旧版本，请重新分析。</p>
             )}
@@ -885,6 +907,26 @@ function AnalysisView({ analysis, documentMode, blocking, onSeek }: { analysis: 
         <h3>摘要</h3>
         <p>{analysis.summary || "暂未生成有效摘要。"}</p>
       </section>
+      {analysis.chapters?.length ? (
+        <section className="analysis-section">
+          <h3>章节</h3>
+          <ul className="analysis-list">
+            {analysis.chapters.map((chapter, index) => {
+              const segmentId = chapter.citation_segment_ids?.[0];
+              const locatable = Boolean(segmentId) && (documentMode || typeof chapter.start_ms === "number");
+              const meta = [chapter.summary, documentMode ? null : formatTime(chapter.start_ms ?? 0)].filter(Boolean).join(" · ");
+              return (
+                <li key={`chapter-${index}`}>
+                  <button type="button" disabled={!locatable} onClick={() => locatable && onSeek(chapter.start_ms ?? 0, segmentId!)}>
+                    <strong>{chapter.title}</strong>
+                    {meta && <span>{meta}</span>}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ) : null}
       {groups.map(([name, items, emptyText]) => (
         <section className="analysis-section" key={name}>
           <h3>{name}</h3>
@@ -906,6 +948,26 @@ function AnalysisView({ analysis, documentMode, blocking, onSeek }: { analysis: 
           ) : <p className="analysis-empty">{emptyText}</p>}
         </section>
       ))}
+      {analysis.highlights?.length ? (
+        <section className="analysis-section">
+          <h3>金句</h3>
+          <ul className="analysis-list">
+            {analysis.highlights.map((highlight, index) => {
+              const segmentId = highlight.citation_segment_ids?.[0];
+              const locatable = Boolean(segmentId) && (documentMode || typeof highlight.start_ms === "number");
+              const meta = documentMode ? "" : formatTime(highlight.start_ms ?? 0);
+              return (
+                <li key={`highlight-${index}`}>
+                  <button type="button" disabled={!locatable} onClick={() => locatable && onSeek(highlight.start_ms ?? 0, segmentId!)}>
+                    <strong>“{highlight.quote_text ?? ""}”</strong>
+                    {meta && <span>{meta}</span>}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ) : null}
       {analysis.custom_sections?.map((section) => (
         <section className="analysis-section custom-analysis-section" key={section.key}>
           <h3>{section.title}</h3>

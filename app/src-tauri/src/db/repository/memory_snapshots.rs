@@ -375,7 +375,10 @@ impl LibraryRepository {
         let snapshot = crate::types::MemorySnapshot {
             id,
             view_kind: crate::types::MemoryViewKind::Profile,
-            scope: crate::types::MemoryScope { kind: "all".to_owned(), project_id: None },
+            scope: crate::types::MemoryScope {
+                kind: "all".to_owned(),
+                project_id: None,
+            },
             range_start: None,
             range_end: None,
             status: match status.as_str() {
@@ -424,10 +427,7 @@ impl LibraryRepository {
         )?;
         let rows = statement
             .query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                ))
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })?
             .collect::<Result<Vec<_>, rusqlite::Error>>()?;
         let mut seen = std::collections::HashSet::new();
@@ -439,11 +439,16 @@ impl LibraryRepository {
             if !seen.insert(item_id.clone()) {
                 continue;
             }
-            let Ok(result) = serde_json::from_str::<crate::types::MemorySnapshotResult>(&result_json)
+            let Ok(result) =
+                serde_json::from_str::<crate::types::MemorySnapshotResult>(&result_json)
             else {
                 continue;
             };
-            if let Some(item) = result.evolution_items.into_iter().find(|item| item.id == item_id) {
+            if let Some(item) = result
+                .evolution_items
+                .into_iter()
+                .find(|item| item.id == item_id)
+            {
                 items.push(item);
             }
         }
@@ -499,7 +504,10 @@ mod tests {
             .unwrap();
         let (latest, profile) = repo.latest_profile_snapshot().unwrap().unwrap();
         assert_eq!(latest.id, snapshot.id);
-        assert_eq!(latest.status, crate::types::MemoryGenerationStatus::Completed);
+        assert_eq!(
+            latest.status,
+            crate::types::MemoryGenerationStatus::Completed
+        );
         assert!(!latest.is_stale);
         assert_eq!(profile.summary, sample_profile().summary);
 

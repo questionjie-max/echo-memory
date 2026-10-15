@@ -172,9 +172,7 @@ fn scan_codex_root(root: &Path) -> AppResult<Vec<DiscoveredSession>> {
     collect_jsonl_files(root, 0, &mut files);
     let mut sessions = Vec::new();
     for path in files {
-        if let Some(session) = describe_session(AgentKind::Codex, &path, |head| {
-            codex_session_brief(head)
-        }) {
+        if let Some(session) = describe_session(AgentKind::Codex, &path, codex_session_brief) {
             sessions.push(session);
         }
     }
@@ -211,9 +209,7 @@ fn describe_session(
     let size_bytes = metadata.len();
     let head = read_head(path, HEAD_BYTES);
     let brief = brief(&head);
-    let started_at = brief
-        .started_at
-        .unwrap_or_else(|| mtime_rfc3339(&metadata));
+    let started_at = brief.started_at.unwrap_or_else(|| mtime_rfc3339(&metadata));
     Some(DiscoveredSession {
         agent,
         path: path.display().to_string(),
@@ -283,7 +279,9 @@ fn claude_session_brief(head: &str) -> SessionBrief {
         }
     }
     SessionBrief {
-        title: title.or(fallback).unwrap_or_else(|| "未命名会话".to_owned()),
+        title: title
+            .or(fallback)
+            .unwrap_or_else(|| "未命名会话".to_owned()),
         started_at: None,
     }
 }
@@ -386,7 +384,10 @@ pub fn is_session_path_allowed(agent: AgentKind, path: &str) -> bool {
     default_agent_roots()
         .into_iter()
         .filter(|(kind, _)| *kind == agent)
-        .any(|(_, root)| resolved.starts_with(&root) && resolved.extension().and_then(|ext| ext.to_str()) == Some("jsonl"))
+        .any(|(_, root)| {
+            resolved.starts_with(&root)
+                && resolved.extension().and_then(|ext| ext.to_str()) == Some("jsonl")
+        })
 }
 
 /// 记忆文件路径白名单校验。
@@ -426,7 +427,10 @@ mod tests {
         let memory = fixture(&root.join(".claude").join("CLAUDE.md"), "# 规则");
 
         let result = scan_at(
-            &[(AgentKind::ClaudeCode, claude_root), (AgentKind::Codex, codex_root)],
+            &[
+                (AgentKind::ClaudeCode, claude_root),
+                (AgentKind::Codex, codex_root),
+            ],
             &[("Claude Code".to_owned(), memory)],
         )
         .unwrap();
@@ -456,11 +460,7 @@ mod tests {
         let big = fixture(&claude_root.join("proj").join("big.jsonl"), "{}\n");
         let file = fs::OpenOptions::new().write(true).open(&big).unwrap();
         file.set_len(MAX_SESSION_BYTES + 1).unwrap();
-        let result = scan_at(
-            &[(AgentKind::ClaudeCode, claude_root)],
-            &[],
-        )
-        .unwrap();
+        let result = scan_at(&[(AgentKind::ClaudeCode, claude_root)], &[]).unwrap();
         assert_eq!(result.sessions.len(), 1);
         assert!(result.sessions[0].oversized);
         let _ = fs::remove_dir_all(root);
@@ -469,11 +469,7 @@ mod tests {
     #[test]
     fn missing_roots_yield_empty_result() {
         let root = std::env::temp_dir().join(format!("agent_scan_empty_{}", uuid::Uuid::new_v4()));
-        let result = scan_at(
-            &[(AgentKind::Codex, root.join("nothing"))],
-            &[],
-        )
-        .unwrap();
+        let result = scan_at(&[(AgentKind::Codex, root.join("nothing"))], &[]).unwrap();
         assert!(result.sessions.is_empty());
         assert!(result.memory_files.is_empty());
         let _ = fs::remove_dir_all(root);
@@ -485,7 +481,10 @@ mod tests {
             "{}/.claude/projects/p/abc.jsonl",
             std::env::var("HOME").unwrap()
         );
-        assert!(is_session_path_allowed(AgentKind::ClaudeCode, &claude_session));
+        assert!(is_session_path_allowed(
+            AgentKind::ClaudeCode,
+            &claude_session
+        ));
         assert!(!is_session_path_allowed(AgentKind::Codex, &claude_session));
         assert!(!is_session_path_allowed(
             AgentKind::ClaudeCode,
@@ -493,7 +492,10 @@ mod tests {
         ));
         assert!(!is_session_path_allowed(
             AgentKind::ClaudeCode,
-            &format!("{}/.claude/projects/p/abc.txt", std::env::var("HOME").unwrap())
+            &format!(
+                "{}/.claude/projects/p/abc.txt",
+                std::env::var("HOME").unwrap()
+            )
         ));
         let memory = format!("{}/.codex/AGENTS.md", std::env::var("HOME").unwrap());
         assert!(is_memory_path_allowed(&memory));
@@ -522,14 +524,26 @@ mod tests {
                 agent,
                 group.len(),
                 format_bytes(group.iter().map(|session| session.size_bytes).sum()),
-                group.first().map(|session| session.title.as_str()).unwrap_or("-"),
+                group
+                    .first()
+                    .map(|session| session.title.as_str())
+                    .unwrap_or("-"),
             );
         }
         println!("记忆文件: {}", result.memory_files.len());
         for file in &result.memory_files {
-            println!("  {} ({}, {})", file.path, file.agent_label, format_bytes(file.size_bytes));
+            println!(
+                "  {} ({}, {})",
+                file.path,
+                file.agent_label,
+                format_bytes(file.size_bytes)
+            );
         }
-        let oversized = result.sessions.iter().filter(|session| session.oversized).count();
+        let oversized = result
+            .sessions
+            .iter()
+            .filter(|session| session.oversized)
+            .count();
         println!("耗时: {elapsed:?}，超大标记: {oversized}");
         assert!(!result.sessions.is_empty(), "真机上应至少发现一个会话");
     }

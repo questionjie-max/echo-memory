@@ -28,6 +28,10 @@ jobs:
       - name: Frontend build
         run: npm run build
         working-directory: app
+      - name: Release artifacts audit
+        # 前端产物审计：sourcemap / 本机路径 / 开发端点 / 开发 ws 通道 / 版本号一致性。
+        run: bash scripts/audit-bundle.sh dist
+        working-directory: app
       - name: Growth timeline tests
         run: npm run test:growth
         working-directory: app

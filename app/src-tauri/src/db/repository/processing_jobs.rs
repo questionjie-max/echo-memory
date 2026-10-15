@@ -5,6 +5,12 @@ use chrono::Utc;
 use rusqlite::{params, OptionalExtension, Row};
 use uuid::Uuid;
 
+/// 应用退出时被中断的任务统一写这个错误文案；启动恢复按它精确识别候选，
+/// 不靠模糊匹配（改文案时两处会一起改）。
+pub const INTERRUPTED_JOB_ERROR: &str = "上次处理因应用退出而中断，请重试";
+/// 启动自动重排的尝试次数上限：超过后交还用户手动重试，避免坏文件反复空转。
+pub const INTERRUPTED_RESUME_MAX_ATTEMPTS: i64 = 3;
+
 impl LibraryRepository {
     pub fn create_job(&self, record_id: &str, job_type: &str) -> AppResult<ProcessingJob> {
         if job_type != "transcribe" && job_type != "analyze" {
@@ -129,7 +135,7 @@ impl LibraryRepository {
         let mut connection = self.connect()?;
         let transaction = connection.transaction()?;
         let now = Utc::now().to_rfc3339();
-        let error = "上次处理因应用退出而中断，请重试";
+        let error = INTERRUPTED_JOB_ERROR;
         let changed = transaction.execute(
             "UPDATE processing_jobs SET status = 'failed', last_error = ?1, updated_at = ?2 WHERE status IN ('preparing', 'transcribing', 'analyzing')",
             params![error, now],
@@ -140,6 +146,26 @@ impl LibraryRepository {
         )?;
         transaction.commit()?;
         Ok(changed)
+    }
+
+    /// 启动自动重排的候选：被应用退出中断的转写任务（记录仍存在、尝试次数未超上限）。
+    /// 返回 (record_id, job_id)，按中断时间从早到晚。
+    pub fn interrupted_transcriptions(&self) -> AppResult<Vec<(String, String)>> {
+        let connection = self.connect()?;
+        let mut statement = connection.prepare(
+            "SELECT jobs.record_id, jobs.id FROM processing_jobs AS jobs \
+             JOIN records ON records.id = jobs.record_id \
+             WHERE jobs.job_type = 'transcribe' AND jobs.status = 'failed' \
+               AND jobs.last_error = ?1 AND jobs.attempt_count < ?2 \
+             ORDER BY jobs.updated_at ASC",
+        )?;
+        let rows = statement
+            .query_map(
+                params![INTERRUPTED_JOB_ERROR, INTERRUPTED_RESUME_MAX_ATTEMPTS],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?
+            .collect::<Result<Vec<_>, rusqlite::Error>>()?;
+        Ok(rows)
     }
 
     fn map_job(row: &Row<'_>) -> rusqlite::Result<ProcessingJob> {

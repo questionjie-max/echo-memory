@@ -803,6 +803,7 @@ dependencies = [
  "chrono",
  "ferrous-opencc",
  "hound",
+ "libc",
  "pulldown-cmark",
  "quick-xml",
  "rusqlite",

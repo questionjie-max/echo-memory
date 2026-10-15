@@ -6,6 +6,7 @@ import type {
   AudioPreprocessorStatus,
   ChatImportOutcome,
   DeleteRecordsResult,
+  DiskSpaceStatus,
   ExternalAiSettings,
   GrowthGraph,
   IngestResult,
@@ -25,6 +26,8 @@ import type {
   Project,
   RecordBrief,
   SearchResult,
+  StorageCleanupResult,
+  StorageReport,
   StoredAnalysis,
   TemplateSection,
   TimelineItem,
@@ -277,8 +280,12 @@ export function retranscribeRecord(recordId: string, language: string, modelPath
   return invoke<void>("retranscribe_record", { recordId, language, modelPath, qualityPreset, engine: engine ?? null });
 }
 
-export function analyzeRecord(recordId: string, templateId?: string | null): Promise<void> {
-  return invoke<void>("analyze_record", { recordId, templateId: templateId ?? null });
+export function analyzeRecord(recordId: string, templateId?: string | null, instruction?: string | null): Promise<void> {
+  return invoke<void>("analyze_record", {
+    recordId,
+    templateId: templateId ?? null,
+    instruction: instruction && instruction.trim() ? instruction : null,
+  });
 }
 
 export function latestAnalysis(recordId: string): Promise<StoredAnalysis | null> {
@@ -503,6 +510,18 @@ export function saveDockMessageToOutput(title: string, content: string): Promise
 
 export function getAppInfo(): Promise<AppInfo> {
   return invoke<AppInfo>("app_info");
+}
+
+export function getDiskSpaceStatus(): Promise<DiskSpaceStatus> {
+  return invoke<DiskSpaceStatus>("get_disk_space_status");
+}
+
+export function getStorageReport(): Promise<StorageReport> {
+  return invoke<StorageReport>("get_storage_report");
+}
+
+export function cleanupStorage(): Promise<StorageCleanupResult> {
+  return invoke<StorageCleanupResult>("cleanup_storage");
 }
 
 export function getTranscriptionEngineStatus(): Promise<TranscriptionEngineStatus> {

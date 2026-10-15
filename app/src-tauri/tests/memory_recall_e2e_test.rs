@@ -28,13 +28,15 @@ fn confirmed_memory_is_recalled_by_knowledge_ask() {
         "# 周末爬山\n\n用户：周末去哪爬山比较好？\n\n助手：推荐去郊外的云顶山，早上出发避开人流。\n",
     )
     .unwrap();
-    let outcome = chat_import::import_chat_exports(
-        &library,
-        std::slice::from_ref(&chat_path),
-        None,
-        false,
-    )
-    .expect("导入对话失败");    assert_eq!(outcome.imported.len(), 1, "对话应导入成功: {:?}", outcome.skipped);
+    let outcome =
+        chat_import::import_chat_exports(&library, std::slice::from_ref(&chat_path), None, false)
+            .expect("导入对话失败");
+    assert_eq!(
+        outcome.imported.len(),
+        1,
+        "对话应导入成功: {:?}",
+        outcome.skipped
+    );
     let record_id = outcome.imported[0].record_id.clone();
     let segments = repository.list_transcript_segments(&record_id).unwrap();
     assert!(!segments.is_empty());
@@ -49,7 +51,10 @@ fn confirmed_memory_is_recalled_by_knowledge_ask() {
     assert!(repeat.skipped[0].reason.contains("已导入过"));
 
     // 2. 生成一条演化记忆并由用户确认（稳定内容 ID 与线上一致）。
-    let scope = MemoryScope { kind: "all".to_owned(), project_id: None };
+    let scope = MemoryScope {
+        kind: "all".to_owned(),
+        project_id: None,
+    };
     let snapshot = repository
         .create_memory_snapshot(
             &MemoryViewKind::Evolution,
@@ -106,17 +111,9 @@ fn confirmed_memory_is_recalled_by_knowledge_ask() {
 
     // 4. 资料索引（同一段对话），随后问答。
     knowledge::rebuild_scope(&library, None, false, &mut || {}).unwrap();
-    let answer = knowledge::ask(
-        &library,
-        None,
-        false,
-        "确认过的记忆条目能被知识库检索吗？",
-    )
-    .expect("知识问答失败");
-    assert!(
-        !answer.insufficient_evidence,
-        "应有足够证据：{answer:?}"
-    );
+    let answer = knowledge::ask(&library, None, false, "确认过的记忆条目能被知识库检索吗？")
+        .expect("知识问答失败");
+    assert!(!answer.insufficient_evidence, "应有足够证据：{answer:?}");
     assert!(
         !answer.memory_citations.is_empty(),
         "应引用确认过的记忆条目：citations={:?}",

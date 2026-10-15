@@ -141,6 +141,9 @@ impl AppState {
         repository.recover_interrupted_memory_snapshots()?;
         repository.recover_interrupted_knowledge_indexes()?;
         repository.recover_interrupted_processing_jobs()?;
+        // 启动时静默清理一次可再生的中间文件（崩溃残留的预处理 WAV 等）。
+        // 失败不阻塞启动：清理本来只是防堆积，用户还可以在设置里手动清理。
+        let _ = crate::storage::run_cleanup(&library);
         Ok(Self {
             library,
             cancelled_generations: Arc::new(Mutex::new(HashSet::new())),

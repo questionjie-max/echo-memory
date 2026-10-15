@@ -43,6 +43,8 @@ fn cited_draft(segment_id: &str, quote: &str) -> AnalysisDraft {
         }],
         open_questions: vec![],
         custom_sections: vec![],
+        chapters: vec![],
+        highlights: vec![],
         quality_warning: None,
         quality_severity: None,
     }
@@ -691,6 +693,8 @@ fn analysis_persists_citations_and_action_items() {
         }],
         open_questions: vec![],
         custom_sections: vec![],
+        chapters: vec![],
+        highlights: vec![],
         quality_warning: None,
         quality_severity: None,
     };
@@ -748,6 +752,8 @@ fn incomplete_latest_analysis_stays_in_pending_workflow() {
                 action_items: vec![],
                 open_questions: vec![],
                 custom_sections: vec![],
+                chapters: vec![],
+                highlights: vec![],
                 quality_warning: Some("关键观点不足".into()),
                 quality_severity: None,
             },
@@ -796,6 +802,8 @@ fn advisory_quality_warning_completes_analysis_and_stays_visible() {
                 action_items: vec![],
                 open_questions: vec![],
                 custom_sections: vec![],
+                chapters: vec![],
+                highlights: vec![],
                 quality_warning: Some("部分原文引述较短".into()),
                 quality_severity: Some(
                     echo_memory_lib::analysis::AnalysisQualitySeverity::Advisory,
@@ -1117,6 +1125,8 @@ fn moving_record_updates_search_and_action_item_scope_atomically() {
                 }],
                 open_questions: vec![],
                 custom_sections: vec![],
+                chapters: vec![],
+                highlights: vec![],
                 quality_warning: None,
                 quality_severity: None,
             },
@@ -2117,4 +2127,103 @@ fn memory_feedback_batch_writes_atomically_and_validates_entries() {
         .update_memory_feedback_batch(&snapshot.id, &[])
         .unwrap()
         .is_empty());
+}
+
+/// 启动恢复候选：只有「应用退出中断」文案的转写任务入选，且受尝试次数上限约束。
+#[test]
+fn interrupted_transcriptions_are_listed_until_attempt_limit() {
+    use echo_memory_lib::db::repository::INTERRUPTED_JOB_ERROR;
+    let repository = LibraryRepository::new(database_path()).unwrap();
+    let record = repository
+        .create_record(
+            "中断恢复",
+            None,
+            Path::new("audio/interrupted.wav"),
+            "interrupted-hash",
+            1_000,
+        )
+        .unwrap();
+    let job = repository.create_job(&record.id, "transcribe").unwrap();
+    // 普通失败不属于恢复候选。
+    repository
+        .update_job_status(&job.id, "failed", Some("Ollama 未返回内容"))
+        .unwrap();
+    assert!(repository.interrupted_transcriptions().unwrap().is_empty());
+
+    repository
+        .update_job_status(&job.id, "failed", Some(INTERRUPTED_JOB_ERROR))
+        .unwrap();
+    let candidates = repository.interrupted_transcriptions().unwrap();
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].0, record.id);
+    assert_eq!(candidates[0].1, job.id);
+
+    // 尝试次数达到上限后不再自动重排（preparing 每次累加 attempt_count）。
+    for _ in 0..3 {
+        repository
+            .update_job_status(&job.id, "preparing", None)
+            .unwrap();
+        repository
+            .update_job_status(&job.id, "failed", Some(INTERRUPTED_JOB_ERROR))
+            .unwrap();
+    }
+    assert!(repository.interrupted_transcriptions().unwrap().is_empty());
+}
+
+/// 单条记录「补充信息」随分析版本落库并在 latest_analysis 完整回读；
+/// 未填写时是空串（迁移默认值），而不是 NULL。
+#[test]
+fn analysis_instruction_round_trips_and_defaults_to_empty() {
+    let repository = LibraryRepository::new(database_path()).unwrap();
+    let record = repository
+        .create_record(
+            "补充要求回读",
+            None,
+            Path::new("audio/instruction.wav"),
+            "instruction-hash",
+            1_000,
+        )
+        .unwrap();
+    let (version, segments) = repository
+        .save_transcript(
+            &record.id,
+            "whisper.cpp",
+            "small",
+            &[TranscriptSegmentInput {
+                start_ms: 0,
+                end_ms: 1_000,
+                speaker_label: None,
+                original_text: "确认采用本地知识库".into(),
+            }],
+        )
+        .unwrap();
+
+    let template = repository
+        .get_analysis_template("builtin-standard")
+        .unwrap();
+    repository
+        .save_analysis_with_provider_and_template(
+            &record.id,
+            &version.id,
+            "ollama",
+            "qwen",
+            &cited_draft(&segments[0].id, "确认采用本地知识库"),
+            &template,
+            "只保留待办事项，按负责人分组",
+        )
+        .unwrap();
+    let stored = repository.latest_analysis(&record.id).unwrap().unwrap();
+    assert_eq!(stored.analysis_instruction, "只保留待办事项，按负责人分组");
+
+    // 走不带指令的保存路径时为空串，前端回显为「未填写」。
+    repository
+        .save_analysis(
+            &record.id,
+            &version.id,
+            "qwen",
+            &cited_draft(&segments[0].id, "确认采用本地知识库"),
+        )
+        .unwrap();
+    let stored = repository.latest_analysis(&record.id).unwrap().unwrap();
+    assert_eq!(stored.analysis_instruction, "");
 }

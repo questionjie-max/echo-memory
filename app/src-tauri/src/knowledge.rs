@@ -220,30 +220,38 @@ pub fn ask(
         project_id,
         unfiled_only,
     )?;
-    let material_selected: Vec<&KnowledgeChunkRecord> =
-        if ranked.is_empty() || ranked[0].1 < 0.25 {
-            Vec::new()
-        } else {
-            ranked
-                .into_iter()
-                .take(10)
-                .map(|(index, _)| &chunks[index])
-                .collect()
-        };
+    let material_selected: Vec<&KnowledgeChunkRecord> = if ranked.is_empty() || ranked[0].1 < 0.25 {
+        Vec::new()
+    } else {
+        ranked
+            .into_iter()
+            .take(10)
+            .map(|(index, _)| &chunks[index])
+            .collect()
+    };
 
     // 记忆召回是增强路径：索引未建立/失败/为空时为空集，问答退回 v0.7.1 行为。
     // 记忆是个人上下文，不随项目范围过滤。
-    let memory_chunks = match repository.get_knowledge_index_status(MEMORY_SCOPE_KEY, &settings.embedding_model) {
-        Ok(status) if status.status == "completed" => {
-            repository.list_memory_chunks(&settings.embedding_model)?
-        }
-        _ => Vec::new(),
-    };
+    let memory_chunks =
+        match repository.get_knowledge_index_status(MEMORY_SCOPE_KEY, &settings.embedding_model) {
+            Ok(status) if status.status == "completed" => {
+                repository.list_memory_chunks(&settings.embedding_model)?
+            }
+            _ => Vec::new(),
+        };
     let memory_selected: Vec<&MemoryChunkRecord> = if memory_chunks.is_empty() {
         Vec::new()
     } else {
-        let ranked = memory_hybrid_rank(repository, current_question, &query_embedding, &memory_chunks);
-        if ranked.first().is_none_or(|(_, score)| *score < MEMORY_MIN_SCORE) {
+        let ranked = memory_hybrid_rank(
+            repository,
+            current_question,
+            &query_embedding,
+            &memory_chunks,
+        );
+        if ranked
+            .first()
+            .is_none_or(|(_, score)| *score < MEMORY_MIN_SCORE)
+        {
             Vec::new()
         } else {
             ranked
@@ -463,7 +471,8 @@ fn memory_hybrid_rank(
     ranked
 }
 
-fn cosine_similarity(left: &[f32], right: &[f32]) -> f32 {    if left.len() != right.len() || left.is_empty() {
+fn cosine_similarity(left: &[f32], right: &[f32]) -> f32 {
+    if left.len() != right.len() || left.is_empty() {
         return -1.0;
     }
     let dot = left.iter().zip(right).map(|(a, b)| a * b).sum::<f32>();
@@ -619,16 +628,19 @@ fn memory_citation_source(
     repository: &crate::db::repository::LibraryRepository,
     chunk: &MemoryChunkRecord,
 ) -> Option<MemoryCitationSource> {
-    let source = chunk.sources.iter().find(|source| {
-        source.segment_id.is_some() && source.start_ms.is_some()
-    })?;
+    let source = chunk
+        .sources
+        .iter()
+        .find(|source| source.segment_id.is_some() && source.start_ms.is_some())?;
     let record_title = repository.get_record(&source.record_id).ok()?.title;
     Some(MemoryCitationSource {
         record_id: source.record_id.clone(),
         record_title,
         segment_id: source.segment_id.clone()?,
         start_ms: source.start_ms?,
-        end_ms: source.end_ms.unwrap_or_else(|| source.start_ms.unwrap_or_default()),
+        end_ms: source
+            .end_ms
+            .unwrap_or_else(|| source.start_ms.unwrap_or_default()),
     })
 }
 
@@ -769,7 +781,8 @@ mod tests {
     #[test]
     fn answer_accepts_memory_citation_with_verbatim_quote() {
         let (library, _chunk) = seeded_chunk(&["已知证据"]);
-        let memory = seeded_memory_chunk("主题：定价\n此前：按次收费\n现在：订阅制\n（修正 · 2026-09-01）");
+        let memory =
+            seeded_memory_chunk("主题：定价\n此前：按次收费\n现在：订阅制\n（修正 · 2026-09-01）");
         let answer = validate_answer(
             library.repository(),
             AnswerDraft {

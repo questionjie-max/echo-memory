@@ -14,6 +14,9 @@ pub enum AppError {
     Invalid(String),
     #[error("音频导入错误: {0}")]
     Import(String),
+    /// 磁盘空间不足等存储前置条件不满足：明确归类，便于调用方判定「重试无用」。
+    #[error("存储不可用: {0}")]
+    Storage(String),
     #[error("本地分析错误: {0}")]
     Analysis(String),
     #[error("外部 AI 错误: {0}")]

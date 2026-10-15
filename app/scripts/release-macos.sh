@@ -24,6 +24,10 @@ trap cleanup EXIT
 version="$(node -p "require('./src-tauri/tauri.conf.json').version")"
 
 echo "== Building signed and notarized macOS DMG =="
+# 路径重映射：release 二进制的 panic/断点信息会记录编译时的绝对路径（本机用户名与
+# 仓库位置）。发布包面向公开下载，这里统一改写成中性前缀，审计脚本会守住这条。
+# 代价是 RUSTFLAGS 变化会触发一次全量重编译（每个发布周期一次）。
+export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$HOME=/build"
 "$ROOT_DIR/node_modules/.bin/tauri" build --bundles dmg --ci
 
 bundle_dir="$ROOT_DIR/src-tauri/target/release/bundle/dmg"
@@ -40,6 +44,21 @@ if [ -z "$dmg_path" ]; then
   echo "No newly built $version DMG found in $bundle_dir" >&2
   exit 1
 fi
+
+echo "== Auditing app bundle before notarization =="
+# 公证前审计：开发残留/本机路径/开发端点/sourcemap 有问题就直接中止，省掉一次无效公证。
+app_dir="$ROOT_DIR/src-tauri/target/release/bundle/macos"
+app_path=""
+while IFS= read -r candidate; do
+  if [ -z "$app_path" ] || [ "$candidate" -nt "$app_path" ]; then
+    app_path="$candidate"
+  fi
+done < <(find "$app_dir" -maxdepth 1 -type d -name "*.app" -print 2>/dev/null)
+if [ -z "$app_path" ]; then
+  echo "No built .app found in $app_dir; cannot audit" >&2
+  exit 1
+fi
+bash "$ROOT_DIR/scripts/audit-bundle.sh" "$app_path"
 
 echo "== Notarizing and stapling DMG =="
 if [ -n "${NOTARYTOOL_KEYCHAIN_PROFILE:-}" ]; then

@@ -17,3 +17,15 @@ export function formatMinutesSeconds(ms: number, round = false): string {
 export function isProcessingStatus(status: RecordStatus): boolean {
   return status === "preparing" || status === "transcribing" || status === "analyzing";
 }
+
+/** 体量文案（与后端 human_bytes 同口径），用于磁盘空间提醒。 */
+export function formatBytes(bytes: number): string {
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return unit === 0 ? `${bytes} B` : `${value.toFixed(1)} ${units[unit]}`;
+}

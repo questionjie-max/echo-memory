@@ -34,7 +34,7 @@ impl LibraryRepository {
         template: &AnalysisTemplate,
     ) -> AppResult<StoredAnalysis> {
         self.save_analysis_with_provider_and_template(
-            record_id, version_id, "ollama", model, draft, template,
+            record_id, version_id, "ollama", model, draft, template, "",
         )
     }
 
@@ -47,6 +47,7 @@ impl LibraryRepository {
         model: &str,
         draft: &AnalysisDraft,
         template: &AnalysisTemplate,
+        instruction: &str,
     ) -> AppResult<StoredAnalysis> {
         let content_json = serde_json::to_string(draft)
             .map_err(|error| AppError::Invalid(format!("分析序列化失败: {error}")))?;
@@ -67,6 +68,7 @@ impl LibraryRepository {
             template_version: "knowledge-v1".to_owned(),
             template_id: Some(template.id.clone()),
             template_snapshot_json,
+            analysis_instruction: instruction.trim().to_owned(),
             created_at: Utc::now().to_rfc3339(),
         };
         let (project_id, title): (Option<String>, String) = self.connect()?.query_row(
@@ -85,7 +87,7 @@ impl LibraryRepository {
             "DELETE FROM action_items WHERE record_id = ?1",
             params![record_id],
         )?;
-        transaction.execute("INSERT INTO analyses (id, record_id, source_transcript_version_id, status, content_json, provider, model, template_version, template_id, template_snapshot_json, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)", params![analysis.id, analysis.record_id, analysis.source_transcript_version_id, analysis.status, analysis.content_json, analysis.provider, analysis.model, analysis.template_version, analysis.template_id, analysis.template_snapshot_json, analysis.created_at])?;
+        transaction.execute("INSERT INTO analyses (id, record_id, source_transcript_version_id, status, content_json, provider, model, template_version, template_id, template_snapshot_json, analysis_instruction, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)", params![analysis.id, analysis.record_id, analysis.source_transcript_version_id, analysis.status, analysis.content_json, analysis.provider, analysis.model, analysis.template_version, analysis.template_id, analysis.template_snapshot_json, analysis.analysis_instruction, analysis.created_at])?;
         let custom_text = draft
             .custom_sections
             .iter()
@@ -104,8 +106,20 @@ impl LibraryRepository {
             })
             .collect::<Vec<_>>()
             .join(" ");
+        let chapter_text = draft
+            .chapters
+            .iter()
+            .map(|chapter| format!("{} {}", chapter.title, chapter.summary))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let highlight_text = draft
+            .highlights
+            .iter()
+            .map(|highlight| highlight.quote_text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
         let search_text = format!(
-            "{} {} {} {} {} {}",
+            "{} {} {} {} {} {} {} {}",
             draft.summary,
             draft
                 .key_points
@@ -131,7 +145,9 @@ impl LibraryRepository {
                 .map(|item| item.text.as_str())
                 .collect::<Vec<_>>()
                 .join(" "),
-            custom_text
+            custom_text,
+            chapter_text,
+            highlight_text
         );
         transaction.execute("INSERT INTO record_search (record_id, project_id, source_id, title, body) VALUES (?1, ?2, ?3, ?4, ?5)", params![record_id, project_id, analysis.id, title, search_text])?;
         for (kind, items) in [
@@ -159,18 +175,27 @@ impl LibraryRepository {
                 }
             }
         }
+        // 金句是逐字引文，落 citations 行；章节是导航用的摘要，没有逐字引文，不落此表。
+        for (index, highlight) in draft.highlights.iter().enumerate() {
+            for segment_id in &highlight.citation_segment_ids {
+                transaction.execute(
+                    "INSERT INTO citations (id, analysis_id, item_path, transcript_segment_id, quote_text, verified) VALUES (?1, ?2, ?3, ?4, ?5, 1)",
+                    params![Uuid::new_v4().to_string(), analysis.id, format!("highlights[{index}]"), segment_id, highlight.quote_text],
+                )?;
+            }
+        }
         transaction.commit()?;
         Ok(analysis)
     }
 
     pub fn latest_analysis(&self, record_id: &str) -> AppResult<Option<StoredAnalysis>> {
-        self.connect()?.query_row("SELECT id, record_id, source_transcript_version_id, status, content_json, provider, model, template_version, template_id, template_snapshot_json, created_at FROM analyses WHERE record_id = ?1 ORDER BY created_at DESC LIMIT 1", params![record_id], Self::map_analysis).optional().map_err(Into::into)
+        self.connect()?.query_row("SELECT id, record_id, source_transcript_version_id, status, content_json, provider, model, template_version, template_id, template_snapshot_json, analysis_instruction, created_at FROM analyses WHERE record_id = ?1 ORDER BY created_at DESC LIMIT 1", params![record_id], Self::map_analysis).optional().map_err(Into::into)
     }
 
     pub fn get_analysis(&self, id: &str) -> AppResult<StoredAnalysis> {
         self.connect()?
             .query_row(
-                "SELECT id, record_id, source_transcript_version_id, status, content_json, provider, model, template_version, template_id, template_snapshot_json, created_at FROM analyses WHERE id = ?1",
+                "SELECT id, record_id, source_transcript_version_id, status, content_json, provider, model, template_version, template_id, template_snapshot_json, analysis_instruction, created_at FROM analyses WHERE id = ?1",
                 params![id],
                 Self::map_analysis,
             )
@@ -292,7 +317,8 @@ impl LibraryRepository {
             template_version: row.get(7)?,
             template_id: row.get(8)?,
             template_snapshot_json: row.get(9)?,
-            created_at: row.get(10)?,
+            analysis_instruction: row.get(10)?,
+            created_at: row.get(11)?,
         })
     }
 }

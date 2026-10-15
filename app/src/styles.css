@@ -388,9 +388,19 @@ input::placeholder, textarea::placeholder { color: var(--em-ink-4); }
 .import-strip div { display: grid; gap: 2px; min-width: 0; }
 .import-strip strong { font-size: 12px; }
 .import-strip span { color: var(--em-ink-4); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.import-actions-grid { display: grid; gap: 0; }
-.import-actions-grid .import-strip { margin: 8px 0 0; }
-.document-import-entry { margin-top: 0 !important; }
+/* 内容分组：录音 / 文档 / AI 对话各成一组，组头即该类的入口，可点击折叠 */
+.record-group { border-bottom: 1px solid var(--em-hairline-soft); }
+.record-group:last-child { border-bottom: 0; }
+.record-group-header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 8px; padding: 6px 4px 6px 0; background: var(--em-panel); }
+.record-group-toggle { display: flex; align-items: center; gap: 7px; flex: 1; min-width: 0; padding: 5px 6px; border: 0; border-radius: 6px; background: transparent; cursor: pointer; font: inherit; text-align: left; }
+.record-group-toggle:hover { background: var(--em-accent-soft); }
+.record-group-chevron { flex: 0 0 auto; display: grid; place-items: center; color: var(--em-ink-3); transition: transform 0.15s ease; }
+.record-group-toggle[aria-expanded="false"] .record-group-chevron { transform: rotate(-90deg); }
+.record-group-toggle strong { flex: 0 0 auto; white-space: nowrap; font-size: 12px; }
+.record-group-count { flex: 0 0 auto; min-width: 18px; padding: 1px 5px; border-radius: 999px; background: var(--em-surface-2); color: var(--em-ink-3); font-size: 10px; text-align: center; }
+.record-group-hint { flex: 1 1 auto; min-width: 0; color: var(--em-ink-4); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.record-group-items { margin: 0; padding: 0; list-style: none; }
+.record-group-items .record-empty { min-height: 44px !important; }
 .record-list { flex: 1; min-height: 0; margin: 0; padding: 0 2px 0 0; overflow: auto; list-style: none; }
 .record-list li { display: flex; align-items: center; gap: 8px; min-height: 72px; padding: 9px 8px; border-bottom: 1px solid var(--em-hairline-soft); border-radius: 6px; }
 .record-list li.selected { background: var(--em-accent-soft); box-shadow: inset 2px 0 0 var(--em-accent); }
@@ -603,6 +613,7 @@ input::placeholder, textarea::placeholder { color: var(--em-ink-4); }
 .analysis-action strong { font-size: 13px; }
 .analysis-action p { margin: 3px 0 0; color: var(--em-ink-3); font-size: 10px; }
 .analysis-warning { background: var(--em-warn-soft); color: var(--em-warn-ink); }
+.space-warning { margin: 0 0 8px; padding: 8px 10px; border: 1px solid var(--em-warn-border); border-radius: var(--em-r-sm); background: var(--em-warn-soft); color: var(--em-warn-ink); font-size: 11px; line-height: 1.45; }
 .analysis-sections { display: grid; gap: 0; }
 .analysis-section { padding: 10px 0; border-bottom: 1px solid var(--em-hairline-soft); }
 .analysis-section:last-child { border-bottom: 0; }
@@ -677,6 +688,11 @@ input::placeholder, textarea::placeholder { color: var(--em-ink-4); }
 .template-select span { color: var(--em-ink-3); font-size: 9px; }
 .template-select select { max-width: 160px; padding: 6px 24px 6px 7px; border: 1px solid var(--em-hairline); border-radius: 6px; background: var(--em-select-bg); font-size: 11px; }
 .custom-analysis-section h3 { color: var(--em-accent-ink); }
+.analysis-instruction { display: grid; gap: 4px; padding: 9px 0 2px; }
+.analysis-instruction span { color: var(--em-ink-3); font-size: 10px; }
+.analysis-instruction textarea { resize: vertical; min-height: 44px; padding: 7px 8px; border: 1px solid var(--em-hairline); border-radius: 6px; background: var(--em-surface-2); color: var(--em-ink-1); font-family: inherit; font-size: 11px; line-height: 1.45; }
+.analysis-instruction textarea:disabled { opacity: 0.6; }
+.analysis-instruction em { color: var(--em-ink-4); font-size: 10px; font-style: normal; line-height: 1.4; }
 
 .dialog-scrim, .settings-scrim {
   position: fixed;

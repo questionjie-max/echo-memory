@@ -209,12 +209,13 @@ impl LibraryRepository {
 
     /// AI 对话档案计数（知识库主页的档案卡用）。
     pub fn chat_record_count(&self) -> AppResult<i64> {
-        self.connect()?.query_row(
-            "SELECT COUNT(*) FROM records WHERE source_type = 'chat' AND archived_at IS NULL",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(Into::into)
+        self.connect()?
+            .query_row(
+                "SELECT COUNT(*) FROM records WHERE source_type = 'chat' AND archived_at IS NULL",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
     }
 
     pub fn knowledge_overview(
@@ -404,13 +405,17 @@ impl LibraryRepository {
         ) in rows
         {
             let sources = serde_json::from_str(&sources_json).unwrap_or_default();
-            let embedding = Self::decode_embedding(&blob, dimensions as usize).map_err(|message| {
-                rusqlite::Error::FromSqlConversionFailure(
-                    12,
-                    rusqlite::types::Type::Blob,
-                    Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, message)),
-                )
-            })?;
+            let embedding =
+                Self::decode_embedding(&blob, dimensions as usize).map_err(|message| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        12,
+                        rusqlite::types::Type::Blob,
+                        Box::new(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            message,
+                        )),
+                    )
+                })?;
             chunks.push(crate::types::MemoryChunkRecord {
                 id,
                 snapshot_id,
@@ -446,7 +451,9 @@ impl LibraryRepository {
         let mut statement = connection.prepare(sql)?;
         let query_param = fts_query.as_deref().filter(|_| use_fts).unwrap_or(query);
         let rows = statement
-            .query_map(params![query_param, limit as i64], |row| row.get::<_, String>(0))?
+            .query_map(params![query_param, limit as i64], |row| {
+                row.get::<_, String>(0)
+            })?
             .collect::<Result<Vec<_>, rusqlite::Error>>()?;
         Ok(rows)
     }

@@ -14,7 +14,7 @@ use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 use uuid::Uuid;
 
-const AUDIO_EXTENSIONS: [&str; 3] = ["mp3", "m4a", "wav"];
+const AUDIO_EXTENSIONS: [&str; 4] = ["mp3", "m4a", "wav", "aac"];
 
 #[derive(Clone)]
 pub struct ManagedLibrary {
@@ -54,6 +54,12 @@ impl ManagedLibrary {
                 return Ok(duplicate_result(existing));
             }
         }
+        // 复制前做空间预检：宁可拒绝导入，也不留下半份拷贝（重复文件已在上面提前返回）。
+        let source_bytes = fs::metadata(source).map(|meta| meta.len()).unwrap_or(0);
+        crate::disk_space::ensure_free_space(
+            &self.root,
+            crate::disk_space::required_import_bytes(source_bytes),
+        )?;
         let duration_ms = audio_duration_ms(source, &extension)?;
         let now = Utc::now();
         let record_id = Uuid::new_v4().to_string();
@@ -110,11 +116,11 @@ fn supported_extension(path: &Path) -> AppResult<String> {
         .extension()
         .and_then(|ext| ext.to_str())
         .map(str::to_ascii_lowercase)
-        .ok_or_else(|| AppError::Import("仅支持 MP3、M4A、WAV 文件".into()))?;
+        .ok_or_else(|| AppError::Import("仅支持 MP3、M4A、WAV、AAC 文件".into()))?;
     if AUDIO_EXTENSIONS.contains(&extension.as_str()) {
         Ok(extension)
     } else {
-        Err(AppError::Import("仅支持 MP3、M4A、WAV 文件".into()))
+        Err(AppError::Import("仅支持 MP3、M4A、WAV、AAC 文件".into()))
     }
 }
 
@@ -178,6 +184,17 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         root
     }
+    /// 收件箱监听一直把 aac 算作受支持格式，而导入白名单此前不含 aac——
+    /// 监听目录里的 .aac 会永久失败。这里锁住两个名单的一致性。
+    #[test]
+    fn aac_is_accepted_like_inbox_promised() {
+        assert_eq!(supported_extension(Path::new("talk.aac")).unwrap(), "aac");
+        assert_eq!(supported_extension(Path::new("TALK.AAC")).unwrap(), "aac");
+        assert_eq!(supported_extension(Path::new("talk.m4a")).unwrap(), "m4a");
+        let error = supported_extension(Path::new("talk.ogg")).unwrap_err();
+        assert!(error.to_string().contains("AAC"), "{error}");
+    }
+
     fn write_wav(path: &Path) {
         let sample_rate = 8_000_u32;
         let samples = vec![0_u8; sample_rate as usize * 2];

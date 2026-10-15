@@ -27,6 +27,9 @@ mod settings;
 mod speakers;
 mod transcripts;
 
+/// 中断文案需要被命令层的启动恢复与集成测试引用，这里统一再导出。
+pub use processing_jobs::{INTERRUPTED_JOB_ERROR, INTERRUPTED_RESUME_MAX_ATTEMPTS};
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DecisionReferenceRow {

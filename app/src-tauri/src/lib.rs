@@ -1,11 +1,12 @@
 pub mod agent_scan;
 pub mod analysis;
 pub mod audio;
-pub mod chat_import;
 pub mod chat_digest;
+pub mod chat_import;
 pub mod commands;
 pub mod db;
 pub mod degeneration;
+pub mod disk_space;
 pub mod dock;
 pub mod document;
 pub mod error;
@@ -19,6 +20,7 @@ pub mod memory;
 pub mod memory_index;
 pub mod record_commands;
 pub mod state;
+pub mod storage;
 pub mod transcript;
 pub mod types;
 pub mod whisper;
@@ -47,12 +49,16 @@ pub fn run() {
                 .allow_directory(audio_scope_root(&library_root), true)
                 .map_err(|error| error.to_string())?;
             let handle = app.handle().clone();
-            inbox::start(handle, library_root);
+            inbox::start(handle.clone(), library_root.clone());
+            commands::resume_interrupted_transcriptions(handle, library_root);
             Ok(())
         })
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
             commands::app_info,
+            commands::get_disk_space_status,
+            commands::get_storage_report,
+            commands::cleanup_storage,
             commands::get_transcription_engine_status,
             commands::set_transcription_engine,
             commands::set_hf_token,
