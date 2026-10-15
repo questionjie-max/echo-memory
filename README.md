@@ -1,12 +1,12 @@
 # Echo Memory / 回声记忆
 
-[中文文档](README.zh-CN.md) · [Download v0.7.1](https://github.com/questionjie-max/echo-memory/releases/latest) · [MCP reference](docs/mcp.md) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
+[中文文档](README.zh-CN.md) · [Download v0.9.0](https://github.com/questionjie-max/echo-memory/releases/latest) · [MCP reference](docs/mcp.md) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
 
 **Turn every conversation into long-term memory.** Echo Memory is a Personal Memory OS for AI-native work. It turns conversations, documents, decisions, and changing ideas into a traceable personal memory layer that can be reused by different AI agents.
 
 > AI knows more about the world every day, but it still does not truly know you. Echo Memory gives your AI a memory of what you experienced, why you decided, and how your thinking changed.
 
-**[Download the signed macOS release](https://github.com/questionjie-max/echo-memory/releases/latest)** or build from source. Echo Memory v0.7.1 closes the loop from capture and transcription to structured analysis, evidence-backed retrieval, and agent access — and presents cognitive evolution as a readable narrative.
+**[Download the signed macOS release](https://github.com/questionjie-max/echo-memory/releases/latest)** or build from source. Echo Memory v0.9.0 closes the loop from capture and transcription to structured analysis, evidence-backed retrieval, and agent access — and the memories you confirmed are now retrievable, not just stored.
 
 ## Why it exists
 
@@ -33,16 +33,19 @@ The long-term product has four connected layers:
 
 The digital-twin direction is a product vision, not a claim that the current release can fully model a person.
 
-## What v0.7.1 does
+## What v0.9.0 does
 
 ### Latest improvements
 
-- Read cognitive evolution as a narrative: change types are normalized into clear Chinese labels (新增, 推翻, …), added/supplemented entries no longer render an empty "before" column, and reasons that merely restate the viewpoint or quote a source are hidden.
-- Confirm pending evolution entries in one click: the snapshot header reads 基于 N 条记录 · M 个主题 · K 次变化 · 其中 P 条待确认, and 全部确认 writes the whole batch in a single all-or-nothing SQLite transaction.
-- New snapshots explain why a view changed: generation prompts require first-person, explanatory reasons in Simplified Chinese instead of survey-style restatements.
-- Dismiss quality warnings and generation errors: a dismissed message stays hidden for that snapshot and reappears when content changes or a new snapshot arrives.
-- Knowledge-base chat alignment fixes: user bubbles lock to a single grid row, the sender label reads 我, and the one-character-per-line vertical layout is gone.
-- The assistant dock collapses again after chatting, with a persistent context hint (current record for 总结, "not searching the library" for 随手问) that clarifies the division of labor with knowledge chat.
+- **Memories you confirmed are now retrievable**: knowledge chat runs hybrid retrieval over records *and* confirmed memory items, labels the two sources separately (资料原文 / 你的过往记忆), and memory citations jump back to the originating record or audio.
+- **AI conversations are a first-class input**: ChatGPT/Claude exports, conversational Markdown, and a local agent-session scanner (Claude Code, Codex) land as searchable records in their own lane — they stay out of the recording memory chain and out of the pending queue.
+- **A personal profile (L3)**: a cross-snapshot, first-person summary of your stances, preferences, trajectory, and what you are watching; exposed read-only to agents through the `get_my_context` MCP tool.
+- **Per-record analysis instructions**: type a supplementary request such as "keep only action items, grouped by owner" in the record's analysis panel. It outranks the template and is enforced deterministically, while verbatim-citation and safety rules still apply to every item.
+- **Chapters and verbatim quotes**: long recordings get 2–6 clickable chapters that seek the player, plus 0–5 quotes that must match the transcript word for word or they are dropped.
+- **The workspace groups content into 录音 / 文档 / AI 对话**: each group header collapses, shows its count and supported formats, and carries that category's import entry — the entry and the content live in the same place.
+- **Storage is visible and cleanable**: a storage panel shows what the library occupies per category, clears regenerable intermediate files in one click, and a banner warns on low disk. Original audio is never auto-deleted.
+- **Bounded self-recovery**: transient transcription failures retry twice with backoff, jobs interrupted by an app quit resume on next launch, and `AAC` audio imports correctly.
+- **Release hygiene**: the release script audits the built app before notarization (sourcemaps, dev leftovers, developer paths, dev endpoints), guarding against the class of leftover-artifact leaks shipped builds get caught on.
 
 ### Complete workflow
 
@@ -55,18 +58,22 @@ The digital-twin direction is a product vision, not a claim that the current rel
 - Output folder: analyses, transcripts, and AI drafts are written as standard Markdown into a folder of your choice (e.g. an Obsidian vault).
 - Speaker diarization: optionally run the whisperX engine to separate "Speaker 1, Speaker 2…"; the embedded engine stays the zero-dependency default.
 - Speaker renaming: turn "Speaker 1" into a real name in the record detail, optionally adding it to the hotword vocabulary; action items and decisions carry the attributed owner.
-- Imports `MP3`, `M4A`, and `WAV` audio with duplicate detection.
+- The workspace groups records into 录音 / 文档 / AI 对话 with collapsible headers that double as the import entries for each category.
+- Imports `MP3`, `M4A`, `WAV`, and `AAC` audio with duplicate detection.
 - Imports `Markdown`, `TXT`, and `DOCX` documents into the same searchable library.
+- Imports AI conversation exports (ChatGPT / Claude) and local agent sessions (Claude Code, Codex) as their own content category: searchable, answerable, and kept outside the recording memory chain.
 - Transcribes audio locally with embedded Whisper or a local `whisper.cpp` command.
 - Optionally transcribes with a configured OpenAI-compatible third-party ASR provider. This requires a separate audio-upload consent, completed provider settings, and an API key; providers that return speaker fields can populate speaker labels without guessing.
-- Uses local Ollama models for summaries, key points, decisions, action items, and open questions.
+- Uses local Ollama models for summaries, key points, decisions, action items, and open questions. A per-record supplementary instruction can override the template's structure for that analysis.
 - Optionally sends transcript text to a separately configured OpenAI-compatible text model for structured analysis, subject to a distinct text-upload consent.
+- Adds navigable chapters and verbatim highlights to long recordings, with every item verified against the transcript.
 - Archives records from the single-record context menu, alongside moving, renaming, opening management, and deletion.
 - Preserves timestamped transcript evidence and lets users return from a conclusion to its source.
 - Organizes records into project knowledge libraries with local full-text and vector retrieval.
-- Answers questions across indexed audio and documents with openable citations.
+- Answers questions across indexed audio, documents, and confirmed memories with openable citations and clearly separated sources.
 - Shows a day-based growth timeline across projects and records.
-- Generates versioned cognitive-evolution snapshots with reviewable evidence, narrative change summaries, and bulk confirmation.
+- Generates versioned cognitive-evolution snapshots with reviewable evidence, narrative change summaries, and bulk confirmation, plus a first-person personal profile on top.
+- Shows per-category storage usage and clears regenerable intermediate files on demand; submitted transcription jobs retry transient failures with backoff and resume after an interrupted launch.
 - Exposes an opt-in, local, read-only MCP server for authorized AI tools.
 
 ## What makes it different
@@ -113,7 +120,7 @@ Generated cross-record memory is versioned, linked to sources, and can be confir
 
 ## MCP: one memory layer for many agents
 
-The current MCP server is local stdio, disabled by default, and read-only. It can search records, retrieve bounded transcript ranges, list projects, return project context, and list action items. It does not open a public port or modify the library.
+The current MCP server is local stdio, disabled by default, and read-only. It can search records, retrieve bounded transcript ranges, list projects, return project context, list action items, and read your confirmed personal profile (`get_my_context`). It does not open a public port or modify the library.
 
 See the [MCP reference](docs/mcp.md) for tools and development configuration.
 
@@ -168,7 +175,7 @@ cargo test --features mcp-bin
 
 ## Project status
 
-Echo Memory v0.7.1 is the current public release. Download the latest build from [GitHub Releases](https://github.com/questionjie-max/echo-memory/releases). Source builds are supported. Distribution artifacts must be labeled truthfully according to their actual signing and Apple notarization status; this repository does not claim notarization unless the artifact passes the documented verification commands.
+Echo Memory v0.9.0 is the current public release. Download the latest build from [GitHub Releases](https://github.com/questionjie-max/echo-memory/releases). Source builds are supported. Distribution artifacts must be labeled truthfully according to their actual signing and Apple notarization status; this repository does not claim notarization unless the artifact passes the documented verification commands.
 
 Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening an issue or pull request, and never attach real audio, transcripts, databases, credentials, or private customer material to a public issue. Security reports should follow [SECURITY.md](SECURITY.md).
 
