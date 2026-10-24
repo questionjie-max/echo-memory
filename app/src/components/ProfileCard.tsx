@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { SparklesIcon, TriangleAlertIcon } from "./icons";
 import { generateMemorySnapshot, getMemoryProfile } from "../lib/tauri";
+import { useAnalysisSetup } from "./AnalysisSetupSheet";
 import type { ProfileSnapshot, ProfileSummary } from "../shared/types";
 import "./profile-card.css";
 
@@ -18,6 +19,7 @@ const SECTIONS: Array<{ key: keyof ProfileSummary; title: string; empty: string 
 ];
 
 export default function ProfileCard({ onOpenSettings, refreshToken }: ProfileCardProps) {
+  const { ensureReady } = useAnalysisSetup();
   const [snapshot, setSnapshot] = useState<ProfileSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -51,6 +53,14 @@ export default function ProfileCard({ onOpenSettings, refreshToken }: ProfileCar
 
   async function regenerate() {
     if (generating) return;
+    await ensureReady({
+      // 记忆生成属于依赖知识索引的功能：除分析模型外还需要嵌入模型。
+      needEmbedding: true,
+      action: () => void runRegeneration(),
+    });
+  }
+
+  async function runRegeneration() {
     setGenerating(true);
     setError("");
     try {

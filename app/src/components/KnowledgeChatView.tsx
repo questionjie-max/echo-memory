@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { askKnowledgeBase, getKnowledgeIndexStatus, getMemoryIndexStatus, listProjects, rebuildKnowledgeIndex } from "../lib/tauri";
+import { useAnalysisSetup } from "./AnalysisSetupSheet";
 import type { KnowledgeAnswer, KnowledgeAnswerCitation, KnowledgeIndexStatus, MemoryAnswerCitation } from "../shared/types";
 import "./knowledge-chat.css";
 
@@ -33,6 +34,7 @@ const SUGGESTED_QUESTIONS = [
 ];
 
 export default function KnowledgeChatView({ scope, projectId, unfiledOnly, refreshKey, onOpenCitation, onOpenMemory, onOpenSettings }: KnowledgeChatViewProps) {
+  const { openSheet: openAnalysisSetup } = useAnalysisSetup();
   const fallbackScopeName = scope === "all" ? "全部资料" : unfiledOnly || scope === "unfiled" ? "未归档资料" : "当前项目";
   const scopeRequestKey = `${scope}:${projectId ?? "all"}:${unfiledOnly ? "unfiled" : "filed"}`;
   const [scopeName, setScopeName] = useState(fallbackScopeName);
@@ -196,7 +198,7 @@ export default function KnowledgeChatView({ scope, projectId, unfiledOnly, refre
     <IndexStatusBar status={indexStatus} memoryStatus={memoryStatus} loading={indexLoading} rebuilding={rebuilding} error={indexError} onRetry={() => void loadScopeData(true, true)} onRebuild={() => void handleRebuildIndex()} />
 
     <div className={`knowledge-chat-main ${indexReady ? "ready" : ""}`}>
-      {indexLoading && !indexStatus ? <LoadingState /> : indexError && !indexStatus ? <MetadataErrorState error={indexError} onRetry={() => void loadScopeData(true, true)} onOpenSettings={onOpenSettings} /> : !indexReady ? <IndexGuide status={indexStatus} rebuilding={rebuilding} onRebuild={() => void handleRebuildIndex()} onOpenSettings={onOpenSettings} /> : <>
+      {indexLoading && !indexStatus ? <LoadingState /> : indexError && !indexStatus ? <MetadataErrorState error={indexError} onRetry={() => void loadScopeData(true, true)} onOpenSettings={onOpenSettings} /> : !indexReady ? <IndexGuide status={indexStatus} rebuilding={rebuilding} onRebuild={() => void handleRebuildIndex()} onOpenSettings={onOpenSettings} onOpenAnalysisSetup={() => openAnalysisSetup({ needEmbedding: true, action: () => void handleRebuildIndex() })} /> : <>
         <div className="knowledge-chat-conversation" aria-live="polite" aria-busy={pendingTurnId !== null}>
           {turns.length === 0 ? <ChatEmptyState scopeName={scopeName} onAsk={(question) => void submitQuestion(question)} /> : turns.map((turn) => <ConversationTurnView key={turn.id} turn={turn} onRetry={() => void submitQuestion(turn.question, turn.id)} onOpenCitation={onOpenCitation} onOpenMemory={onOpenMemory} />)}
           <div ref={conversationEndRef} />
@@ -236,14 +238,14 @@ function MetadataErrorState({ error, onRetry, onOpenSettings }: { error: string;
   return <div className="knowledge-chat-centered-state knowledge-chat-error-state"><span className="knowledge-chat-state-mark" aria-hidden="true">!</span><h3>暂时无法读取知识库</h3><p>{error}</p><div className="knowledge-chat-state-actions"><button type="button" className="knowledge-chat-primary-button" onClick={onRetry}>重新加载</button><button type="button" className="knowledge-chat-secondary-button" onClick={onOpenSettings}>检查 AI 设置</button></div></div>;
 }
 
-function IndexGuide({ status, rebuilding, onRebuild, onOpenSettings }: { status: KnowledgeIndexStatus | null; rebuilding: boolean; onRebuild: () => void; onOpenSettings: () => void }) {
+function IndexGuide({ status, rebuilding, onRebuild, onOpenSettings, onOpenAnalysisSetup }: { status: KnowledgeIndexStatus | null; rebuilding: boolean; onRebuild: () => void; onOpenSettings: () => void; onOpenAnalysisSetup: () => void }) {
   const indexing = status?.status === "indexing";
   const emptyCompletedIndex = status?.status === "completed" && status.chunkCount === 0;
   return <div className="knowledge-chat-centered-state knowledge-chat-index-guide">
     <span className="knowledge-chat-state-mark" aria-hidden="true">AI</span>
     <h3>{indexing ? "正在建立知识索引" : emptyCompletedIndex ? "当前范围没有可检索内容" : status?.status === "failed" ? "知识索引建立失败" : "建立索引后即可开始对话"}</h3>
     <p>{indexing ? `${status.processedRecords}/${status.totalRecords} 条内容已处理，完成后会自动开放对话。` : emptyCompletedIndex ? "请先导入包含文字内容的录音或文档，随后更新索引。" : status?.lastError || "索引会在本机整理知识内容，让 AI 能够检索原文并提供可验证引用。"}</p>
-    <div className="knowledge-chat-state-actions">{!emptyCompletedIndex && <button type="button" className="knowledge-chat-primary-button" disabled={indexing || rebuilding} onClick={onRebuild}>{indexing ? "建立中" : rebuilding ? "正在启动" : status?.status === "stale" ? "更新索引" : "建立索引"}</button>}<button type="button" className="knowledge-chat-secondary-button" onClick={onOpenSettings}>检查 AI 设置</button></div>
+    <div className="knowledge-chat-state-actions">{!emptyCompletedIndex && <button type="button" className="knowledge-chat-primary-button" disabled={indexing || rebuilding} onClick={onRebuild}>{indexing ? "建立中" : rebuilding ? "正在启动" : status?.status === "stale" ? "更新索引" : "建立索引"}</button>}<button type="button" className="knowledge-chat-secondary-button" onClick={onOpenAnalysisSetup}>配置分析模型</button><button type="button" className="knowledge-chat-secondary-button" onClick={onOpenSettings}>检查 AI 设置</button></div>
     <small>索引与问答均在当前配置的本地 AI 环境中运行。</small>
   </div>;
 }

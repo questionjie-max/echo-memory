@@ -1,4 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { isTauri } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import ProjectPanel from "./components/ProjectPanel";
 import ActionDashboard from "./components/ActionDashboard";
 import OnboardingWizard from "./components/OnboardingWizard";
@@ -11,6 +13,7 @@ import KnowledgeChatView from "./components/KnowledgeChatView";
 import GrowthView from "./components/GrowthView";
 import EvolutionView from "./components/EvolutionView";
 import SettingsPanel from "./components/SettingsPanel";
+import { AnalysisSetupProvider } from "./components/AnalysisSetupSheet";
 import type { KnowledgeAnswerCitation, MemoryScope, MemorySourceReference, RecordBrief, SearchResult } from "./shared/types";
 import { getOnboardingStatus, getRecord } from "./lib/tauri";
 import { notify } from "./lib/dialogs";
@@ -31,6 +34,21 @@ export default function App() {
   const [navigation, setNavigation] = useState<RecordNavigation | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [onboardingNeeded, setOnboardingNeeded] = useState<boolean | null>(null);
+
+  // 第三方转写「选了但没配齐」时，导入自动回退内置 Whisper——给一次明确提示。
+  // 同一次运行内只提示一次：批量导入不该被同一句话反复打断，补配入口在设置页。
+  const fallbackNoticeShown = useRef(false);
+  useEffect(() => {
+    if (!isTauri()) return;
+    const stop = listen<{ message: string }>("transcription-fallback-notice", (event) => {
+      if (fallbackNoticeShown.current) return;
+      fallbackNoticeShown.current = true;
+      void notify(event.payload.message);
+    });
+    return () => {
+      void stop.then((off) => off());
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -127,6 +145,7 @@ export default function App() {
       : { kind: "project", projectId: scope };
 
   return (
+    <AnalysisSetupProvider>
     <main className="app-shell">
       <AppToolbar
         mainView={mainView}
@@ -183,5 +202,6 @@ export default function App() {
         />
       )}
     </main>
+    </AnalysisSetupProvider>
   );
 }

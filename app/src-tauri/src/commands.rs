@@ -10,7 +10,7 @@ use crate::error::AppError;
 use crate::error::AppResult;
 use crate::external_ai_gate::{
     clear_api_key, clear_asr_api_key, external_settings, get_api_key, get_asr_api_key,
-    require_external_ai_consent, require_external_asr_consent, set_api_key, set_asr_api_key,
+    require_external_ai_consent, set_api_key, set_asr_api_key,
 };
 use crate::library::ManagedLibrary;
 use crate::memory::{self, OpenAiCompatibleClient};
@@ -22,7 +22,8 @@ use crate::types::{
     IngestResult, KnowledgeAnswer, KnowledgeIndexStatus, KnowledgeOverview, KnowledgeSettings,
     LocalAiStatus, LocalModelInfo, LocalWhisperModel, McpStatus, MemoryFeedback,
     MemoryGenerationJob, MemoryGenerationRequest, MemoryScope, MemorySnapshot, MemoryViewKind,
-    ModelDownloadProgress, OnboardingStatus, OutputStatus, PendingModelDownload, ProcessingJob,
+    ModelDownloadProgress, OnboardingStatus, OllamaInstallStatus, OutputStatus,
+    PendingModelDownload, ProcessingJob,
     ProfileSnapshot, Project, RecommendedModel, RecordBrief, RelatedRecord, SearchResult,
     SpeakerSummary, SuggestedWatchFolder, TemplateDraft, TemplateSection, TimelineItem,
     TranscriptBlock, TranscriptSegment, TranscriptSegmentInput, TranscriptionEngineStatus,
@@ -1682,19 +1683,8 @@ fn process_record_with_transcription_job(
     job: &ProcessingJob,
     settings: &crate::types::KnowledgeSettings,
 ) -> AppResult<()> {
-    if let Err(error) = require_external_import_pipeline(library) {
-        let message = error.to_string();
-        let _ = library
-            .repository()
-            .update_job_status(&job.id, "failed", Some(&message));
-        let _ = library
-            .repository()
-            .update_record_status(record_id, "failed");
-        if let Some(app) = progress_app {
-            emit_processing_progress(app, record_id);
-        }
-        return Err(error);
-    }
+    // 第三方通道未配齐时不再拦死导入：转录分流会自动回退内置 Whisper
+    //（external_asr_channel_ready），分析阶段由 analyze_with_library 自行判定通道。
     run_transcription(
         progress_app,
         library,
@@ -1704,32 +1694,6 @@ fn process_record_with_transcription_job(
         Some(&settings.whisper_model_path),
     )?;
     analyze_with_library(library, record_id)
-}
-
-/// Complete imports must have both third-party stages ready before any audio upload.
-fn require_external_import_pipeline(library: &ManagedLibrary) -> AppResult<()> {
-    let settings = library.repository().external_ai_settings(false, false)?;
-    if settings.processing_mode != "external" {
-        return Ok(());
-    }
-    let asr = require_external_asr_consent(library)?;
-    if !asr.transcription_has_api_key {
-        return Err(crate::error::AppError::Invalid(
-            "请先配置第三方转写 API Key".to_owned(),
-        ));
-    }
-    let settings = require_external_ai_consent(library)?;
-    if !settings.enabled {
-        return Err(crate::error::AppError::Invalid(
-            "请先启用第三方文本理解服务".to_owned(),
-        ));
-    }
-    if !settings.has_api_key {
-        return Err(crate::error::AppError::Invalid(
-            "请先配置第三方文本理解 API Key".to_owned(),
-        ));
-    }
-    Ok(())
 }
 
 #[tauri::command]
@@ -1969,13 +1933,25 @@ fn run_transcription_with_engine(
     engine_override: Option<&str>,
 ) -> AppResult<()> {
     let repository = library.repository();
-    if engine_override.is_none()
-        && repository
-            .external_ai_settings(false, false)?
-            .processing_mode
-            == "external"
-    {
+    // 只有第三方转写通道自身配齐才走第三方；processing_mode 只是通道开关之一，
+    // 缺同意/Key/地址时自动回退内置 Whisper，不在导入中途拦死。
+    if engine_override.is_none() && crate::external_ai_gate::external_asr_channel_ready(library)? {
         return run_external_transcription(progress_app, library, record_id, job, language);
+    }
+    // 用户选了第三方转写但没配齐：回退内置是正确行为，但不应无声无息——
+    // 发一次轻量事件让界面提示去补配；从未配置过的通道保持静默。
+    if engine_override.is_none()
+        && crate::external_ai_gate::external_asr_channel_half_configured(library)?
+    {
+        if let Some(app) = progress_app {
+            let _ = app.emit(
+                "transcription-fallback-notice",
+                serde_json::json!({
+                    "recordId": record_id,
+                    "message": "第三方转写还没配齐（缺 API Key 或未确认音频上传说明），本次先用本机 Whisper 转写。要补配请到 设置 → AI 模型 → 第三方处理。"
+                }),
+            );
+        }
     }
     let preprocessed = library
         .root()
@@ -2476,16 +2452,12 @@ fn run_analysis(
     let repository = library.repository();
     let result = (|| {
         repository.update_job_progress(&job.id, "analyzing", 0, 1)?;
-        let processing_mode = repository
-            .external_ai_settings(false, false)?
-            .processing_mode;
-        let external_client = if processing_mode == "external" {
+        // 分析通道独立判定：走云端当且仅当理解整理已启用、隐私同意已给。
+        // Key 存在性在门禁后确认；processing_mode 不再参与本判定。
+        let ext_settings = repository.external_ai_settings(false, false)?;
+        let external_client = if ext_settings.enabled && ext_settings.privacy_consent_at.is_some()
+        {
             let settings = require_external_ai_consent(library)?;
-            if !settings.enabled {
-                return Err(crate::error::AppError::Invalid(
-                    "请先启用第三方文本理解服务".to_owned(),
-                ));
-            }
             let api_key = get_api_key()?.ok_or_else(|| {
                 crate::error::AppError::Invalid("请先配置第三方文本理解 API Key".to_owned())
             })?;
@@ -2987,6 +2959,23 @@ pub fn list_memory_feedback(
 }
 
 /* ------------------------------ v0.3.0：引导 / 收件箱 / 词汇库 / 仪表盘 ------------------------------ */
+
+/// Ollama 安装检测：CLI 可执行 + 本机服务可达。
+/// 面板用它区分「未安装」与「装了但没启动」，并据此轮询等待用户装好。
+#[tauri::command]
+pub fn get_ollama_install_status() -> Result<OllamaInstallStatus, String> {
+    let installed = std::process::Command::new("ollama")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false);
+    Ok(OllamaInstallStatus {
+        installed,
+        running: ollama_models().is_ok(),
+    })
+}
 
 #[tauri::command]
 pub async fn get_onboarding_status(state: State<'_, AppState>) -> Result<OnboardingStatus, String> {
@@ -3866,14 +3855,19 @@ mod tests {
     }
 
     #[test]
-    fn external_analysis_requires_consent_before_transport() {
+    fn analysis_without_consent_stays_local_and_sends_nothing() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let base_url = format!("http://{}", listener.local_addr().unwrap());
         let library = scratch_library("external-analysis-consent");
         let (record, _) = prepare_record_with_transcript(&library, "consent");
         let repository = library.repository();
+        // 理解整理已启用，但隐私同意未给：判定不走云端，也不得有任何外发。
+        // 分析模型指向必然不存在的名字，让本机通道确定性地失败。
         repository
-            .set_setting_value("processing_mode", "external")
+            .set_setting_value("analysis_model", "echo-test-absent-model")
+            .unwrap();
+        repository
+            .set_setting_value("external_ai_enabled", "true")
             .unwrap();
         repository
             .set_setting_value("external_ai_base_url", &base_url)
@@ -3885,8 +3879,7 @@ mod tests {
             .set_setting_value("external_ai_privacy_consent_at", "")
             .unwrap();
 
-        let error = analyze_with_library(&library, &record.id).unwrap_err();
-        assert!(error.to_string().contains("确认文本发送说明"), "{error}");
+        let _error = analyze_with_library(&library, &record.id).unwrap_err();
         assert!(repository.latest_analysis(&record.id).unwrap().is_none());
 
         listener.set_nonblocking(true).unwrap();
@@ -3914,13 +3907,75 @@ mod tests {
     }
 
     #[test]
-    fn external_mode_routes_transcription_to_asr_consent_gate() {
-        let library = scratch_library("external-transcription-route");
+    fn asr_channel_readiness_requires_full_configuration() {
+        // 只覆盖不读取 Key 的维度：Key 存在性受进程级环境变量影响，
+        // 并发测试下不可假设；该维度由 external_mode_with_ready_asr_channel_routes_to_third_party
+        // （在 AsrApiKeyEnvGuard 锁内）覆盖。
+        let library = scratch_library("asr-channel-ready");
+        let repository = library.repository();
+        let ready = || crate::external_ai_gate::external_asr_channel_ready(&library).unwrap();
+        // 默认本机模式：判定必须为否，与转录分流一致。
+        assert!(!ready());
+        repository
+            .set_setting_value("processing_mode", "external")
+            .unwrap();
+        // 缺同意：不配齐。
+        assert!(!ready());
+        repository
+            .set_setting_value("cloud_audio_upload_consent_at", "2026-09-26T00:00:00Z")
+            .unwrap();
+        // 地址清空：不配齐。
+        repository
+            .set_setting_value("cloud_transcription_base_url", "")
+            .unwrap();
+        assert!(!ready());
+        // 提供方置 none：不配齐。
+        repository
+            .set_setting_value("cloud_transcription_base_url", "https://api.example.com/v1")
+            .unwrap();
+        repository
+            .set_setting_value("cloud_transcription_provider", "none")
+            .unwrap();
+        assert!(!ready());
+        let _ = std::fs::remove_dir_all(library.root());
+    }
+
+    #[test]
+    fn asr_half_configured_only_when_provider_chosen() {
+        // Key 存在性读进程级环境变量，并发测试下不可假设——放进 env guard
+        // 串行域内，让 Key 恒定存在，用同意的有无驱动「半配置」判定。
+        use crate::external_ai_gate::AsrApiKeyEnvGuard;
+        let _key = AsrApiKeyEnvGuard::set("local-mock-0001");
+        let library = scratch_library("asr-half-configured");
+        let repository = library.repository();
+        let half = || crate::external_ai_gate::external_asr_channel_half_configured(&library).unwrap();
+        // ① 从未配置转写通道（提供方未选/none，模式也默认本机）：静默回退内置 Whisper 是对的。
+        assert!(!half());
+        // ② 提供方已选、模式切到第三方，但未确认音频上传说明：应判定为「半配置」，
+        //    回退内置时要给一次明确提示，而不是无声无息。
+        repository
+            .set_setting_value("processing_mode", "external")
+            .unwrap();
+        repository
+            .set_setting_value("cloud_transcription_provider", "openai-compatible")
+            .unwrap();
+        assert!(half());
+        // ③ 同意补上、地址模型用非空默认值、Key 在 env 里：通道配齐，不再是半配置。
+        repository
+            .set_setting_value("cloud_audio_upload_consent_at", "2026-10-25T00:00:00Z")
+            .unwrap();
+        assert!(!half());
+        let _ = std::fs::remove_dir_all(library.root());
+    }
+
+    #[test]
+    fn external_mode_without_ready_asr_channel_falls_back_to_local_whisper() {
+        let library = scratch_library("external-transcription-fallback");
         let (record, job) = library
             .repository()
             .create_record_with_transcription_job(
                 "external-transcription",
-                "第三方转写分流",
+                "第三方模式未配齐回退",
                 None,
                 Path::new("audio/external.wav"),
                 "external-transcription-hash",
@@ -3932,41 +3987,40 @@ mod tests {
             .set_setting_value("processing_mode", "external")
             .unwrap();
 
-        let error =
-            run_transcription_with_engine(None, &library, &record.id, &job, "zh", None, None)
-                .unwrap_err();
+        // 通道未配齐（无同意、无 Key）：必须回退内置 Whisper，而不是被 ASR 门禁拦死。
+        // 用一个必然不存在的模型路径，让「模型文件不存在」成为走到内置路径的确定性证据。
+        let error = run_transcription_with_engine(
+            None,
+            &library,
+            &record.id,
+            &job,
+            "zh",
+            Some("/nonexistent/echo-whisper.bin"),
+            None,
+        )
+        .unwrap_err();
 
         assert!(
-            error.to_string().contains("音频上传说明"),
-            "第三方模式必须先进入 ASR 同意门禁：{error}"
-        );
-        assert!(
-            !error.to_string().contains("Whisper"),
-            "第三方模式不得回落到本地转写模型检查"
-        );
-        assert_eq!(
-            library.repository().get_job(&job.id).unwrap().status,
-            "failed"
+            error.to_string().contains("选择的 Whisper 模型文件不存在"),
+            "转写通道未配齐时必须回退内置 Whisper：{error}"
         );
         let _ = std::fs::remove_dir_all(library.root());
     }
 
     #[test]
-    fn external_import_checks_text_analysis_before_audio_upload() {
+    fn external_mode_with_ready_asr_channel_routes_to_third_party() {
         use crate::external_ai_gate::AsrApiKeyEnvGuard;
 
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        listener.set_nonblocking(true).unwrap();
         let _key = AsrApiKeyEnvGuard::set("local-mock-0001");
-        let library = scratch_library("external-import-preflight");
+        let library = scratch_library("external-transcription-ready");
         let repository = library.repository();
-        let (record, _) = repository
+        let (record, job) = repository
             .create_record_with_transcription_job(
-                "external-import-preflight",
-                "第三方导入预检",
+                "external-transcription",
+                "第三方通道配齐分流",
                 None,
                 Path::new("audio/external.wav"),
-                "external-import-preflight-hash",
+                "external-transcription-ready-hash",
                 1_000,
             )
             .unwrap();
@@ -3977,38 +4031,91 @@ mod tests {
             .update_external_ai_settings(&settings, false, true)
             .unwrap();
 
-        let error = process_record_with_library(&library, &record.id).unwrap_err();
+        // 同意、地址、模型、Key 都齐：必须进入第三方转写链路（在音频缺失处失败），
+        // 而不是被同意门禁拦下或回退内置 Whisper。
+        let error =
+            run_transcription_with_engine(None, &library, &record.id, &job, "zh", None, None)
+                .unwrap_err();
 
-        assert!(error.to_string().contains("文本发送说明"), "{error}");
+        let message = error.to_string();
+        assert!(
+            !message.contains("音频上传说明"),
+            "通道配齐时不得被同意门禁拦下：{message}"
+        );
+        assert!(
+            !message.contains("尚未安装转写模型") && !message.contains("Whisper 模型文件不存在"),
+            "通道配齐时不得回退内置 Whisper：{message}"
+        );
+        assert!(
+            !message.contains("请先配置第三方转写 API Key"),
+            "Key 已在环境变量中：{message}"
+        );
+        assert_eq!(
+            repository.get_job(&job.id).unwrap().status,
+            "failed"
+        );
+        let _ = std::fs::remove_dir_all(library.root());
+    }
+
+    #[test]
+    fn external_import_with_ready_asr_is_not_blocked_by_analysis_channel() {
+        use crate::external_ai_gate::AsrApiKeyEnvGuard;
+
+        let _key = AsrApiKeyEnvGuard::set("local-mock-0001");
+        let library = scratch_library("external-import-asr-ready");
+        let repository = library.repository();
+        let (record, job) = repository
+            .create_record_with_transcription_job(
+                "external-import-asr-ready",
+                "第三方导入按通道分流",
+                None,
+                Path::new("audio/external.wav"),
+                "external-import-asr-ready-hash",
+                1_000,
+            )
+            .unwrap();
+        // ASR 通道配齐（同意 + Key + 默认地址模型），理解整理未配置：
+        // 导入必须继续按通道走第三方转写，不得被「文本发送说明」类错误拦死。
+        let mut settings = repository.external_ai_settings(false, true).unwrap();
+        settings.processing_mode = "external".to_owned();
+        settings.audio_upload_consent_at = Some("2026-09-26T00:00:00Z".to_owned());
+        repository
+            .update_external_ai_settings(&settings, false, true)
+            .unwrap();
+        let knowledge = repository.knowledge_settings().unwrap();
+
+        let error = process_record_with_transcription_job(
+            None,
+            &library,
+            &record.id,
+            &job,
+            &knowledge,
+        )
+        .unwrap_err();
+
+        let message = error.to_string();
+        assert!(
+            !message.contains("文本发送说明"),
+            "理解未配置不得拦死导入：{message}"
+        );
+        assert!(
+            !message.contains("请先配置第三方转写 API Key"),
+            "Key 已在环境变量中：{message}"
+        );
+        assert!(
+            !message.contains("请先启用第三方文本理解服务"),
+            "理解未配置不得拦死导入：{message}"
+        );
         let jobs = repository.list_jobs_for_record(&record.id).unwrap();
-        assert_eq!(jobs.len(), 1);
-        assert_eq!(jobs[0].job_type, "transcribe");
-        assert_eq!(jobs[0].status, "failed");
+        assert!(
+            jobs.iter()
+                .any(|job| job.job_type == "transcribe" && job.status == "failed"),
+            "转写应按通道推进并在音频缺失处失败"
+        );
         assert!(
             !jobs.iter().any(|job| job.job_type == "analyze"),
-            "第三方理解未配置时不得在音频上传后才开始分析"
+            "转写失败后不得进入分析"
         );
-
-        let mut accepted = false;
-        let deadline = std::time::Instant::now() + Duration::from_millis(100);
-        while std::time::Instant::now() < deadline {
-            match listener.accept() {
-                Ok(_) => {
-                    accepted = true;
-                    break;
-                }
-                Err(error)
-                    if matches!(
-                        error.kind(),
-                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                    ) =>
-                {
-                    thread::sleep(Duration::from_millis(10));
-                }
-                Err(error) => panic!("本地测试服务异常：{error}"),
-            }
-        }
-        assert!(!accepted, "第三方理解未配置时不得建立音频上传连接");
         let _ = std::fs::remove_dir_all(library.root());
     }
 

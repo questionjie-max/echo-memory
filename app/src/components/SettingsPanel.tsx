@@ -4,6 +4,7 @@ import { SparklesIcon, CheckIcon, XIcon } from "./icons";
 import { open as openDirectory } from "@tauri-apps/plugin-dialog";
 import AiModelSettings from "./AiModelSettings";
 import TemplateWizard from "./TemplateWizard";
+import { useAnalysisSetup } from "./AnalysisSetupSheet";
 import {
   Button,
   Card,
@@ -111,6 +112,7 @@ const TAB_TITLES: Record<SettingsTab, { title: string; subtitle: string }> = {
 };
 
 export default function SettingsPanel({ open: visible, onClose, onOpenKnowledge }: Props) {
+  const { openSheet: openAnalysisSetupSheet } = useAnalysisSetup();
   const [tab, setTab] = useState<SettingsTab>("models");
   const [status, setStatus] = useState<LocalAiStatus | null>(null);
   const [external, setExternal] = useState<ExternalAiSettings | null>(null);
@@ -423,6 +425,7 @@ export default function SettingsPanel({ open: visible, onClose, onOpenKnowledge 
               onClearExternalAsrKey={() => void removeExternalAsrKey()}
               onTestExternal={() => void checkExternal()}
               onRefresh={() => void refresh()}
+              onOpenAnalysisSetup={() => openAnalysisSetupSheet()}
               onOpenKnowledge={() => {
                 onClose();
                 onOpenKnowledge?.();

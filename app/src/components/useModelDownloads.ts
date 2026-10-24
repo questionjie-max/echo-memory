@@ -119,3 +119,25 @@ export function formatBytes(bytes: number): string {
   }
   return `${value.toFixed(value >= 100 || unit === 0 ? 0 : 1)}${units[unit]}`;
 }
+
+/**
+ * 拉取失败的高频英文原话映射成人话；原文照旧放进 detail，由界面折叠展示，不丢。
+ * 识别不了的错误原样透出，宁可英文也不要翻译错的误导。
+ */
+export function localizePullError(raw: string): { friendly: string; detail: string } {
+  const normalized = raw.toLowerCase();
+  if (normalized.includes("manifest") && (normalized.includes("does not exist") || normalized.includes("not found"))) {
+    return { friendly: "模型不存在，请检查模型名", detail: raw };
+  }
+  if (
+    normalized.includes("无法启动模型下载") ||
+    normalized.includes("connection refused") ||
+    normalized.includes("dns error") ||
+    normalized.includes("dns failed") ||
+    normalized.includes("timed out") ||
+    normalized.includes("connection reset")
+  ) {
+    return { friendly: "Ollama 服务未运行或网络不通", detail: raw };
+  }
+  return { friendly: raw, detail: raw };
+}

@@ -3,6 +3,7 @@ import { BotIcon } from "./icons";
 import type { DockMessage, DockMode } from "../shared/types";
 import { askDock, clearDockChat, getDockStatus, saveDockMessageToOutput } from "../lib/tauri";
 import { confirmAction } from "../lib/dialogs";
+import { useAnalysisSetup } from "./AnalysisSetupSheet";
 
 interface Props {
   selectedRecordId: string | null;
@@ -40,6 +41,7 @@ function loadPersisted(): PersistedDockState {
  * 跨记录、带原文引用的问答在「问知识库」视图。
  */
 export default function AssistantDock({ selectedRecordId, selectedRecordTitle }: Props) {
+  const { ensureReady } = useAnalysisSetup();
   const [collapsed, setCollapsed] = useState(loadPersisted().collapsed);
   const [engine, setEngine] = useState<"local" | "external">(loadPersisted().engine);
   const [mode, setMode] = useState<DockMode>("free");
@@ -82,7 +84,15 @@ export default function AssistantDock({ selectedRecordId, selectedRecordTitle }:
     if (!collapsed) inputRef.current?.focus();
   }, [collapsed]);
 
-  async function send() {
+  function send() {
+    void ensureReady({
+      // 随行助手按当前选中记录直接问答，不依赖知识索引。
+      needEmbedding: false,
+      action: () => void doSend(),
+    });
+  }
+
+  async function doSend() {
     const content = draft.trim();
     if (!content || busy) return;
     setBusy(true);

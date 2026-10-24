@@ -147,6 +147,7 @@ pub fn run() {
             commands::update_memory_feedback_batch,
             commands::list_memory_feedback,
             commands::get_memory_profile,
+            commands::get_ollama_install_status,
             commands::get_onboarding_status,
             commands::complete_onboarding,
             commands::reset_onboarding,

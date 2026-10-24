@@ -22,6 +22,7 @@ import type {
   MemoryScope,
   MemorySnapshot,
   MemoryViewKind,
+  OllamaInstallStatus,
   ProfileSnapshot,
   Project,
   RecordBrief,
@@ -197,6 +198,10 @@ export function getMcpStatus(): Promise<McpStatus> {
 
 export function getLocalAiStatus(): Promise<LocalAiStatus> {
   return invoke<LocalAiStatus>("get_local_ai_status");
+}
+
+export function getOllamaInstallStatus(): Promise<OllamaInstallStatus> {
+  return invoke<OllamaInstallStatus>("get_ollama_install_status");
 }
 
 export function getAudioPreprocessorStatus(): Promise<AudioPreprocessorStatus> {
