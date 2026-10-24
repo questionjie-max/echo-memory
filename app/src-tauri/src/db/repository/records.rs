@@ -81,8 +81,9 @@ impl LibraryRepository {
         self.get_record(&record.id)
     }
 
-    /// 原子地写入记录和首个转写任务。文件复制由上层服务负责；若写库失败，
-    /// 调用方据此删除刚复制的文件，避免无法解释的孤儿音频。
+    /// 原子地写入外部导入记录和首个转写任务。
+    /// 文件复制由上层服务负责；若写库失败，调用方据此删除刚复制的文件，
+    /// 避免无法解释的孤儿音频。
     pub fn create_record_with_transcription_job(
         &self,
         record_id: &str,
@@ -92,6 +93,32 @@ impl LibraryRepository {
         audio_hash: &str,
         audio_duration_ms: i64,
     ) -> AppResult<(RecordBrief, ProcessingJob)> {
+        self.create_record_with_transcription_job_source(
+            record_id,
+            title,
+            project_id,
+            audio_path,
+            audio_hash,
+            audio_duration_ms,
+            "import",
+        )
+    }
+
+    /// 与外部文件导入共用落库事务，但保留应用内录音的来源语义。
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_record_with_transcription_job_source(
+        &self,
+        record_id: &str,
+        title: &str,
+        project_id: Option<&str>,
+        audio_path: &Path,
+        audio_hash: &str,
+        audio_duration_ms: i64,
+        source_type: &str,
+    ) -> AppResult<(RecordBrief, ProcessingJob)> {
+        if !matches!(source_type, "import" | "recording") {
+            return Err(AppError::Invalid(format!("非法音频来源: {source_type}")));
+        }
         let title = title.trim();
         if title.is_empty() {
             return Err(AppError::Invalid("记录标题不能为空".into()));
@@ -104,7 +131,7 @@ impl LibraryRepository {
         let record = RecordBrief {
             id: record_id.to_owned(),
             title: title.to_owned(),
-            source_type: "import".to_owned(),
+            source_type: source_type.to_owned(),
             project_id: project_id.map(str::to_owned),
             project_name: None,
             audio_hash: audio_hash.to_owned(),
@@ -140,11 +167,12 @@ impl LibraryRepository {
         transaction.execute(
             "INSERT INTO records \
              (id, title, project_id, source_type, audio_path, audio_hash, audio_duration_ms, imported_at, processing_status, created_at, updated_at) \
-             VALUES (?1, ?2, NULLIF(?3, ''), 'import', ?4, ?5, ?6, ?7, ?8, ?7, ?7)",
+             VALUES (?1, ?2, NULLIF(?3, ''), ?4, ?5, ?6, ?7, ?8, ?9, ?8, ?8)",
             params![
                 record.id,
                 record.title,
                 project_id,
+                source_type,
                 audio_path.to_string_lossy(),
                 record.audio_hash,
                 record.audio_duration_ms,

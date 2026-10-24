@@ -25,6 +25,48 @@ export type RecordStatus =
 
 export type JobType = "transcribe" | "analyze";
 
+export type RecordingStatus =
+  | "idle"
+  | "starting"
+  | "recording"
+  | "paused"
+  | "finalizing"
+  | "completed"
+  | "failed";
+
+export type MicrophonePermission =
+  | "undetermined"
+  | "denied"
+  | "granted"
+  | "unsupported";
+
+export interface RecordingState {
+  status: RecordingStatus;
+  sessionId: string | null;
+  elapsedMs: number;
+  inputLevelDb: number | null;
+  peakLevelDb: number | null;
+  filePath: string | null;
+  error: string | null;
+}
+
+export interface StoppedRecording {
+  sessionId: string;
+  recordId: string;
+  durationMs: number;
+  title: string;
+}
+
+export interface RecoverableRecording {
+  sessionId: string;
+  status: string;
+  title: string;
+  startedAt: string;
+  durationMs: number;
+  writtenBytes: number;
+  lastError: string | null;
+}
+
 export interface Project {
   id: string; // UUID
   name: string;

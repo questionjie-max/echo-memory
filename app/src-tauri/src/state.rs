@@ -127,6 +127,7 @@ pub fn consume_export_ticket(ticket: &str) -> bool {
 #[derive(Clone)]
 pub struct AppState {
     pub library: ManagedLibrary,
+    pub recording: crate::recording::RecordingController,
     cancelled_generations: Arc<Mutex<HashSet<String>>>,
     generation_jobs: Arc<Mutex<HashMap<String, MemoryGenerationJob>>>,
     active_knowledge_indexes: Arc<Mutex<HashSet<String>>>,
@@ -141,11 +142,13 @@ impl AppState {
         repository.recover_interrupted_memory_snapshots()?;
         repository.recover_interrupted_knowledge_indexes()?;
         repository.recover_interrupted_processing_jobs()?;
+        repository.recover_interrupted_recording_sessions()?;
         // 启动时静默清理一次可再生的中间文件（崩溃残留的预处理 WAV 等）。
         // 失败不阻塞启动：清理本来只是防堆积，用户还可以在设置里手动清理。
         let _ = crate::storage::run_cleanup(&library);
         Ok(Self {
             library,
+            recording: crate::recording::RecordingController::default(),
             cancelled_generations: Arc::new(Mutex::new(HashSet::new())),
             generation_jobs: Arc::new(Mutex::new(HashMap::new())),
             active_knowledge_indexes: Arc::new(Mutex::new(HashSet::new())),

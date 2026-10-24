@@ -21,6 +21,7 @@ mod mcp;
 mod memory_snapshots;
 mod processing_jobs;
 mod projects;
+mod recording_sessions;
 mod records;
 mod search;
 mod settings;

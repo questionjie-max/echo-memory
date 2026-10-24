@@ -24,6 +24,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+# 编译 macOS 原生录音桥接；非 macOS 构建不编译该源文件。
+cc = "1"
 
 [dependencies]
 # Tauri 2 桌面框架

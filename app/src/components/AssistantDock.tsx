@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { BotIcon } from "./icons";
 import type { DockMessage, DockMode } from "../shared/types";
 import { askDock, clearDockChat, getDockStatus, saveDockMessageToOutput } from "../lib/tauri";
+import { confirmAction } from "../lib/dialogs";
 
 interface Props {
   selectedRecordId: string | null;
@@ -129,7 +130,7 @@ export default function AssistantDock({ selectedRecordId, selectedRecordTitle }:
   }
 
   async function clearAll() {
-    if (!window.confirm("清空当前对话？此操作不可撤销。")) return;
+    if (!(await confirmAction("清空当前对话？此操作不可撤销。"))) return;
     try {
       await clearDockChat();
       setMessages([]);

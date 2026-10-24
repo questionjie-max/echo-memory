@@ -2,7 +2,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { DiskSpaceStatus, InboxStatus, Project, RecordBrief, RecordStatus } from "../shared/types";
 import {
   deleteRecords,
@@ -20,6 +20,7 @@ import { formatBytes, formatMinutesSeconds as formatDuration, isProcessingStatus
 import { getInboxStatus } from "../lib/tauri";
 import DocumentImportDialog from "./DocumentImportDialog";
 import ChatImportDialog from "./ChatImportDialog";
+import { confirmAction } from "../lib/dialogs";
 import { InboxIcon, ChevronDownIcon, MoreIcon, PlayIcon } from "./icons";
 
 interface Props {
@@ -30,6 +31,8 @@ interface Props {
   onSelect: (record: RecordBrief | null) => void;
   /** 播放钮：选中该记录并立即开始播放（仅音频记录显示播放钮）。 */
   onPlay: (record: RecordBrief) => void;
+  /** 外部刷新信号（例如录音在全局控制条里停止并入库后）。 */
+  refreshKey?: number;
 }
 
 type WorkspaceView = "pending" | "recent" | "archived";
@@ -116,7 +119,7 @@ const STATUS_LABEL: Record<RecordStatus, string> = {
   failed: "转写失败",
 };
 
-export default function RecordPanel({ projectId, unfiledOnly, onImported, selectedId, onSelect, onPlay }: Props) {
+export default function RecordPanel({ projectId, unfiledOnly, onImported, selectedId, onSelect, onPlay, refreshKey }: Props) {
   const [records, setRecords] = useState<RecordBrief[]>([]);
   const [archivedRecords, setArchivedRecords] = useState<RecordBrief[]>([]);
   const [view, setView] = useState<WorkspaceView>("pending");
@@ -270,6 +273,14 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
     return () => window.clearInterval(timer);
   }, [records]);
 
+  // 外部刷新信号（录音停止入库等）：只响应变化，不在挂载时重复刷新一次。
+  const refreshKeyRef = useRef(refreshKey);
+  useEffect(() => {
+    if (refreshKeyRef.current === refreshKey) return;
+    refreshKeyRef.current = refreshKey;
+    void refresh();
+  }, [refreshKey]);
+
   async function ingestPaths(paths: string[]) {
     for (const sourcePath of paths) await ingestOne(sourcePath);
   }
@@ -281,7 +292,7 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
     try {
       let result = await importAudio({ sourcePath, projectId, duplicateConfirmed: false });
       if (result.duplicate) {
-        const createCopy = window.confirm(`该音频已导入为“${result.title}”。是否创建一份独立副本？`);
+        const createCopy = await confirmAction(`该音频已导入为“${result.title}”。是否创建一份独立副本？`);
         if (!createCopy) {
           setNotice("已保留原有录音，未创建副本。");
           return;
@@ -463,7 +474,7 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
 
   async function applyDelete() {
     if (selectedIds.length === 0 || bulkBusy) return;
-    const confirmed = window.confirm(
+    const confirmed = await confirmAction(
       `确定删除选中的 ${selectedIds.length} 条记录吗？\n\n逐字稿、分析结果和知识索引会一起删除，原始音频文件也会从本机移除，且无法恢复。`,
     );
     if (!confirmed) return;
@@ -556,8 +567,8 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
     );
   }
 
-  function deleteFromMenu(record: RecordBrief) {
-    const confirmed = window.confirm(
+  async function deleteFromMenu(record: RecordBrief) {
+    const confirmed = await confirmAction(
       `确定删除“${record.title}”吗？\n\n逐字稿、分析结果和知识索引会一起删除，原始文件也会从本机移除，且无法恢复。`,
     );
     if (!confirmed) return;

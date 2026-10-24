@@ -47,6 +47,36 @@ impl ManagedLibrary {
         project_id: Option<&str>,
         duplicate_confirmed: bool,
     ) -> AppResult<IngestResult> {
+        self.import_audio_with_source(source, project_id, duplicate_confirmed, "import")
+    }
+
+    pub fn import_audio_with_source(
+        &self,
+        source: &Path,
+        project_id: Option<&str>,
+        duplicate_confirmed: bool,
+        source_type: &str,
+    ) -> AppResult<IngestResult> {
+        self.import_audio_with_source_named(
+            source,
+            project_id,
+            duplicate_confirmed,
+            source_type,
+            None,
+        )
+    }
+
+    pub fn import_audio_with_source_named(
+        &self,
+        source: &Path,
+        project_id: Option<&str>,
+        duplicate_confirmed: bool,
+        source_type: &str,
+        title_override: Option<&str>,
+    ) -> AppResult<IngestResult> {
+        if !matches!(source_type, "import" | "recording") {
+            return Err(AppError::Invalid(format!("非法音频来源: {source_type}")));
+        }
         let extension = supported_extension(source)?;
         let hash = sha256_file(source)?;
         if let Some(existing) = self.repository.find_record_by_hash(&hash)? {
@@ -73,18 +103,26 @@ impl ManagedLibrary {
             .ok_or_else(|| AppError::Import("无法确定受管理目录".into()))?;
         fs::create_dir_all(parent)?;
         fs::copy(source, &destination)?;
-        let title = source
-            .file_stem()
-            .and_then(|name| name.to_str())
-            .filter(|name| !name.trim().is_empty())
+        let title = title_override
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+            .map(str::to_owned)
+            .or_else(|| {
+                source
+                    .file_stem()
+                    .and_then(|name| name.to_str())
+                    .filter(|name| !name.trim().is_empty())
+                    .map(str::to_owned)
+            })
             .ok_or_else(|| AppError::Import("文件名无效".into()))?;
-        match self.repository.create_record_with_transcription_job(
+        match self.repository.create_record_with_transcription_job_source(
             &record_id,
-            title,
+            &title,
             project_id,
             &relative_path,
             &hash,
             duration_ms,
+            source_type,
         ) {
             Ok((record, _)) => Ok(IngestResult {
                 record_id: record.id,
@@ -254,6 +292,25 @@ mod tests {
             1
         );
     }
+    #[test]
+    fn recording_source_is_preserved_when_importing_captured_audio() {
+        let root = temp_root("recording-source");
+        let source = root.join("capture.wav");
+        write_wav(&source);
+        let library = ManagedLibrary::open(root.join("library")).unwrap();
+        let result = library
+            .import_audio_with_source(&source, None, false, "recording")
+            .unwrap();
+        assert_eq!(
+            library
+                .repository()
+                .get_record(&result.record_id)
+                .unwrap()
+                .source_type,
+            "recording"
+        );
+    }
+
     #[test]
     fn duplicate_hash_requires_confirmation() {
         let root = temp_root("duplicate");

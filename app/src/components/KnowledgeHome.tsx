@@ -18,6 +18,7 @@ import {
   rebuildKnowledgeIndex,
 } from "../lib/tauri";
 import { formatMinutesSeconds as formatTime } from "../lib/format";
+import RecordingEntry from "./RecordingEntry";
 
 interface Props {
   scope: string;
@@ -27,9 +28,11 @@ interface Props {
   onOpenCitation: (citation: KnowledgeAnswerCitation) => void;
   /** 提问入口收敛到「问知识库」视图一处：主页只留一个跳转，不再各做一套问答界面。 */
   onOpenKnowledgeChat: () => void;
+  /** 录音入口产生/恢复出正式记录后触发，让工作区与主页统计刷新。 */
+  onLibraryChanged?: () => void;
 }
 
-export default function KnowledgeHome({ scope, projectId, unfiledOnly, refreshKey, onOpenCitation, onOpenKnowledgeChat }: Props) {
+export default function KnowledgeHome({ scope, projectId, unfiledOnly, refreshKey, onOpenCitation, onOpenKnowledgeChat, onLibraryChanged }: Props) {
   const [name, setName] = useState(scope === "all" ? "全部记录" : scope === "unfiled" ? "未归档" : "知识库");
   const [overview, setOverview] = useState<KnowledgeOverview | null>(null);
   const [index, setIndex] = useState<KnowledgeIndexStatus | null>(null);
@@ -173,6 +176,13 @@ export default function KnowledgeHome({ scope, projectId, unfiledOnly, refreshKe
 
   const ready = index?.status === "completed";
   return <section className="knowledge-home" aria-label={`${name}主页`}>
+    {/* 本地记录模块是这一页的顶层入口，排在页头之前：采集优先于浏览。
+        它是自足的——开始/暂停/结束都发生在卡内，不再拉起全局控制条。 */}
+    <RecordingEntry
+      projectId={projectId}
+      refreshKey={refreshKey}
+      onImported={() => onLibraryChanged?.()}
+    />
     <header className="knowledge-home-header view-header">
       <div><p className="pane-eyebrow">知识库主页</p><h2>{name}</h2></div>
       <div className="knowledge-home-actions">

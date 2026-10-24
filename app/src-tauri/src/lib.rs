@@ -19,6 +19,7 @@ pub mod library;
 pub mod memory;
 pub mod memory_index;
 pub mod record_commands;
+pub mod recording;
 pub mod state;
 pub mod storage;
 pub mod transcript;
@@ -100,6 +101,18 @@ pub fn run() {
             commands::set_mcp_enabled,
             commands::get_record,
             commands::record_audio_path,
+            recording::microphone_permission,
+            recording::request_microphone_permission,
+            recording::start_recording,
+            recording::pause_recording,
+            recording::resume_recording,
+            recording::recording_levels,
+            recording::stop_recording,
+            recording::cancel_recording,
+            recording::get_recording_state,
+            recording::list_recoverable_recordings,
+            recording::recover_recording,
+            recording::discard_recoverable_recording,
             commands::list_jobs,
             commands::import_audio,
             commands::import_document,
