@@ -219,6 +219,42 @@ input::placeholder, textarea::placeholder { color: var(--em-ink-4); }
   backdrop-filter: blur(20px) saturate(155%);
 }
 .record-pane { display: flex; flex-direction: column; padding: 16px 14px 12px; background: var(--em-pane); overflow: hidden; }
+/* 本地记录模块（首页顶层，排在页头之前）。
+   自足：开始/暂停/结束全部发生在卡内，不再有独立的顶部控制条。
+   内缩与 .view-header 一致（20px），让「模块 / 页头 / 内容」三条左边界对齐。 */
+.recording-entry { display: grid; gap: 8px; margin: 12px 20px; padding: 12px 14px; border: 1px solid var(--em-accent-border); border-radius: var(--em-r-md); background: var(--em-accent-soft); }
+.recording-entry-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+/* accent 眉标的统一配方：与 .document-import-eyebrow 同款（10px / 700 / .09em / 大写）。 */
+.recording-entry-eyebrow { margin: 0 0 3px; color: var(--em-accent-ink); font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
+/* 卡片标题走全站 h3 规格（13px），与同页 .index-section h3 同级。 */
+.recording-entry h3 { margin: 0; color: var(--em-ink); font-size: 13px; }
+.recording-entry-lead { margin: 4px 0 0; color: var(--em-ink-3); font-size: 11px; line-height: 1.45; }
+.recording-entry-start { flex: 0 0 auto; white-space: nowrap; }
+.recording-entry-state { display: inline-flex; align-items: center; gap: 7px; flex: 0 0 auto; }
+.recording-entry-state strong { color: var(--em-ink); font-size: 11px; font-weight: 650; }
+.recording-entry-state time { color: var(--em-ink-2); font-size: 13px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.recording-entry-actions { display: flex; align-items: center; gap: 8px; }
+/* 三级按钮：与 .primary-button / .secondary-button 同高同圆角，但无边无底，位置留给次次操作。
+   .link-button 全站没有基础定义（只在 bulk-bar 等作用域里有），这里必须显式给全，
+   否则会掉回浏览器默认按钮样式——这正是「按钮看起来不统一」的来源。 */
+.recording-entry .link-button { padding: 7px 10px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--em-accent); cursor: pointer; font-size: 11px; font-weight: 650; }
+.recording-entry .link-button:hover:not(:disabled) { background: var(--em-soft-fill); }
+.recording-entry-hint { margin: 0; color: var(--em-ink-3); font-size: 10px; line-height: 1.45; }
+.recording-entry-notice, .recording-entry-error { margin: 0; padding: 6px 7px; border-radius: var(--em-r-xs); font-size: 11px; line-height: 1.4; }
+.recording-entry-notice { background: var(--em-ok-soft); color: var(--em-ok-ink); }
+.recording-entry-error { background: var(--em-err-soft); color: var(--em-err-ink); }
+.recording-live-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: var(--em-err); box-shadow: 0 0 0 4px var(--em-err-soft); }
+/* 电平条与全站进度条同一规格（5px 轨道 / 3px 圆角），不用更高更圆的一套。 */
+.recording-meter { height: 5px; overflow: hidden; border-radius: 3px; background: var(--em-soft-fill-2); }
+.recording-meter span { display: block; height: 100%; min-width: 2px; border-radius: inherit; background: var(--em-ok); transition: width 180ms ease; }
+.recording-recovery { display: grid; gap: 8px; padding-top: 3px; }
+.recording-recovery-heading { display: grid; gap: 2px; }
+.recording-recovery-heading strong { font-size: 11px; }
+.recording-recovery-heading span, .recording-recovery-row span { color: var(--em-ink-3); font-size: 10px; }
+.recording-recovery-row, .recording-recovery-actions { display: flex; align-items: center; gap: 8px; }
+.recording-recovery-row { justify-content: space-between; padding: 7px 0; border-top: 1px solid var(--em-hairline-soft); }
+.recording-recovery-row > div:first-child { display: grid; gap: 2px; min-width: 0; }
+.recording-recovery-row strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
 /* 详情页用弹性列布局：内容区独占剩余空间并内部滚动，说话人/相关记录等区块按自然
    高度依次排布。早先写死 grid-template-rows 五行，一旦音频条把子元素挤到六个，
    「说话人」就落到了那个 minmax(0,1fr) 行上，逐字稿一超高该行被压成 0 像素，
@@ -741,11 +777,11 @@ input::placeholder, textarea::placeholder { color: var(--em-ink-4); }
 .progress-track { height: 5px; overflow: hidden; border-radius: 3px; background: var(--em-soft-fill-2); }
 .progress-track span { display: block; height: 100%; border-radius: inherit; background: var(--em-accent); transition: width 200ms ease; }
 
-.knowledge-home { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; background: var(--em-pane); }
+.knowledge-home { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto auto minmax(0, 1fr); overflow: hidden; background: var(--em-pane); }
 .knowledge-home-header { position: relative; z-index: 10; background: var(--em-frost-panel); backdrop-filter: blur(18px); }
 .knowledge-home-actions { display: flex; align-items: center; gap: 8px; }
 
-.knowledge-home-content { min-height: 0; overflow: auto; padding: 14px 16px; }
+.knowledge-home-content { min-height: 0; overflow: auto; padding: 14px 20px; }
 .knowledge-notice { margin: 8px 16px 0; }
 .knowledge-metrics { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--em-hairline-soft); border-radius: var(--em-r-sm); background: var(--em-surface-2); }
 .knowledge-metrics > div { display: grid; gap: 2px; padding: 12px; border-right: 1px solid var(--em-hairline-soft); }

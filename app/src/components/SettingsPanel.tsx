@@ -4,6 +4,7 @@ import { SparklesIcon, CheckIcon, XIcon } from "./icons";
 import { open as openDirectory } from "@tauri-apps/plugin-dialog";
 import AiModelSettings from "./AiModelSettings";
 import TemplateWizard from "./TemplateWizard";
+import { useAnalysisSetup } from "./AnalysisSetupSheet";
 import {
   Button,
   Card,
@@ -74,6 +75,7 @@ import {
   updateExternalAiSettings,
   updateKnowledgeSettings,
 } from "../lib/tauri";
+import { confirmAction } from "../lib/dialogs";
 
 interface Props {
   open: boolean;
@@ -110,6 +112,7 @@ const TAB_TITLES: Record<SettingsTab, { title: string; subtitle: string }> = {
 };
 
 export default function SettingsPanel({ open: visible, onClose, onOpenKnowledge }: Props) {
+  const { openSheet: openAnalysisSetupSheet } = useAnalysisSetup();
   const [tab, setTab] = useState<SettingsTab>("models");
   const [status, setStatus] = useState<LocalAiStatus | null>(null);
   const [external, setExternal] = useState<ExternalAiSettings | null>(null);
@@ -298,7 +301,7 @@ export default function SettingsPanel({ open: visible, onClose, onOpenKnowledge 
   }
 
   async function removeExternalKey() {
-    if (!window.confirm("清除外部 AI API Key？外部 AI 将无法生成记忆快照。")) return;
+    if (!(await confirmAction("清除外部 AI API Key？外部 AI 将无法生成记忆快照。"))) return;
     await report(() => clearExternalAiApiKey(), "API Key 已清除", applyExternal);
   }
 
@@ -307,7 +310,7 @@ export default function SettingsPanel({ open: visible, onClose, onOpenKnowledge 
   }
 
   async function removeExternalAsrKey() {
-    if (!window.confirm("清除语音转文字 API Key？第三方录音转写将无法执行。")) return;
+    if (!(await confirmAction("清除语音转文字 API Key？第三方录音转写将无法执行。"))) return;
     await report(() => clearExternalAsrApiKey(), "语音转文字 API Key 已清除", applyExternal);
   }
 
@@ -422,6 +425,7 @@ export default function SettingsPanel({ open: visible, onClose, onOpenKnowledge 
               onClearExternalAsrKey={() => void removeExternalAsrKey()}
               onTestExternal={() => void checkExternal()}
               onRefresh={() => void refresh()}
+              onOpenAnalysisSetup={() => openAnalysisSetupSheet()}
               onOpenKnowledge={() => {
                 onClose();
                 onOpenKnowledge?.();
@@ -813,7 +817,7 @@ export default function SettingsPanel({ open: visible, onClose, onOpenKnowledge 
   }
 
   async function removeTemplate(template: AnalysisTemplate) {
-    if (!window.confirm(`删除模板“${template.name}”？历史分析不会被删除。`)) return;
+    if (!(await confirmAction(`删除模板“${template.name}”？历史分析不会被删除。`))) return;
     setBusy(true);
     try {
       await deleteAnalysisTemplate(template.id);

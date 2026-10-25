@@ -1,7 +1,7 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState } from "react";
 import type { LocalAiStatus, OnboardingStatus, SuggestedWatchFolder } from "../shared/types";
-import { ANALYSIS_MODEL_SUGGESTIONS, OllamaModelList, WhisperModelList } from "./ModelList";
+import { WhisperModelList } from "./ModelList";
 import { Button, Card, List, ListRow, Pill, Stack, StatusPill } from "./SettingsKit";
 import { useModelDownloads } from "./useModelDownloads";
 import { PRIVACY_POSTURE } from "../lib/posture";
@@ -19,14 +19,16 @@ interface Props {
   onFinished: () => void;
 }
 
-type WizardStep = 0 | 1 | 2 | 3 | 4 | 5;
+type WizardStep = 0 | 1 | 2 | 3 | 4;
 
-const STEP_TITLES = ["欢迎", "环境体检", "转写模型", "分析模型", "音频收件箱", "完成"];
+const STEP_TITLES = ["欢迎", "环境体检", "转写模型", "音频收件箱", "完成"];
 
 /**
- * 首次启动引导：隐私说明 → 环境体检 → 模型配置（支持跳过，稍后可补配）→ 收件箱。
+ * 首次启动引导：隐私说明 → 环境体检 → 转写模型 → 收件箱。
  *
- * 模型这几步复用设置里的 `ModelList`：引导和设置看到的是同一批组件、同一份状态，
+ * 分析模型不进向导：它依赖外部安装的 Ollama，是新用户流失最重的环节，
+ * 统一留在 设置 → AI 模型 里补配（本机 Ollama 或外部 API）。体检只做中性提示。
+ * 转写模型这步复用设置里的 `WhisperModelList`：引导和设置看到的是同一批组件、同一份状态，
  * 不会出现「引导里下完了、设置里还不认」这种两边各说各话的情况。
  * 任何一步都可以跳过；跳过模型配置时产品进入「先导入先管理」的降级模式。
  */
@@ -68,7 +70,7 @@ export default function OnboardingWizard({ onFinished }: Props) {
   }, []);
 
   useEffect(() => {
-    if (step === 1 || step === 2 || step === 3) void refreshStatus();
+    if (step === 1 || step === 2) void refreshStatus();
   }, [step]);
 
   async function chooseLocalWhisperModel() {
@@ -123,7 +125,6 @@ export default function OnboardingWizard({ onFinished }: Props) {
   }
 
   const recommendedDownload = local ? downloads[local.recommendedWhisperModel.id] : undefined;
-  const analysisDownload = local ? downloads[local.settings.analysisModel] : undefined;
 
   return (
     <div className="onboarding-scrim" role="presentation">
@@ -177,17 +178,29 @@ export default function OnboardingWizard({ onFinished }: Props) {
                   />
                   <ListRow
                     static
-                    state={local.ollamaAvailable ? "done" : "error"}
+                    state={local.ollamaAvailable ? "done" : "idle"}
                     title="Ollama 服务"
-                    badge={<StatusPill ok={local.ollamaAvailable} okText="运行中" badText="未运行" />}
-                    meta={local.ollamaAvailable ? "分析功能可用的前提" : "分析功能需要它，可稍后安装"}
+                    badge={
+                      local.ollamaAvailable ? <StatusPill ok okText="运行中" /> : <Pill>未安装</Pill>
+                    }
+                    meta={
+                      local.ollamaAvailable
+                        ? "分析功能可用的前提"
+                        : "分析与知识索引需要 Ollama，可稍后设置，不影响导入和转写"
+                    }
                   />
                   <ListRow
                     static
-                    state={status.analysisModelReady ? "done" : "error"}
+                    state={status.analysisModelReady ? "done" : "idle"}
                     title={`分析模型 ${status.analysisModel}`}
-                    badge={<StatusPill ok={status.analysisModelReady} okText="已安装" badText="未安装" />}
-                    meta={status.analysisModelReady ? undefined : "下一步解决"}
+                    badge={
+                      status.analysisModelReady ? (
+                        <StatusPill ok okText="已安装" />
+                      ) : (
+                        <Pill>未安装</Pill>
+                      )
+                    }
+                    meta={status.analysisModelReady ? undefined : "用到分析时再准备即可"}
                   />
                 </List>
               )}
@@ -227,40 +240,6 @@ export default function OnboardingWizard({ onFinished }: Props) {
 
           {step === 3 && (
             <Stack>
-              <h3>配置分析模型</h3>
-              <p className="em-hint">
-                结构化分析（摘要 / 决策 / 待办）默认由本机 Ollama 完成，需要 Ollama 服务处于运行状态。
-                也可以稍后在 设置 → AI 模型 里改成外部 API。
-              </p>
-              {local && !local.ollamaAvailable && (
-                <p className="em-note warn">
-                  Ollama 未运行。先安装并启动 Ollama（ollama.com），再回到这一步。
-                </p>
-              )}
-              {local && (
-                <Card title="分析模型">
-                  <OllamaModelList
-                    models={local.ollamaModels}
-                    selected={local.settings.analysisModel}
-                    suggestions={ANALYSIS_MODEL_SUGGESTIONS}
-                    download={analysisDownload}
-                    available={local.ollamaAvailable}
-                    role="analysis"
-                    onSelect={(name) => {
-                      void updateKnowledgeSettings({ ...local.settings, analysisModel: name })
-                        .then(refreshStatus)
-                        .catch((reason) => setError(String(reason)));
-                    }}
-                    onDownload={(name) => void start("ollama", name)}
-                    onCancel={(model) => void cancel(model)}
-                  />
-                </Card>
-              )}
-            </Stack>
-          )}
-
-          {step === 4 && (
-            <Stack>
               <h3>音频收件箱</h3>
               <p className="em-hint">
                 勾选要监听的文件夹：录音笔、手机、微信传来的音频文件一出现就自动导入转写，不用手动操作。
@@ -288,7 +267,7 @@ export default function OnboardingWizard({ onFinished }: Props) {
             </Stack>
           )}
 
-          {step === 5 && (
+          {step === 4 && (
             <Stack>
               <h3>准备就绪</h3>
               <List>
@@ -311,7 +290,7 @@ export default function OnboardingWizard({ onFinished }: Props) {
           {step > 0 && (
             <Button onClick={() => setStep((current) => (current - 1) as WizardStep)}>上一步</Button>
           )}
-          {step < 5 ? (
+          {step < STEP_TITLES.length - 1 ? (
             <Button variant="primary" onClick={() => setStep((current) => (current + 1) as WizardStep)}>
               下一步
             </Button>

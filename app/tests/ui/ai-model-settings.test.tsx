@@ -313,7 +313,11 @@ describe("AI 模型：本地与外部是同一个决策", () => {
         /转写 openai-compatible · qwen3-asr-flash ｜ 分析 外部模型 · gpt-4.1-mini/,
       ),
     ).toBeTruthy();
-    expect(screen.queryByText(/本机 Ollama/)).toBeNull();
+    // 新语义：分析走云端由「启用 + Key + 同意」决定；云端就绪时摘要如实显示外部链路，
+    // 分析卡描述也如实说明回退规则（云端未配齐时才走本机 Ollama）。
+    expect(
+      screen.getByText(/云端理解启用且有 Key 时走云端，否则走本机 Ollama/),
+    ).toBeTruthy();
   });
 
   it("地址在失焦时才写库，敲到一半不会保存", async () => {

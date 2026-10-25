@@ -19,6 +19,7 @@ pub mod library;
 pub mod memory;
 pub mod memory_index;
 pub mod record_commands;
+pub mod recording;
 pub mod state;
 pub mod storage;
 pub mod transcript;
@@ -100,6 +101,18 @@ pub fn run() {
             commands::set_mcp_enabled,
             commands::get_record,
             commands::record_audio_path,
+            recording::microphone_permission,
+            recording::request_microphone_permission,
+            recording::start_recording,
+            recording::pause_recording,
+            recording::resume_recording,
+            recording::recording_levels,
+            recording::stop_recording,
+            recording::cancel_recording,
+            recording::get_recording_state,
+            recording::list_recoverable_recordings,
+            recording::recover_recording,
+            recording::discard_recoverable_recording,
             commands::list_jobs,
             commands::import_audio,
             commands::import_document,
@@ -122,6 +135,7 @@ pub fn run() {
             commands::set_external_asr_api_key,
             commands::clear_external_asr_api_key,
             commands::test_external_ai_connection,
+            commands::list_remote_models,
             commands::get_local_timeline,
             commands::get_local_growth_graph,
             commands::generate_memory_snapshot,
@@ -134,6 +148,7 @@ pub fn run() {
             commands::update_memory_feedback_batch,
             commands::list_memory_feedback,
             commands::get_memory_profile,
+            commands::get_ollama_install_status,
             commands::get_onboarding_status,
             commands::complete_onboarding,
             commands::reset_onboarding,

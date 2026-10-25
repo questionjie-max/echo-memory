@@ -42,6 +42,7 @@ import {
 import { listen } from "@tauri-apps/api/event";
 import { formatMinutesSeconds as formatTime, isProcessingStatus as isProcessing } from "../lib/format";
 import { Field, List, ListRow, Segmented } from "./SettingsKit";
+import { useAnalysisSetup } from "./AnalysisSetupSheet";
 
 interface Props {
   record: RecordBrief;
@@ -64,6 +65,7 @@ const TRANSCRIPTION_LANGUAGES = [
 ];
 
 export default function RecordDetail({ record, navigation, onChanged }: Props) {
+  const { ensureReady } = useAnalysisSetup();
   const audio = useRef<HTMLAudioElement>(null);
   const detailContent = useRef<HTMLDivElement>(null);
   const detailMenu = useRef<HTMLDetailsElement>(null);
@@ -345,7 +347,15 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
     }
   }
 
-  async function startAnalysis() {
+  function startAnalysis() {
+    void ensureReady({
+      // 单条分析不依赖知识索引，只要求分析模型就绪（本机 Ollama 或云端理解）。
+      needEmbedding: false,
+      action: () => void runAnalysis(),
+    });
+  }
+
+  async function runAnalysis() {
     setBusy(true);
     setError("");
     completionNotified.current = false;

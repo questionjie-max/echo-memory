@@ -66,6 +66,8 @@ export interface AiModelSettingsProps {
   onTestExternal: () => void;
   onRefresh: () => void;
   onOpenKnowledge: () => void;
+  /** 打开「分析设置」发起面板；不传则不显示入口按钮。 */
+  onOpenAnalysisSetup?: () => void;
   testResult: ReactNode;
   error: string | null;
 }
@@ -85,7 +87,7 @@ export default function AiModelSettings(props: AiModelSettingsProps) {
       external.transcriptionHasApiKey &&
       external.audioUploadConsentAt,
   );
-  const externalAnalysisReady = analysisReady(status, channel, external);
+  const externalAnalysisReady = analysisReady(status, external);
   const externalMissing = channel === "external"
     ? [
         !asrReady && "第三方转写",
@@ -118,13 +120,15 @@ export default function AiModelSettings(props: AiModelSettingsProps) {
           value={channel}
           onChange={(next) => props.onSaveExternal({ processingMode: next })}
           options={[
-            { value: "local", label: "本机处理", hint: "Whisper 转写，Ollama 分析，音频与文本不出本机" },
-            { value: "external", label: "第三方处理", hint: "分别配置语音转文字与理解整理模型" },
+            { value: "local", label: "本机处理", hint: "显示本机通道配置：Whisper 转写、Ollama 分析" },
+            { value: "external", label: "第三方处理", hint: "显示第三方通道配置；转写仅在通道配齐时走第三方，缺项自动回退本机 Whisper" },
           ]}
         />
         {channel === "external" && (
           <p className="em-note">
             第三方处理需要分别确认音频上传与文本发送说明，并填写服务商的 API Key。
+            两个通道独立判定：转写通道缺项时，导入会自动回退本机 Whisper（会提示一次补配），不会被拦下；
+            分析是否走云端由下方「启用理解与结构化整理」开关、API Key 与隐私同意决定，与本开关无关。
           </p>
         )}
         {externalMissing.length > 0 && (
@@ -304,8 +308,13 @@ export default function AiModelSettings(props: AiModelSettingsProps) {
       {/* ---------------- 分析 ---------------- */}
       <Card
         title="分析"
-        description="把逐字稿变成摘要、决策和待办，按当前处理通道执行。"
+        description="把逐字稿变成摘要、决策和待办：云端理解启用且有 Key 时走云端，否则走本机 Ollama。"
         status={<StatusPill ok={externalAnalysisReady} okText="可用" badText={channel === "local" ? "未运行" : "未配置"} />}
+        actions={
+          props.onOpenAnalysisSetup ? (
+            <Button onClick={props.onOpenAnalysisSetup}>配置分析…</Button>
+          ) : undefined
+        }
       >
         {channel === "local" ? (
           <>
@@ -705,7 +714,7 @@ function summary(
         external.transcriptionHasApiKey &&
         external.audioUploadConsentAt,
     );
-    const analysisIsReady = analysisReady(status, "external", external);
+    const analysisIsReady = analysisReady(status, external);
     const asr = asrReady
       ? `${external?.transcriptionProvider ?? "第三方服务"} · ${external?.transcriptionModel || "待配置"}`
       : "第三方转写待配置";
@@ -722,20 +731,17 @@ function summary(
   return `转写 ${whisper} ｜ 分析 ${ollama} · ${analysis} ｜ 索引 ${status.settings.embeddingModel}`;
 }
 
-function analysisReady(
-  status: LocalAiStatus,
-  channel: "local" | "external",
-  external: ExternalAiSettings | null,
-): boolean {
-  if (channel === "external") {
-    return Boolean(
-      external?.enabled &&
-        external.hasApiKey &&
-        external.privacyConsentAt &&
-        external.baseUrl.trim() &&
-        external.model.trim(),
-    );
-  }
+function analysisReady(status: LocalAiStatus, external: ExternalAiSettings | null): boolean {
+  // 与后端 analyze 的路由判定保持一致：云端就绪（启用 + Key + 同意 + 地址模型齐全）
+  // 或本机 Ollama 就绪，任一满足即「可用」。处理方式开关只决定这里展示哪套配置。
+  const cloudReady = Boolean(
+    external?.enabled &&
+      external.hasApiKey &&
+      external.privacyConsentAt &&
+      external.baseUrl.trim() &&
+      external.model.trim(),
+  );
+  if (cloudReady) return true;
   return status.ollamaAvailable && status.ollamaModels.some((model) => model.name === status.settings.analysisModel);
 }
 

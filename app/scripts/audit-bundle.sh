@@ -111,6 +111,12 @@ case "$target" in
     else
       fail "Info.plist 版本 $plist_version 与配置版本 $config_version 不一致"
     fi
+    microphone_usage="$(defaults read "$target/Contents/Info.plist" NSMicrophoneUsageDescription 2>/dev/null || true)"
+    if [ -n "${microphone_usage//[[:space:]]/}" ]; then
+      pass "Info.plist 包含非空麦克风用途说明"
+    else
+      fail "Info.plist 缺少 NSMicrophoneUsageDescription（录音功能无法通过 macOS 权限门）"
+    fi
     echo "  · entitlements（人工过目，最小权限原则）："
     codesign -d --entitlements - "$target" 2>/dev/null | sed 's/^/      /' || echo "      （未签名或无法读取）"
     ;;

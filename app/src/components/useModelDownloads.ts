@@ -82,10 +82,20 @@ export function useModelDownloads(onSettled?: (state: DownloadState) => void) {
       if (kind === "whisper") await downloadWhisperModel(model);
       else await pullOllamaModel(model);
     } catch (reason) {
+      // invoke 本身失败（命令不存在、参数被拒）也是终态：必须走 onSettled，
+      // 否则依赖终态计数的调用方（一键准备）会永久停在「正在准备」。
       setDownloads((current) => ({
         ...current,
         [model]: { model, phase: "failed", label: "下载失败", completed: null, total: null, error: String(reason) },
       }));
+      settled.current?.({
+        model,
+        phase: "failed",
+        label: "下载失败",
+        completed: null,
+        total: null,
+        error: String(reason),
+      });
     }
   }, []);
 
@@ -118,4 +128,26 @@ export function formatBytes(bytes: number): string {
     unit += 1;
   }
   return `${value.toFixed(value >= 100 || unit === 0 ? 0 : 1)}${units[unit]}`;
+}
+
+/**
+ * 拉取失败的高频英文原话映射成人话；原文照旧放进 detail，由界面折叠展示，不丢。
+ * 识别不了的错误原样透出，宁可英文也不要翻译错的误导。
+ */
+export function localizePullError(raw: string): { friendly: string; detail: string } {
+  const normalized = raw.toLowerCase();
+  if (normalized.includes("manifest") && (normalized.includes("does not exist") || normalized.includes("not found"))) {
+    return { friendly: "模型不存在，请检查模型名", detail: raw };
+  }
+  if (
+    normalized.includes("无法启动模型下载") ||
+    normalized.includes("connection refused") ||
+    normalized.includes("dns error") ||
+    normalized.includes("dns failed") ||
+    normalized.includes("timed out") ||
+    normalized.includes("connection reset")
+  ) {
+    return { friendly: "Ollama 服务未运行或网络不通", detail: raw };
+  }
+  return { friendly: raw, detail: raw };
 }

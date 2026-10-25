@@ -25,6 +25,48 @@ export type RecordStatus =
 
 export type JobType = "transcribe" | "analyze";
 
+export type RecordingStatus =
+  | "idle"
+  | "starting"
+  | "recording"
+  | "paused"
+  | "finalizing"
+  | "completed"
+  | "failed";
+
+export type MicrophonePermission =
+  | "undetermined"
+  | "denied"
+  | "granted"
+  | "unsupported";
+
+export interface RecordingState {
+  status: RecordingStatus;
+  sessionId: string | null;
+  elapsedMs: number;
+  inputLevelDb: number | null;
+  peakLevelDb: number | null;
+  filePath: string | null;
+  error: string | null;
+}
+
+export interface StoppedRecording {
+  sessionId: string;
+  recordId: string;
+  durationMs: number;
+  title: string;
+}
+
+export interface RecoverableRecording {
+  sessionId: string;
+  status: string;
+  title: string;
+  startedAt: string;
+  durationMs: number;
+  writtenBytes: number;
+  lastError: string | null;
+}
+
 export interface Project {
   id: string; // UUID
   name: string;
@@ -400,6 +442,12 @@ export interface MemoryAnswerCitation {
 }
 
 /* -------------------------- external memory views -------------------------- */
+
+/** Ollama 安装检测：CLI 是否可用、本机服务是否可达。 */
+export interface OllamaInstallStatus {
+  installed: boolean;
+  running: boolean;
+}
 
 export interface ExternalAiSettings {
   processingMode: "local" | "external";

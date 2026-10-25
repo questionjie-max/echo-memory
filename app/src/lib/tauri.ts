@@ -22,6 +22,7 @@ import type {
   MemoryScope,
   MemorySnapshot,
   MemoryViewKind,
+  OllamaInstallStatus,
   ProfileSnapshot,
   Project,
   RecordBrief,
@@ -48,6 +49,10 @@ import type {
   AppInfo,
   SpeakerSummary,
   TranscriptionEngineStatus,
+  MicrophonePermission,
+  RecordingState,
+  StoppedRecording,
+  RecoverableRecording,
 } from "../shared/types";
 
 export function createProject(name: string): Promise<Project> {
@@ -195,6 +200,10 @@ export function getLocalAiStatus(): Promise<LocalAiStatus> {
   return invoke<LocalAiStatus>("get_local_ai_status");
 }
 
+export function getOllamaInstallStatus(): Promise<OllamaInstallStatus> {
+  return invoke<OllamaInstallStatus>("get_ollama_install_status");
+}
+
 export function getAudioPreprocessorStatus(): Promise<AudioPreprocessorStatus> {
   return invoke<AudioPreprocessorStatus>("get_audio_preprocessor_status");
 }
@@ -258,6 +267,54 @@ export function importChatExports(input: {
 
 export function recordAudioPath(recordId: string): Promise<string> {
   return invoke<string>("record_audio_path", { recordId });
+}
+
+export function microphonePermission(): Promise<MicrophonePermission> {
+  return invoke<MicrophonePermission>("microphone_permission");
+}
+
+export function requestMicrophonePermission(): Promise<MicrophonePermission> {
+  return invoke<MicrophonePermission>("request_microphone_permission");
+}
+
+export function startRecording(projectId?: string | null): Promise<RecordingState> {
+  return invoke<RecordingState>("start_recording", { projectId: projectId ?? null });
+}
+
+export function pauseRecording(): Promise<RecordingState> {
+  return invoke<RecordingState>("pause_recording");
+}
+
+export function resumeRecording(): Promise<RecordingState> {
+  return invoke<RecordingState>("resume_recording");
+}
+
+export function recordingLevels(): Promise<RecordingState> {
+  return invoke<RecordingState>("recording_levels");
+}
+
+export function stopRecording(): Promise<StoppedRecording> {
+  return invoke<StoppedRecording>("stop_recording");
+}
+
+export function cancelRecording(): Promise<void> {
+  return invoke<void>("cancel_recording");
+}
+
+export function getRecordingState(): Promise<RecordingState> {
+  return invoke<RecordingState>("get_recording_state");
+}
+
+export function listRecoverableRecordings(): Promise<RecoverableRecording[]> {
+  return invoke<RecoverableRecording[]>("list_recoverable_recordings");
+}
+
+export function recoverRecording(sessionId: string): Promise<StoppedRecording> {
+  return invoke<StoppedRecording>("recover_recording", { sessionId });
+}
+
+export function discardRecoverableRecording(sessionId: string): Promise<void> {
+  return invoke<void>("discard_recoverable_recording", { sessionId });
 }
 
 export function listTranscriptSegments(recordId: string): Promise<TranscriptSegment[]> {
@@ -332,6 +389,11 @@ export function clearExternalAsrApiKey(): Promise<ExternalAiSettings> {
 
 export function testExternalAiConnection(): Promise<void> {
   return invoke<void>("test_external_ai_connection");
+}
+
+/** 拉取服务商的 OpenAI 兼容模型列表（保存前使用；Key 只在内存中传递）。 */
+export function listRemoteModels(baseUrl: string, apiKey: string): Promise<string[]> {
+  return invoke<string[]>("list_remote_models", { baseUrl, apiKey });
 }
 
 export function getLocalTimeline(scope: MemoryScope, rangeStart: string | null, rangeEnd: string | null): Promise<TimelineItem[]> {

@@ -1,4 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { isTauri } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import ProjectPanel from "./components/ProjectPanel";
 import ActionDashboard from "./components/ActionDashboard";
 import OnboardingWizard from "./components/OnboardingWizard";
@@ -11,8 +13,10 @@ import KnowledgeChatView from "./components/KnowledgeChatView";
 import GrowthView from "./components/GrowthView";
 import EvolutionView from "./components/EvolutionView";
 import SettingsPanel from "./components/SettingsPanel";
+import { AnalysisSetupProvider } from "./components/AnalysisSetupSheet";
 import type { KnowledgeAnswerCitation, MemoryScope, MemorySourceReference, RecordBrief, SearchResult } from "./shared/types";
 import { getOnboardingStatus, getRecord } from "./lib/tauri";
+import { notify } from "./lib/dialogs";
 
 export interface RecordNavigation {
   token: number;
@@ -30,6 +34,21 @@ export default function App() {
   const [navigation, setNavigation] = useState<RecordNavigation | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [onboardingNeeded, setOnboardingNeeded] = useState<boolean | null>(null);
+
+  // 第三方转写「选了但没配齐」时，导入自动回退内置 Whisper——给一次明确提示。
+  // 同一次运行内只提示一次：批量导入不该被同一句话反复打断，补配入口在设置页。
+  const fallbackNoticeShown = useRef(false);
+  useEffect(() => {
+    if (!isTauri()) return;
+    const stop = listen<{ message: string }>("transcription-fallback-notice", (event) => {
+      if (fallbackNoticeShown.current) return;
+      fallbackNoticeShown.current = true;
+      void notify(event.payload.message);
+    });
+    return () => {
+      void stop.then((off) => off());
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -61,7 +80,7 @@ export default function App() {
       });
     } catch (reason) {
       const detail = reason instanceof Error ? reason.message : String(reason);
-      window.alert(`无法打开搜索结果。该记录可能已被删除。${detail ? `\n\n${detail}` : ""}`);
+      await notify(`无法打开搜索结果。该记录可能已被删除。${detail ? `\n\n${detail}` : ""}`);
     }
   }
 
@@ -73,7 +92,7 @@ export default function App() {
       setMainView("library");
     } catch (reason) {
       const detail = reason instanceof Error ? reason.message : String(reason);
-      window.alert(`无法打开引用原文。该记录可能已被删除或索引已经过期。${detail ? `\n\n${detail}` : ""}`);
+      await notify(`无法打开引用原文。该记录可能已被删除或索引已经过期。${detail ? `\n\n${detail}` : ""}`);
     }
   }
 
@@ -85,7 +104,7 @@ export default function App() {
       setMainView("library");
     } catch (reason) {
       const detail = reason instanceof Error ? reason.message : String(reason);
-      window.alert(`无法打开成长轨迹原文。该记录可能已被删除。${detail ? `\n\n${detail}` : ""}`);
+      await notify(`无法打开成长轨迹原文。该记录可能已被删除。${detail ? `\n\n${detail}` : ""}`);
     }
   }
 
@@ -97,7 +116,7 @@ export default function App() {
       setMainView("library");
     } catch (reason) {
       const detail = reason instanceof Error ? reason.message : String(reason);
-      window.alert(`无法打开该记录。它可能已被删除。${detail ? `\n\n${detail}` : ""}`);
+      await notify(`无法打开该记录。它可能已被删除。${detail ? `\n\n${detail}` : ""}`);
     }
   }
 
@@ -126,6 +145,7 @@ export default function App() {
       : { kind: "project", projectId: scope };
 
   return (
+    <AnalysisSetupProvider>
     <main className="app-shell">
       <AppToolbar
         mainView={mainView}
@@ -142,31 +162,32 @@ export default function App() {
       />
 
       <div className={mainView === "library" ? "workspace-grid" : `memory-workspace-grid${mainView === "actions" ? " solo" : ""}`}>
-        {/* 行动页不消费知识库范围，是唯一不放侧栏的视图；其余四个视图侧栏都接了真实数据 */}
-        {mainView !== "actions" && <ProjectPanel selectedScope={scope} refreshKey={refreshKey} onSelect={selectScope} />}
-        {mainView === "library" ? <>
-          {/* 不用 key 强制重挂载：那会在批量移动/删除后把面板里的结果提示一并清掉，
-              用户看不到操作是否成功。范围切换时的状态重置由面板自己的 effect 负责。 */}
-          <RecordPanel
-            projectId={projectId}
-            unfiledOnly={unfiledOnly}
-            onImported={() => changed()}
-            selectedId={selectedRecord?.id ?? null}
-            onSelect={setSelectedRecord}
-            onPlay={playFromList}
-          />
-          {selectedRecord ? (
-            <RecordDetail record={selectedRecord} navigation={navigation} onChanged={changed} />
-          ) : (
-            <KnowledgeHome scope={scope} projectId={projectId} unfiledOnly={unfiledOnly} refreshKey={refreshKey} onOpenCitation={(citation) => void openCitation(citation)} onOpenKnowledgeChat={() => setMainView("chat")} />
-          )}
-        </> : <div className="memory-main-content">
-          {mainView === "chat" && <KnowledgeChatView scope={scope} projectId={projectId} unfiledOnly={unfiledOnly} refreshKey={refreshKey} onOpenCitation={(citation) => void openCitation(citation)} onOpenMemory={() => setMainView("evolution")} onOpenSettings={() => setSettingsOpen(true)} />}
-          {mainView === "growth" && <GrowthView scope={memoryScope} onOpenSource={(source) => void openMemorySource(source)} onOpenSettings={() => setSettingsOpen(true)} />}
-          {mainView === "evolution" && <EvolutionView scope={memoryScope} onOpenSource={(source) => void openMemorySource(source)} onOpenSettings={() => setSettingsOpen(true)} />}
-          {mainView === "actions" && <ActionDashboard onOpenRecord={openActionRecord} />}
-        </div>}
-      </div>
+          {/* 行动页不消费知识库范围，是唯一不放侧栏的视图；其余四个视图侧栏都接了真实数据 */}
+          {mainView !== "actions" && <ProjectPanel selectedScope={scope} refreshKey={refreshKey} onSelect={selectScope} />}
+          {mainView === "library" ? <>
+            {/* 不用 key 强制重挂载：那会在批量移动/删除后把面板里的结果提示一并清掉，
+                用户看不到操作是否成功。范围切换时的状态重置由面板自己的 effect 负责。 */}
+            <RecordPanel
+              projectId={projectId}
+              unfiledOnly={unfiledOnly}
+              refreshKey={refreshKey}
+              onImported={() => changed()}
+              selectedId={selectedRecord?.id ?? null}
+              onSelect={setSelectedRecord}
+              onPlay={playFromList}
+            />
+            {selectedRecord ? (
+              <RecordDetail record={selectedRecord} navigation={navigation} onChanged={changed} />
+            ) : (
+              <KnowledgeHome scope={scope} projectId={projectId} unfiledOnly={unfiledOnly} refreshKey={refreshKey} onLibraryChanged={() => changed()} onOpenCitation={(citation) => void openCitation(citation)} onOpenKnowledgeChat={() => setMainView("chat")} />
+            )}
+          </> : <div className="memory-main-content">
+            {mainView === "chat" && <KnowledgeChatView scope={scope} projectId={projectId} unfiledOnly={unfiledOnly} refreshKey={refreshKey} onOpenCitation={(citation) => void openCitation(citation)} onOpenMemory={() => setMainView("evolution")} onOpenSettings={() => setSettingsOpen(true)} />}
+            {mainView === "growth" && <GrowthView scope={memoryScope} onOpenSource={(source) => void openMemorySource(source)} onOpenSettings={() => setSettingsOpen(true)} />}
+            {mainView === "evolution" && <EvolutionView scope={memoryScope} onOpenSource={(source) => void openMemorySource(source)} onOpenSettings={() => setSettingsOpen(true)} />}
+            {mainView === "actions" && <ActionDashboard onOpenRecord={openActionRecord} />}
+          </div>}
+        </div>
       <SettingsPanel
         open={settingsOpen}
         onClose={() => { setSettingsOpen(false); changed(); }}
@@ -181,5 +202,6 @@ export default function App() {
         />
       )}
     </main>
+    </AnalysisSetupProvider>
   );
 }

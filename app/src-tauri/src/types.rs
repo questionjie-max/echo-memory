@@ -837,6 +837,15 @@ pub struct OnboardingStatus {
     pub usb_detection: bool,
 }
 
+/// Ollama 安装检测：CLI 是否可用、本机服务是否可达。
+/// 供分析设置发起面板区分「未安装」与「装了但没启动」。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OllamaInstallStatus {
+    pub installed: bool,
+    pub running: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActionDashboardItem {

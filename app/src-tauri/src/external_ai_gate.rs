@@ -156,6 +156,46 @@ pub fn external_settings(library: &ManagedLibrary) -> AppResult<ExternalAiSettin
         .external_ai_settings(get_api_key()?.is_some(), get_asr_api_key()?.is_some())
 }
 
+/// 第三方转写通道是否已配齐。
+///
+/// 转录分流（走不走第三方转写）与导入流程共用这一份判定，保证两处
+/// 永远给出同一个答案。条件与 `require_external_asr_consent` 的拒绝项
+/// 严格镜像（模式、同意、地址、模型、提供方），外加 Key 存在性——
+/// 缺任何一项都视为未配齐，转录自动回退内置 Whisper，导入不被拦死。
+pub fn external_asr_channel_ready(library: &ManagedLibrary) -> AppResult<bool> {
+    let settings = library.repository().external_ai_settings(false, false)?;
+    if settings.processing_mode != "external" {
+        return Ok(false);
+    }
+    if settings.audio_upload_consent_at.is_none() {
+        return Ok(false);
+    }
+    if settings.transcription_provider.trim().is_empty()
+        || settings.transcription_provider == "none"
+        || settings.transcription_base_url.trim().is_empty()
+        || settings.transcription_model.trim().is_empty()
+    {
+        return Ok(false);
+    }
+    Ok(get_asr_api_key()?.is_some())
+}
+
+/// 第三方转写通道「选了但没配齐」：提供方已选定（非 none/非空），但 Key、
+/// 上传同意或地址模型还缺。此时转录会自动回退内置 Whisper——语义上不再是
+/// 「用户从未配置转写通道」的静默回退，导入时应给一次明确提示。
+/// 从未配置（提供方为 none/未选）时返回 false：静默回退内置 Whisper 是正确语义。
+pub fn external_asr_channel_half_configured(library: &ManagedLibrary) -> AppResult<bool> {
+    let settings = library.repository().external_ai_settings(false, false)?;
+    if settings.processing_mode != "external" {
+        return Ok(false);
+    }
+    if settings.transcription_provider.trim().is_empty() || settings.transcription_provider == "none"
+    {
+        return Ok(false);
+    }
+    Ok(!external_asr_channel_ready(library)?)
+}
+
 /// 所有外部 AI 外发入口的唯一隐私同意门禁。
 ///
 /// 必须在读取 API Key、访问外发材料、构造客户端或发起网络请求之前调用。

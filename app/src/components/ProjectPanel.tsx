@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { McpStatus, Project } from "../shared/types";
 import { PlusIcon } from "./icons";
+import { confirmAction } from "../lib/dialogs";
 import {
   createProject,
   deleteProject,
@@ -85,7 +86,7 @@ export default function ProjectPanel({ selectedScope, refreshKey, onSelect }: Pr
   }
 
   async function remove(project: Project) {
-    if (!window.confirm(`删除知识库“${project.name}”？其中的录音会变为未归档，不会被删除。`)) return;
+    if (!(await confirmAction(`删除知识库“${project.name}”？其中的录音会变为未归档，不会被删除。`))) return;
     setBusy(true);
     try {
       await deleteProject(project.id);

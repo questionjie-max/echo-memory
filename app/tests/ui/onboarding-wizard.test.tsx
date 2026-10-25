@@ -77,6 +77,47 @@ describe("首次启动引导", () => {
     expect(screen.getByText("Ollama 服务")).toBeTruthy();
   });
 
+  it("Ollama 未运行时体检只给中性提示，不再拦截", async () => {
+    vi.mocked(tauri.getOnboardingStatus).mockResolvedValue(
+      statusFixture({ ollamaRunning: false, analysisModelReady: false }),
+    );
+    vi.mocked(tauri.getLocalAiStatus).mockResolvedValue(
+      localAiStatusFixture({ ollamaAvailable: false }),
+    );
+    renderWizard();
+    fireEvent.click(screen.getByRole("button", { name: "下一步" }));
+
+    expect(await screen.findByText("Ollama 服务")).toBeTruthy();
+    expect(
+      screen.getByText("分析与知识索引需要 Ollama，可稍后设置，不影响导入和转写"),
+    ).toBeTruthy();
+    expect(screen.getByText("用到分析时再准备即可")).toBeTruthy();
+    // 旧的拦截式红色预警不应再出现
+    expect(screen.queryByText("未运行")).toBeNull();
+    expect(screen.queryByText(/先安装并启动 Ollama/)).toBeNull();
+  });
+
+  it("向导共 5 步，全程不出现分析模型步", async () => {
+    const { container } = renderWizard();
+    expect(container.querySelectorAll(".onboarding-step-dot")).toHaveLength(5);
+    expect(
+      screen.getByText((_, element) => element?.tagName === "P" && element.textContent === "欢迎（1/5）"),
+    ).toBeTruthy();
+
+    fireEvent.click(await screen.findByRole("button", { name: "下一步" }));
+    expect(await screen.findByText("环境体检")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "下一步" }));
+    expect(await screen.findByText("选择转写模型")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "下一步" }));
+    expect(await screen.findByText("音频收件箱")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "下一步" }));
+    expect(await screen.findByText("准备就绪")).toBeTruthy();
+
+    expect(screen.getByRole("button", { name: "开始使用" })).toBeTruthy();
+    expect(screen.queryByText("配置分析模型")).toBeNull();
+    expect(container.querySelectorAll(".onboarding-step-dot")).toHaveLength(5);
+  });
+
   it("初始环境读取失败时显示错误", async () => {
     vi.mocked(tauri.getOnboardingStatus).mockRejectedValue(new Error("状态库不可用"));
     renderWizard();
@@ -86,7 +127,6 @@ describe("首次启动引导", () => {
 
   it("收件箱没有建议目录时保留可继续的空状态", async () => {
     renderWizard();
-    fireEvent.click(screen.getByRole("button", { name: "下一步" }));
     fireEvent.click(screen.getByRole("button", { name: "下一步" }));
     fireEvent.click(screen.getByRole("button", { name: "下一步" }));
     fireEvent.click(screen.getByRole("button", { name: "下一步" }));
@@ -119,7 +159,6 @@ describe("首次启动引导", () => {
     );
 
     fireEvent.click(await screen.findByRole("button", { name: "下一步" }));
-    fireEvent.click(screen.getByRole("button", { name: "下一步" }));
     fireEvent.click(screen.getByRole("button", { name: "下一步" }));
     fireEvent.click(screen.getByRole("button", { name: "下一步" }));
     const folder = await screen.findByRole("button", { name: /下载文件夹/ });
