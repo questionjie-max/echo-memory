@@ -176,6 +176,14 @@ The long-term product has four connected layers:
 The digital-twin direction is a product vision, not a claim that the current release can fully model a person.
 
 
+## Repository layout
+
+- `app/` — the Tauri application. `app/src/` is the React frontend (components, hooks, shared utilities); `app/src-tauri/src/` is the Rust backend (commands, database layer, native bridge); `app/src-tauri/migrations/` holds the database migrations; `app/tests/ui/` and `app/src-tauri/tests/` hold the frontend and backend test suites.
+- `docs/` — product documentation: `docs/mcp.md` (MCP reference), `docs/macos-signing.md` (signing and notarization), `docs/analysis-quality.md`, `docs/plans/` (design and planning notes), `docs/release-notes-*.md` (per-release notes, including v1.0.0), and `docs/images/` (screenshots used by the READMEs).
+- `benchmarks/` — performance benchmarks and sample clips.
+- `.github/` — CI workflow (`workflows/ci.yml`) and the bug-report issue template.
+- Root files — `README.md` / `README.zh-CN.md` (this introduction), `LICENSE` (Apache-2.0), `CONTRIBUTING.md`, `SECURITY.md`, `CITATION.cff`.
+
 ## Requirements
 
 - macOS on Apple Silicon
@@ -213,6 +221,8 @@ cargo test --features mcp-bin
 ## Project status
 
 Echo Memory v1.0.0 is the current public release. Download the latest build from [GitHub Releases](https://github.com/questionjie-max/echo-memory/releases). Source builds are supported. Distribution artifacts must be labeled truthfully according to their actual signing and Apple notarization status; this repository does not claim notarization unless the artifact passes the documented verification commands.
+
+Full v1.0.0 notes (highlights, verification status, distribution SHA-256 and notarization): [docs/release-notes-v1.0.0.md](docs/release-notes-v1.0.0.md) and the [v1.0.0 release page](https://github.com/questionjie-max/echo-memory/releases/tag/v1.0.0).
 
 Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening an issue or pull request, and never attach real audio, transcripts, databases, credentials, or private customer material to a public issue. Security reports should follow [SECURITY.md](SECURITY.md).
 

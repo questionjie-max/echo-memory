@@ -176,6 +176,14 @@
 个人数字孪生是长期产品方向，不代表当前版本已经能够完整建模一个人。
 
 
+## 仓库目录说明
+
+- `app/`——Tauri 应用本体。`app/src/` 是 React 前端（组件、Hook、共享工具）；`app/src-tauri/src/` 是 Rust 后端（命令、数据库层、原生桥接）；`app/src-tauri/migrations/` 是数据库迁移；`app/tests/ui/` 与 `app/src-tauri/tests/` 分别是前端与后端测试。
+- `docs/`——产品文档：`docs/mcp.md`（MCP 说明）、`docs/macos-signing.md`（签名与公证）、`docs/analysis-quality.md`、`docs/plans/`（设计与规划笔记）、`docs/release-notes-*.md`（各版本发布说明，含 v1.0.0）、`docs/images/`（说明文档引用的截图）。
+- `benchmarks/`——性能基准与示例片段。
+- `.github/`——CI 工作流（`workflows/ci.yml`）与 Bug 反馈模板。
+- 根目录文件——`README.md` / `README.zh-CN.md`（本介绍）、`LICENSE`（Apache-2.0）、`CONTRIBUTING.md`、`SECURITY.md`、`CITATION.cff`。
+
 ## 环境要求
 
 - Apple Silicon Mac
@@ -213,6 +221,8 @@ cargo test --features mcp-bin
 ## 项目状态
 
 回声记忆当前版本为 v1.0.0，可从 [GitHub Releases](https://github.com/questionjie-max/echo-memory/releases) 下载最新公开版，也支持从源码构建。发布物只有在真实通过签名、公证和装订验证后，才会标注为 Apple 已签名和已公证；否则必须明确标注实际状态。
+
+完整 v1.0.0 说明（重点、验证状态、分发 SHA-256 与公证）：[docs/release-notes-v1.0.0.md](docs/release-notes-v1.0.0.md) 与 [v1.0.0 发布页](https://github.com/questionjie-max/echo-memory/releases/tag/v1.0.0)。
 
 欢迎参与贡献。提交 Issue 或 PR 前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)，不要在公开 Issue 中附带真实音频、逐字稿、数据库、密钥或客户资料。安全问题请按 [SECURITY.md](SECURITY.md) 私密报告。
 
