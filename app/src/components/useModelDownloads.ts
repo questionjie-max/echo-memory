@@ -82,10 +82,20 @@ export function useModelDownloads(onSettled?: (state: DownloadState) => void) {
       if (kind === "whisper") await downloadWhisperModel(model);
       else await pullOllamaModel(model);
     } catch (reason) {
+      // invoke 本身失败（命令不存在、参数被拒）也是终态：必须走 onSettled，
+      // 否则依赖终态计数的调用方（一键准备）会永久停在「正在准备」。
       setDownloads((current) => ({
         ...current,
         [model]: { model, phase: "failed", label: "下载失败", completed: null, total: null, error: String(reason) },
       }));
+      settled.current?.({
+        model,
+        phase: "failed",
+        label: "下载失败",
+        completed: null,
+        total: null,
+        error: String(reason),
+      });
     }
   }, []);
 

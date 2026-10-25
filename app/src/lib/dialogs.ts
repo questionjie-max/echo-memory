@@ -31,8 +31,10 @@ export async function confirmAction(text: string): Promise<boolean> {
     try {
       return await nativeConfirm(text, CONFIRM_OPTIONS);
     } catch {
-      // 插件不可用时退回浏览器确认：宁可弹两次，也不能静默放行破坏性操作。
-      return window.confirm(text);
+      // 原生确认失效时绝不退回 window.confirm：打包后的 WKWebView 里它不弹
+      // 界面且直接返回 true，「放弃录音」这类破坏性操作会被静默自动确认。
+      // fail-closed：宁可让用户多点一次，也不能不问就删。
+      return false;
     }
   }
   return window.confirm(text);

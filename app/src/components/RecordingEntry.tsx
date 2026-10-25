@@ -5,7 +5,7 @@
  * 不另行拉起全局控制条——状态变化只在框内发生，避免"点一下上面多出一条"的割裂感。
  * 录音时的计时与电平也在这里刷新。
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   MicrophonePermission,
   RecoverableRecording,
@@ -70,6 +70,8 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
   const [notice, setNotice] = useState("");
 
   const active = state?.status === "recording" || state?.status === "paused";
+  // 轮询代际：停止/放弃后，在途的电平快照不得把界面拉回「正在记录」。
+  const pollGeneration = useRef(0);
 
   async function refreshRecoverable() {
     try {
@@ -102,9 +104,13 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
   // 录音中才轮询电平与计时：空闲时后端会直接报「没有正在进行的录音」。
   useEffect(() => {
     if (!active) return;
+    const generation = pollGeneration.current;
     const timer = window.setInterval(() => {
       void recordingLevels()
-        .then((next) => setState(next))
+        .then((next) => {
+          // 停止/放弃后丢弃在途快照，避免界面被拉回「正在记录」。
+          if (generation === pollGeneration.current) setState(next);
+        })
         .catch(() => undefined);
     }, 500);
     return () => window.clearInterval(timer);
@@ -148,6 +154,7 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
     setError("");
     try {
       const result = await stopRecording();
+      pollGeneration.current += 1;
       setState(null);
       setNotice(`已保存“${result.title}”，正在准备本机转写。`);
       onImported();
@@ -158,8 +165,10 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
         setNotice(`已保存“${result.title}”，但转写尚未开始：${displayError(reason)}`);
       }
     } catch (reason) {
-      // 停止失败可能留下可恢复会话：刷新出恢复入口，而不是静默吞掉。
+      // 停止失败可能留下可恢复会话：重读状态并刷新出恢复入口，而不是静默吞掉。
+      pollGeneration.current += 1;
       setError(displayError(reason));
+      await refreshState();
       onImported();
     } finally {
       setBusy(false);
@@ -170,8 +179,10 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
     if (!(await confirmAction("放弃这次录音吗？未封存的音频会被删除，无法恢复。"))) return;
     setBusy(true);
     setError("");
+    setNotice("");
     try {
       await cancelRecording();
+      pollGeneration.current += 1;
       setState(null);
       setNotice("已放弃本次录音。");
       onImported();

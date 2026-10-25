@@ -225,6 +225,8 @@ function LocalOllamaTab({ onResume }: { onResume: () => void }) {
   const { downloads, start } = useModelDownloads((settled) => {
     if (settled.phase === "failed") setError(settled.error ?? "模型拉取失败");
     if (settled.phase !== "done" && settled.phase !== "failed") return;
+    // 只统计本 tab 发起的缺失模型：后台其它下载（如 whisper）的终态不算数。
+    if (!missingRef.current.includes(settled.model)) return;
     settledRef.current += 1;
     if (missingRef.current.length === 0 || settledRef.current < missingRef.current.length) return;
     missingRef.current = [];
@@ -415,6 +417,8 @@ function CloudKeyTab({ onResume }: { onResume: () => void }) {
   const [remoteModels, setRemoteModels] = useState<string[]>([]);
   const [pulling, setPulling] = useState(false);
   const [modelsError, setModelsError] = useState("");
+  // 拉取代次：在途请求返回时若已切过服务商/改过地址，结果作废。
+  const pullGeneration = useRef(0);
 
   function applyPreset(next: CloudPresetId) {
     setPreset(next);
@@ -425,15 +429,18 @@ function CloudKeyTab({ onResume }: { onResume: () => void }) {
       setModelSource("manual");
       setRemoteModels([]);
       setModelsError("");
+      pullGeneration.current += 1;
     }
   }
 
   async function pullModels() {
     if (!apiKey.trim() || !baseUrl.trim() || pulling) return;
+    const generation = pullGeneration.current;
     setPulling(true);
     setModelsError("");
     try {
       const models = await listRemoteModels(baseUrl.trim(), apiKey.trim());
+      if (generation !== pullGeneration.current) return;
       setRemoteModels(models);
       setModelSource("remote");
       // 当前手填值不在列表里时保持用户输入；在列表里则选中它。
@@ -443,10 +450,11 @@ function CloudKeyTab({ onResume }: { onResume: () => void }) {
         setModel(models[0]);
       }
     } catch (reason) {
+      if (generation !== pullGeneration.current) return;
       setModelSource("manual");
       setModelsError(`${String(reason)}。也可以直接手动填写模型名。`);
     } finally {
-      setPulling(false);
+      if (generation === pullGeneration.current) setPulling(false);
     }
   }
 
@@ -514,6 +522,7 @@ function CloudKeyTab({ onResume }: { onResume: () => void }) {
           onChange={(event) => {
             setBaseUrl(event.target.value);
             setPreset("custom");
+            pullGeneration.current += 1;
           }}
         />
       </Field>
