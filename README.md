@@ -1,20 +1,39 @@
 # Echo Memory / 回声记忆
 
+[![License](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
+
 [中文文档](README.zh-CN.md) · [Download v1.0.0](https://github.com/questionjie-max/echo-memory/releases/latest) · [MCP reference](docs/mcp.md) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
 
-**Turn every conversation into long-term memory.** Echo Memory is a Personal Memory OS for AI-native work. It turns conversations, documents, decisions, and changing ideas into a traceable personal memory layer that can be reused by different AI agents.
+**Turn your recordings and AI conversations into memory your agents can actually reuse.**
 
-> AI knows more about the world every day, but it still does not truly know you. Echo Memory gives your AI a memory of what you experienced, why you decided, and how your thinking changed.
+The decisions you made in this week's meetings and the conclusions you reached in AI chats are scattered across apps a week later — and every new AI session starts with you re-explaining your own context.
 
-**[Download the signed macOS release](https://github.com/questionjie-max/echo-memory/releases/latest)** or build from source. The memories you confirmed are retrievable, not just stored.
+Echo Memory collects three kinds of sources into one local library on your Mac:
 
-## What v1.0.0 adds
+- **Recordings** — one click records your Mac's microphone in-app (stop and it transcribes and analyzes automatically); meetings, interviews, and voice memos are also supported (USB recorders import automatically)
+- **Documents** — Markdown, TXT, DOCX
+- **AI conversations** — local Claude Code / Codex sessions, ChatGPT / Claude export archives
 
-- **In-app local recording**: one click on "开始记录" records your Mac's microphone with pause/resume, an input meter, and discard; when you stop, the audio is saved into the library, transcribed, and analyzed automatically, and the record shows up in the workspace. If the app quits mid-recording, the unsealed session is offered for recovery or discard at next launch instead of vanishing.
-- **A slimmer 5-step first-run wizard**: no Ollama install required to finish onboarding. Analysis is configured the first time you actually use it, through a panel with two tabs — "本地（Ollama 一键准备）" checks and pulls missing local models in one click, and "云端（填 Key 即用）" ships preset endpoints for 智谱, DeepSeek, 通义千问, Kimi, MiniMax, 硅基流动, and OpenAI: fill in your key, fetch the model list, and pick one, with manual entry as a fallback.
-- **A batch of stability fixes**: the recording UI no longer sticks at "正在记录" after stopping, the in-app confirmation dialog can no longer be skipped unasked in edge cases, and four similar issues found in a dedicated pre-release audit are fixed and regression-tested.
+Transcription and analysis run entirely on your machine (Whisper + Ollama — no cloud, no per-minute caps), every conclusion can be clicked back to the exact words and timestamp it came from; citations are compared word for word against the transcript, and anything that does not match is dropped — fabricated citations are never shown. Only memories you have personally confirmed are exposed to your agents through read-only MCP — what they receive is not the AI's guess, it is the account you signed off on.
 
-The recording boundary, stated plainly: it captures your Mac's microphone only — system output audio (for example the far side of an online meeting) is not recorded, and no text appears during recording; transcription happens after you stop.
+**⬇ [Download the signed and notarized macOS build](https://github.com/questionjie-max/echo-memory/releases/latest)** · macOS Apple Silicon · Apache-2.0
+
+## What it is not
+
+It is not a meeting bot, not a 24-hour recorder, and not a team collaboration tool. It does not capture system output audio (the far side of an online meeting is not recorded), there is no live transcription during recording (transcription and analysis run after you stop), and there is no Windows/mobile app and no cloud sync — these are trade-offs, not debts. It is a capture-plus-precipitation layer: record with one click in the app, or bring your own material — it makes sure that material stays usable by you and your agents later.
+
+## Three steps to start
+
+1. Download the DMG and drag the app into your Applications folder;
+2. Click "开始记录" on the home screen to record a clip, or drag in an existing audio file;
+3. Ask knowledge chat about a conclusion from last week and see whether it can click back to the exact words.
+
+## FAQ
+
+- **Microphone permission denied?** Allow Echo Memory under "System Settings → Privacy & Security → Microphone".
+- **No Ollama installed, analysis unavailable?** Clicking analysis opens the setup panel — local one-click prepare or cloud with an API key, either works.
+- **Can the cloud fully replace local?** Cloud covers analysis/understanding only; knowledge indexing still needs local Ollama.
+- **Is there a Windows version?** No Windows/mobile app, no cloud sync, no automatic meeting joining.
 
 ## Why it exists
 
@@ -27,19 +46,6 @@ Capture -> Understand -> Connect -> Evolve -> Retrieve -> Feedback
 ```
 
 The goal is not to save more notes. It is to preserve a person's experiences and reasoning as a durable, user-controlled context layer for future AI.
-
-## Product position
-
-Echo Memory is not defined by transcription or meeting summaries. Those are input and processing capabilities.
-
-The long-term product has four connected layers:
-
-1. **Personal Memory Layer**: shared, permissioned context so every AI does not need to learn the user from zero.
-2. **Cognitive Database**: evidence-backed records of knowledge, decisions, open questions, and how beliefs change.
-3. **Personal Memory OS**: one system for capture, understanding, organization, retrieval, and feedback.
-4. **Digital Twin Database**: a long-term, correctable model of what a person experienced, knows, values, and how they make decisions.
-
-The digital-twin direction is a product vision, not a claim that the current release can fully model a person.
 
 ## What the product already does
 
@@ -107,6 +113,14 @@ With user authorization, different AI tools can retrieve the context needed for 
 
 The screenshots use synthetic demonstration data.
 
+### Home recording card
+
+![Home recording card: one click to record your Mac's microphone](docs/images/recording-home.png)
+
+### Analysis setup panel
+
+![Analysis setup panel: local one-click prepare / cloud with an API key](docs/images/analysis-setup.png)
+
 ### Evidence-backed knowledge chat
 
 ![Echo Memory knowledge chat](docs/images/knowledge-chat.png)
@@ -147,6 +161,20 @@ See the [MCP reference](docs/mcp.md) for tools and development configuration.
 The current release focuses on a single-user, single-device workflow. In-app recording of your Mac's microphone is supported, but system output audio is not captured and transcription is not live during recording. Automatic meeting joining, mobile or Windows apps, cloud sync, team collaboration, public APIs, and MCP writes are not provided.
 
 The longer-term direction is to expand from traceable conversation memory into a personal memory infrastructure that can connect events, people, projects, questions, knowledge, decisions, and outcomes across time. That direction still requires product, privacy, and user-trust validation.
+
+## Direction
+
+Echo Memory is not defined by transcription or meeting summaries. Those are input and processing capabilities.
+
+The long-term product has four connected layers:
+
+1. **Personal Memory Layer**: shared, permissioned context so every AI does not need to learn the user from zero.
+2. **Cognitive Database**: evidence-backed records of knowledge, decisions, open questions, and how beliefs change.
+3. **Personal Memory OS**: one system for capture, understanding, organization, retrieval, and feedback.
+4. **Digital Twin Database**: a long-term, correctable model of what a person experienced, knows, values, and how they make decisions.
+
+The digital-twin direction is a product vision, not a claim that the current release can fully model a person.
+
 
 ## Requirements
 
