@@ -15,7 +15,7 @@
 
 ## Distribution status
 
-This source release is version `1.0.0`. The public artifact is `回声记忆_1.0.0_aarch64.dmg` (14.0 MB), SHA-256 `1fd49746ee3053c7b326ce7ac494b223edbd0b26614d61288e1f92a9a826f3c3`.
+This source release is version `1.0.0`. The public artifact is `Echo-Memory_1.0.0_aarch64.dmg` (14.0 MB), SHA-256 `1fd49746ee3053c7b326ce7ac494b223edbd0b26614d61288e1f92a9a826f3c3`.
 
 - `codesign --verify --deep --strict` passes for the application inside the DMG.
 - `hdiutil verify` confirms the disk image checksum is VALID.
@@ -44,7 +44,7 @@ Users can download the DMG, open it, and move `回声记忆.app` into `/Applicat
 
 ## 分发状态
 
-本次源码发布版本为 `1.0.0`。公开产物为 `回声记忆_1.0.0_aarch64.dmg`（14.0 MB），SHA-256 `1fd49746ee3053c7b326ce7ac494b223edbd0b26614d61288e1f92a9a826f3c3`。
+本次源码发布版本为 `1.0.0`。公开产物为 `Echo-Memory_1.0.0_aarch64.dmg`（14.0 MB），SHA-256 `1fd49746ee3053c7b326ce7ac494b223edbd0b26614d61288e1f92a9a826f3c3`。
 
 - `codesign --verify --deep --strict` 对 DMG 内应用校验通过。
 - `hdiutil verify` 确认磁盘镜像校验和为 VALID。
