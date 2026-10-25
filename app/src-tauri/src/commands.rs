@@ -2776,12 +2776,15 @@ pub(crate) fn list_remote_models_blocking(
     if api_key.trim().is_empty() {
         return Err("请先填写 API Key 再拉取模型列表".to_owned());
     }
+    // 请求时复校（与 chat/转写路径同规）：保存前的地址可能在发起请求时已被
+    // DNS 重定向到内网，发请求前再拦一次。
+    let endpoint = format!("{base_url}/models");
+    crate::memory::assert_endpoint_still_safe(&endpoint).map_err(|error| error.to_string())?;
     let agent = ureq::AgentBuilder::new()
         .timeout_connect(std::time::Duration::from_secs(10))
         .timeout(std::time::Duration::from_secs(30))
         .redirects(0)
         .build();
-    let endpoint = format!("{base_url}/models");
     let response = agent
         .get(&endpoint)
         .set("Authorization", &format!("Bearer {}", api_key.trim()))

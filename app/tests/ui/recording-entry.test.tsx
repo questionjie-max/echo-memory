@@ -102,6 +102,27 @@ describe("本地记录模块", () => {
     expect(tauri.startRecording).not.toHaveBeenCalled();
   });
 
+  it("放弃前必须确认：未确认时绝不取消，确认后才执行", async () => {
+    vi.mocked(tauri.startRecording).mockResolvedValue(activeState("recording"));
+    vi.mocked(tauri.cancelRecording).mockResolvedValue(undefined);
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<RecordingEntry projectId={null} onImported={() => undefined} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "开始记录" }));
+    expect(await screen.findByText("正在记录")).toBeTruthy();
+
+    fireEvent.click(card().getByRole("button", { name: "放弃" }));
+    await waitFor(() => expect(confirmSpy).toHaveBeenCalled());
+    // 未确认（或确认弹窗失效返回 false）时，破坏性操作绝不执行。
+    expect(tauri.cancelRecording).not.toHaveBeenCalled();
+    expect(screen.getByText("正在记录")).toBeTruthy();
+
+    confirmSpy.mockReturnValue(true);
+    fireEvent.click(card().getByRole("button", { name: "放弃" }));
+    await waitFor(() => expect(tauri.cancelRecording).toHaveBeenCalled());
+    confirmSpy.mockRestore();
+  });
+
   it("未封存录音可恢复并自动触发转写", async () => {
     vi.mocked(tauri.listRecoverableRecordings).mockResolvedValue([
       {

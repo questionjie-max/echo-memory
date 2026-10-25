@@ -1,12 +1,20 @@
 # Echo Memory / 回声记忆
 
-[中文文档](README.zh-CN.md) · [Download v0.9.0](https://github.com/questionjie-max/echo-memory/releases/latest) · [MCP reference](docs/mcp.md) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
+[中文文档](README.zh-CN.md) · [Download v1.0.0](https://github.com/questionjie-max/echo-memory/releases/latest) · [MCP reference](docs/mcp.md) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
 
 **Turn every conversation into long-term memory.** Echo Memory is a Personal Memory OS for AI-native work. It turns conversations, documents, decisions, and changing ideas into a traceable personal memory layer that can be reused by different AI agents.
 
 > AI knows more about the world every day, but it still does not truly know you. Echo Memory gives your AI a memory of what you experienced, why you decided, and how your thinking changed.
 
-**[Download the signed macOS release](https://github.com/questionjie-max/echo-memory/releases/latest)** or build from source. Echo Memory v0.9.0 closes the loop from capture and transcription to structured analysis, evidence-backed retrieval, and agent access — and the memories you confirmed are now retrievable, not just stored.
+**[Download the signed macOS release](https://github.com/questionjie-max/echo-memory/releases/latest)** or build from source. The memories you confirmed are retrievable, not just stored.
+
+## What v1.0.0 adds
+
+- **In-app local recording**: one click on "开始记录" records your Mac's microphone with pause/resume, an input meter, and discard; when you stop, the audio is saved into the library, transcribed, and analyzed automatically, and the record shows up in the workspace. If the app quits mid-recording, the unsealed session is offered for recovery or discard at next launch instead of vanishing.
+- **A slimmer 5-step first-run wizard**: no Ollama install required to finish onboarding. Analysis is configured the first time you actually use it, through a panel with two tabs — "本地（Ollama 一键准备）" checks and pulls missing local models in one click, and "云端（填 Key 即用）" ships preset endpoints for 智谱, DeepSeek, 通义千问, Kimi, MiniMax, 硅基流动, and OpenAI: fill in your key, fetch the model list, and pick one, with manual entry as a fallback.
+- **A batch of stability fixes**: the recording UI no longer sticks at "正在记录" after stopping, the in-app confirmation dialog can no longer be skipped unasked in edge cases, and four similar issues found in a dedicated pre-release audit are fixed and regression-tested.
+
+The recording boundary, stated plainly: it captures your Mac's microphone only — system output audio (for example the far side of an online meeting) is not recorded, and no text appears during recording; transcription happens after you stop.
 
 ## Why it exists
 
@@ -33,9 +41,9 @@ The long-term product has four connected layers:
 
 The digital-twin direction is a product vision, not a claim that the current release can fully model a person.
 
-## What v0.9.0 does
+## What the product already does
 
-### Latest improvements
+### Capabilities from the 0.9 line
 
 - **Memories you confirmed are now retrievable**: knowledge chat runs hybrid retrieval over records *and* confirmed memory items, labels the two sources separately (资料原文 / 你的过往记忆), and memory citations jump back to the originating record or audio.
 - **AI conversations are a first-class input**: ChatGPT/Claude exports, conversational Markdown, and a local agent-session scanner (Claude Code, Codex) land as searchable records in their own lane — they stay out of the recording memory chain and out of the pending queue.
@@ -49,7 +57,8 @@ The digital-twin direction is a product vision, not a claim that the current rel
 
 ### Complete workflow
 
-- First-run onboarding: environment check, resumable local model downloads, and inbox setup.
+- First-run onboarding: environment check, resumable local model downloads, and inbox setup; analysis models can be configured later in Settings without blocking first use.
+- In-app local recording: one-click microphone capture that saves, transcribes, and analyzes automatically when stopped; unsealed recordings from a crashed session can be recovered or discarded.
 - Audio inbox: watch folders and USB recorders; new audio imports, transcribes, and analyzes automatically.
 - Personal hotword vocabulary injected into transcription, with optional local LLM correction that never overwrites the original transcript.
 - Cross-record action items and open questions dashboard with completion tracking and evidence jumps.
@@ -135,7 +144,7 @@ See the [MCP reference](docs/mcp.md) for tools and development configuration.
 
 ## Current boundary and direction
 
-The current release focuses on a single-user, single-device workflow. It does not currently provide real-time recording, automatic meeting joining, mobile or Windows apps, cloud sync, team collaboration, public APIs, or MCP writes.
+The current release focuses on a single-user, single-device workflow. In-app recording of your Mac's microphone is supported, but system output audio is not captured and transcription is not live during recording. Automatic meeting joining, mobile or Windows apps, cloud sync, team collaboration, public APIs, and MCP writes are not provided.
 
 The longer-term direction is to expand from traceable conversation memory into a personal memory infrastructure that can connect events, people, projects, questions, knowledge, decisions, and outcomes across time. That direction still requires product, privacy, and user-trust validation.
 
@@ -175,7 +184,7 @@ cargo test --features mcp-bin
 
 ## Project status
 
-Echo Memory v0.9.0 is the current public release. Download the latest build from [GitHub Releases](https://github.com/questionjie-max/echo-memory/releases). Source builds are supported. Distribution artifacts must be labeled truthfully according to their actual signing and Apple notarization status; this repository does not claim notarization unless the artifact passes the documented verification commands.
+Echo Memory v1.0.0 is the current public release. Download the latest build from [GitHub Releases](https://github.com/questionjie-max/echo-memory/releases). Source builds are supported. Distribution artifacts must be labeled truthfully according to their actual signing and Apple notarization status; this repository does not claim notarization unless the artifact passes the documented verification commands.
 
 Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening an issue or pull request, and never attach real audio, transcripts, databases, credentials, or private customer material to a public issue. Security reports should follow [SECURITY.md](SECURITY.md).
 
