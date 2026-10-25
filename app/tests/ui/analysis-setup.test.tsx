@@ -118,6 +118,66 @@ describe("分析设置发起面板", () => {
     expect(screen.queryByRole("dialog", { name: "分析设置" })).toBeNull();
   });
 
+  it("服务商预置联动地址与兜底模型，拉取成功后模型变下拉可选", async () => {
+    vi.mocked(tauri.listRemoteModels).mockResolvedValue([
+      "alpha-model",
+      "zeta-model",
+    ]);
+    const { container } = renderHarness(true);
+    fireEvent.click(await screen.findByRole("button", { name: "触发" }));
+    fireEvent.click(await screen.findByRole("button", { name: "云端（填 Key 即用）" }));
+
+    // 默认智谱：地址与兜底模型已按品牌预填
+    const baseUrlInput = screen.getByDisplayValue("https://open.bigmodel.cn/api/paas/v4");
+    expect(baseUrlInput).toBeTruthy();
+    expect(screen.getByDisplayValue("glm-4-flash")).toBeTruthy();
+
+    // 切换服务商 → 地址与兜底模型联动
+    const presetSelect = container.querySelector("select.em-select") as HTMLSelectElement;
+    fireEvent.change(presetSelect, { target: { value: "deepseek" } });
+    expect(screen.getByDisplayValue("https://api.deepseek.com/v1")).toBeTruthy();
+    expect(screen.getByDisplayValue("deepseek-chat")).toBeTruthy();
+
+    // 填 Key → 拉取 → 下拉出现服务商真实模型，默认选中第一个
+    fireEvent.change(screen.getByPlaceholderText("仅用于保存，不会回显"), {
+      target: { value: "sk-test-pull" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "拉取模型列表" }));
+    await waitFor(() =>
+      expect(tauri.listRemoteModels).toHaveBeenCalledWith(
+        "https://api.deepseek.com/v1",
+        "sk-test-pull",
+      ),
+    );
+    const modelSelect = await screen.findByRole("combobox", { name: /模型/ });
+    const options = Array.from(modelSelect.querySelectorAll("option")).map((o) => o.value);
+    expect(options).toEqual(["alpha-model", "zeta-model"]);
+    expect((modelSelect as HTMLSelectElement).value).toBe("alpha-model");
+    // 下拉旁保留「手动填写」切回入口
+    expect(screen.getByRole("button", { name: "手动填写" })).toBeTruthy();
+  });
+
+  it("拉取失败显示中文原因，手填不受影响", async () => {
+    vi.mocked(tauri.listRemoteModels).mockRejectedValue(
+      new Error("无法连接服务商，请检查接口地址与网络"),
+    );
+    renderHarness(true);
+    fireEvent.click(await screen.findByRole("button", { name: "触发" }));
+    fireEvent.click(await screen.findByRole("button", { name: "云端（填 Key 即用）" }));
+
+    fireEvent.change(screen.getByPlaceholderText("仅用于保存，不会回显"), {
+      target: { value: "sk-test-pull" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "拉取模型列表" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("无法连接服务商，请检查接口地址与网络");
+    expect(alert.textContent).toContain("手动填写");
+    // 手填输入框仍在且值保留，保存流程不被拉取失败阻塞
+    expect(screen.getByPlaceholderText("glm-4-flash")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "保存并检测连通" })).toBeTruthy();
+  });
+
   it("云端选项卡未填 Key 时保存被挡，连通检测失败显示明确原因", async () => {
     vi.mocked(tauri.testExternalAiConnection).mockRejectedValue(new Error("无法连接服务商"));
     renderHarness(true);

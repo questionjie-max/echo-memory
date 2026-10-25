@@ -25,6 +25,7 @@ import {
   getExternalAiSettings,
   getLocalAiStatus,
   getOllamaInstallStatus,
+  listRemoteModels,
   setExternalAiApiKey,
   testExternalAiConnection,
   updateExternalAiSettings,
@@ -133,9 +134,19 @@ export function AnalysisSetupProvider({ children }: { children: ReactNode }) {
   );
 }
 
+/**
+ * 中转站式预置：主流服务商的 OpenAI 兼容地址都填好，用户只填 Key；
+ * 模型列表从服务商 /models 接口拉取下拉选择，拉不到的手填兜底。
+ * defaultModel 是拉取失败时的兜底预填，不做长期维护承诺。
+ */
 const CLOUD_PRESETS = [
   { id: "zhipu", label: "智谱", baseUrl: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4-flash" },
   { id: "deepseek", label: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat" },
+  { id: "qwen", label: "阿里通义千问", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-turbo" },
+  { id: "moonshot", label: "月之暗面 Kimi", baseUrl: "https://api.moonshot.cn/v1", model: "moonshot-v1-8k" },
+  { id: "minimax", label: "MiniMax", baseUrl: "https://api.minimax.chat/v1", model: "abab6.5s-chat" },
+  { id: "siliconflow", label: "硅基流动", baseUrl: "https://api.siliconflow.cn/v1", model: "Qwen/Qwen2.5-7B-Instruct" },
+  { id: "openai", label: "OpenAI 官方", baseUrl: "https://api.openai.com/v1", model: "gpt-4o-mini" },
 ] as const;
 
 type CloudPresetId = (typeof CLOUD_PRESETS)[number]["id"] | "custom";
@@ -399,6 +410,11 @@ function CloudKeyTab({ onResume }: { onResume: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [savedButUnreachable, setSavedButUnreachable] = useState(false);
+  // 模型选择的两种来源：手填兜底永远可用；拉取成功后切下拉选真实模型列表。
+  const [modelSource, setModelSource] = useState<"manual" | "remote">("manual");
+  const [remoteModels, setRemoteModels] = useState<string[]>([]);
+  const [pulling, setPulling] = useState(false);
+  const [modelsError, setModelsError] = useState("");
 
   function applyPreset(next: CloudPresetId) {
     setPreset(next);
@@ -406,6 +422,31 @@ function CloudKeyTab({ onResume }: { onResume: () => void }) {
     if (found) {
       setBaseUrl(found.baseUrl);
       setModel(found.model);
+      setModelSource("manual");
+      setRemoteModels([]);
+      setModelsError("");
+    }
+  }
+
+  async function pullModels() {
+    if (!apiKey.trim() || !baseUrl.trim() || pulling) return;
+    setPulling(true);
+    setModelsError("");
+    try {
+      const models = await listRemoteModels(baseUrl.trim(), apiKey.trim());
+      setRemoteModels(models);
+      setModelSource("remote");
+      // 当前手填值不在列表里时保持用户输入；在列表里则选中它。
+      if (models.includes(model.trim())) {
+        setModel(model.trim());
+      } else {
+        setModel(models[0]);
+      }
+    } catch (reason) {
+      setModelSource("manual");
+      setModelsError(`${String(reason)}。也可以直接手动填写模型名。`);
+    } finally {
+      setPulling(false);
     }
   }
 
@@ -443,6 +484,7 @@ function CloudKeyTab({ onResume }: { onResume: () => void }) {
   }
 
   const canSave = apiKey.trim().length > 0 && consent && baseUrl.trim().length > 0 && model.trim().length > 0;
+  const canPull = apiKey.trim().length > 0 && baseUrl.trim().length > 0;
 
   return (
     <>
@@ -450,12 +492,20 @@ function CloudKeyTab({ onResume }: { onResume: () => void }) {
         云端只覆盖分析（理解整理）；知识索引（向量嵌入）仍需本机 Ollama，
         只配云端时跨记录问答/记忆生成仍会提示缺嵌入模型。
       </p>
-      <Segmented
-        label="服务商"
-        value={preset}
-        onChange={applyPreset}
-        options={[...CLOUD_PRESETS.map((item) => ({ value: item.id, label: item.label })), { value: "custom" as const, label: "自定义" }]}
-      />
+      <Field label="服务商" hint="地址已按 OpenAI 兼容协议填好，可改成中转站等其它兼容地址。">
+        <select
+          className="em-select"
+          value={preset}
+          onChange={(event) => applyPreset(event.target.value as CloudPresetId)}
+        >
+          {CLOUD_PRESETS.map((item) => (
+            <option value={item.id} key={item.id}>
+              {item.label}
+            </option>
+          ))}
+          <option value="custom">自定义</option>
+        </select>
+      </Field>
       <Field label="接口地址" hint="OpenAI 兼容的 /v1 地址。只有本机地址允许用 http。">
         <input
           className="em-input"
@@ -463,17 +513,6 @@ function CloudKeyTab({ onResume }: { onResume: () => void }) {
           placeholder="https://api.example.com/v1"
           onChange={(event) => {
             setBaseUrl(event.target.value);
-            setPreset("custom");
-          }}
-        />
-      </Field>
-      <Field label="模型名称" hint="服务商文档里的模型 ID，可按需更换。">
-        <input
-          className="em-input"
-          value={model}
-          placeholder="glm-4-flash"
-          onChange={(event) => {
-            setModel(event.target.value);
             setPreset("custom");
           }}
         />
@@ -488,6 +527,51 @@ function CloudKeyTab({ onResume }: { onResume: () => void }) {
           onChange={(event) => setApiKey(event.target.value)}
         />
       </Field>
+      <Field
+        label="模型"
+        hint={modelSource === "remote" ? "从服务商拉取的模型列表，可直接切换。" : "填好 Key 后可拉取模型列表；拉不到就手动写模型 ID。"}
+      >
+        <div className="em-field-row">
+          {modelSource === "remote" && remoteModels.length > 0 ? (
+            <select
+              className="em-select"
+              value={model}
+              onChange={(event) => setModel(event.target.value)}
+            >
+              {remoteModels.map((name) => (
+                <option value={name} key={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              className="em-input"
+              value={model}
+              placeholder="glm-4-flash"
+              onChange={(event) => setModel(event.target.value)}
+            />
+          )}
+          {modelSource === "remote" ? (
+            <Button variant="quiet" onClick={() => setModelSource("manual")}>
+              手动填写
+            </Button>
+          ) : (
+            <Button
+              variant="quiet"
+              disabled={!canPull || pulling}
+              onClick={() => void pullModels()}
+            >
+              {pulling ? "拉取中…" : "拉取模型列表"}
+            </Button>
+          )}
+        </div>
+      </Field>
+      {modelsError && (
+        <p className="em-note err" role="alert">
+          {modelsError}
+        </p>
+      )}
       <label className="em-check-row">
         <input
           type="checkbox"

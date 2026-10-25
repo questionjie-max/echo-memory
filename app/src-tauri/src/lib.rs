@@ -135,6 +135,7 @@ pub fn run() {
             commands::set_external_asr_api_key,
             commands::clear_external_asr_api_key,
             commands::test_external_ai_connection,
+            commands::list_remote_models,
             commands::get_local_timeline,
             commands::get_local_growth_graph,
             commands::generate_memory_snapshot,

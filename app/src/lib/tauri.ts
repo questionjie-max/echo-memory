@@ -391,6 +391,11 @@ export function testExternalAiConnection(): Promise<void> {
   return invoke<void>("test_external_ai_connection");
 }
 
+/** 拉取服务商的 OpenAI 兼容模型列表（保存前使用；Key 只在内存中传递）。 */
+export function listRemoteModels(baseUrl: string, apiKey: string): Promise<string[]> {
+  return invoke<string[]>("list_remote_models", { baseUrl, apiKey });
+}
+
 export function getLocalTimeline(scope: MemoryScope, rangeStart: string | null, rangeEnd: string | null): Promise<TimelineItem[]> {
   return invoke<TimelineItem[]>("get_local_timeline", { scope, rangeStart, rangeEnd });
 }

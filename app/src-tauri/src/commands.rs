@@ -2748,6 +2748,111 @@ pub(crate) fn test_external_ai_connection_blocking(state: &AppState) -> Result<(
         .map_err(|error| error.to_frontend())
 }
 
+/// 拉取服务商的 OpenAI 兼容模型列表（GET {base}/models）。
+///
+/// 供分析设置面板在「保存之前」使用：Key 只作为参数在内存中使用，不落盘、
+/// 不入钥匙串；请求只携带该 Key 发往用户填写的服务商本身，不含任何用户内容，
+/// 因此不走隐私同意门禁。地址仍必须通过 SSRF 安全校验。
+#[tauri::command]
+pub async fn list_remote_models(
+    base_url: String,
+    api_key: String,
+) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || list_remote_models_blocking(base_url, api_key))
+        .await
+        .map_err(|_| "拉取模型列表后台任务异常，请重试".to_owned())?
+}
+
+/// `list_remote_models` 的同步实现，测试直接调用（不经 async runtime）。
+pub(crate) fn list_remote_models_blocking(
+    base_url: String,
+    api_key: String,
+) -> Result<Vec<String>, String> {
+    let base_url = base_url.trim().trim_end_matches('/').to_owned();
+    if base_url.is_empty() || base_url.len() > 500 {
+        return Err("接口地址无效".to_owned());
+    }
+    crate::memory::validate_external_base_url(&base_url).map_err(|error| error.to_string())?;
+    if api_key.trim().is_empty() {
+        return Err("请先填写 API Key 再拉取模型列表".to_owned());
+    }
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(30))
+        .redirects(0)
+        .build();
+    let endpoint = format!("{base_url}/models");
+    let response = agent
+        .get(&endpoint)
+        .set("Authorization", &format!("Bearer {}", api_key.trim()))
+        .call()
+        .map_err(|error| match error {
+            ureq::Error::Status(code, response) => {
+                let body = response.into_string().unwrap_or_default();
+                let provider_message = truncated_provider_body(&body);
+                match code {
+                    401 | 403 => format!("Key 无效或无权限（HTTP {code}）：{provider_message}"),
+                    _ => format!("服务商返回错误（HTTP {code}）：{provider_message}"),
+                }
+            }
+            ureq::Error::Transport(transport) => {
+                format!("无法连接服务商，请检查接口地址与网络：{transport}")
+            }
+        })?;
+    let value: serde_json::Value = response
+        .into_json()
+        .map_err(|error| format!("模型列表响应无效：{error}"))?;
+    parse_remote_models(&value)
+}
+
+/// 从 OpenAI 兼容的 /models 响应里取模型 id 列表：标准 `data[].id`，
+/// 部分中转站直接返回顶层数组，两种都认；空值与重复剔除后排序。
+fn parse_remote_models(value: &serde_json::Value) -> Result<Vec<String>, String> {
+    let entries = match value.get("data") {
+        Some(data) => data.as_array().cloned().unwrap_or_default(),
+        None => value.as_array().cloned().unwrap_or_default(),
+    };
+    let mut models: Vec<String> = entries
+        .iter()
+        .filter_map(|entry| {
+            entry
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                .map(str::to_owned)
+        })
+        .collect();
+    models.sort();
+    models.dedup();
+    if models.is_empty() {
+        return Err("该服务商没有返回任何模型，可能不支持自动拉取，请手动填写模型名".to_owned());
+    }
+    Ok(models)
+}
+
+/// 服务商错误体原样透传前做净化与截断：去掉控制字符，最多保留 300 字节，
+/// 避免超长 HTML 错误页把界面错误条撑爆。
+fn truncated_provider_body(body: &str) -> String {
+    let cleaned: String = body
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    let trimmed = cleaned.trim();
+    if trimmed.chars().count() <= 300 {
+        trimmed.to_owned()
+    } else {
+        let mut end = 0;
+        for (index, _) in trimmed.char_indices() {
+            if index >= 300 {
+                break;
+            }
+            end = index;
+        }
+        format!("{}…", &trimmed[..end])
+    }
+}
+
 #[tauri::command]
 pub fn get_local_timeline(
     state: State<AppState>,
@@ -3938,6 +4043,90 @@ mod tests {
             .unwrap();
         assert!(!ready());
         let _ = std::fs::remove_dir_all(library.root());
+    }
+
+    #[test]
+    fn parse_remote_models_reads_data_and_top_level_arrays() {
+        let standard: serde_json::Value = serde_json::json!({
+            "data": [
+                {"id": "glm-4-flash"},
+                {"id": "glm-4-plus"},
+                {"id": "" },
+                {"id": "glm-4-flash"}
+            ]
+        });
+        let mut models = parse_remote_models(&standard).unwrap();
+        models.sort();
+        assert_eq!(models, vec!["glm-4-flash", "glm-4-plus"]);
+
+        let top_level: serde_json::Value =
+            serde_json::json!([{"id": "deepseek-chat"}, {"id": "deepseek-reasoner"}]);
+        let models = parse_remote_models(&top_level).unwrap();
+        assert_eq!(models, vec!["deepseek-chat", "deepseek-reasoner"]);
+
+        let empty: serde_json::Value = serde_json::json!({"data": []});
+        let error = parse_remote_models(&empty).unwrap_err();
+        assert!(error.contains("手动填写"), "{error}");
+    }
+
+    #[test]
+    fn list_remote_models_maps_provider_errors_to_chinese() {
+        // 200：标准 OpenAI 兼容响应 → 模型列表；复用现有 mock 服务基建。
+        let body = r#"{"data":[{"id":"mock-model-b"},{"id":"mock-model-a"}]}"#;
+        let (base_url, server) = serve_one_response(body);
+        let models = list_remote_models_blocking(
+            base_url.clone(),
+            "mock-list-key".to_owned(),
+        )
+        .unwrap();
+        let request = server.join().unwrap();
+        assert!(request.contains("GET /models "), "{request}");
+        assert!(
+            request.to_ascii_lowercase().contains("authorization: bearer mock-list-key"),
+            "{request}"
+        );
+        assert_eq!(models, vec!["mock-model-a", "mock-model-b"]);
+
+        // 401：Key 无效 → 中文错误 + 服务商原话保留。
+        // mock 服务必须先读走请求、写完响应后再读到 EOF 才关闭连接：
+        // macOS 上带未读数据关 socket 会发 RST，把 client 读响应体的过程打断。
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut buffer = [0_u8; 4_096];
+            let _ = stream.read(&mut buffer);
+            let body = r#"{"error":{"message":"Invalid API key"}}"#;
+            use std::io::Write as _;
+            write!(
+                stream,
+                "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .unwrap();
+            stream.flush().unwrap();
+            let _ = stream.read(&mut buffer);
+        });
+        let error = list_remote_models_blocking(
+            format!("http://{addr}"),
+            "wrong-key".to_owned(),
+        )
+        .unwrap_err();
+        server.join().unwrap();
+        assert!(error.contains("Key 无效或无权限"), "{error}");
+        assert!(error.contains("Invalid API key"), "{error}");
+
+        // 空 Key：在发请求前就被挡下。
+        let error = list_remote_models_blocking(
+            "https://api.example.com/v1".to_owned(),
+            "   ".to_owned(),
+        )
+        .unwrap_err();
+        assert!(error.contains("先填写 API Key"), "{error}");
     }
 
     #[test]
