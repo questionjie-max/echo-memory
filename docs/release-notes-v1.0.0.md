@@ -15,7 +15,15 @@
 
 ## Distribution status
 
-（待出包后补：DMG 文件名、SHA-256、codesign / spctl / stapler 验证结果。本节在签名与公证实际完成前不做任何声明。）
+This source release is version `1.0.0`. The public artifact is `回声记忆_1.0.0_aarch64.dmg` (14.0 MB), SHA-256 `1fd49746ee3053c7b326ce7ac494b223edbd0b26614d61288e1f92a9a826f3c3`.
+
+- `codesign --verify --deep --strict` passes for the application inside the DMG.
+- `hdiutil verify` confirms the disk image checksum is VALID.
+- `spctl --assess --type execute` reports `accepted` with `source=Notarized Developer ID` for the application.
+- This DMG is an **Apple-signed and notarized Developer ID release**. Notarization submission `9aace8dc-6131-40a3-9228-f7f917f08b23` completed with status `Accepted`, and the ticket is stapled to the DMG (`xcrun stapler validate` passes).
+- A pre-notarization approval gate audited the built bundle (sourcemaps, test/dev leftovers, developer machine paths, dev endpoints, version consistency across config/Cargo/package/Info.plist) before submission.
+
+Users can download the DMG, open it, and move `回声记忆.app` into `/Applications` normally.
 
 ---
 
@@ -36,4 +44,12 @@
 
 ## 分发状态
 
-（待出包后补：DMG 文件名、SHA-256、codesign / spctl / stapler 验证结果。本节在签名与公证实际完成前不做任何声明。）
+本次源码发布版本为 `1.0.0`。公开产物为 `回声记忆_1.0.0_aarch64.dmg`（14.0 MB），SHA-256 `1fd49746ee3053c7b326ce7ac494b223edbd0b26614d61288e1f92a9a826f3c3`。
+
+- `codesign --verify --deep --strict` 对 DMG 内应用校验通过。
+- `hdiutil verify` 确认磁盘镜像校验和为 VALID。
+- `spctl --assess --type execute` 对应用报告 `accepted`，来源 `source=Notarized Developer ID`。
+- 本 DMG 为 **Apple 已签名并已公证的 Developer ID 发布物**。公证提交 `9aace8dc-6131-40a3-9228-f7f917f08b23` 状态 `Accepted`，装订票已钉入 DMG（`xcrun stapler validate` 通过）。
+- 公证提交前，构建产物审计门（sourcemap、测试/开发残留、开发机路径、开发端点、config/Cargo/package/Info.plist 版本一致性）已通过。
+
+用户下载 DMG 后正常打开、把 `回声记忆.app` 拖入 `/Applications` 即可使用。
