@@ -21,6 +21,7 @@ pub mod memory_index;
 pub mod record_commands;
 pub mod recording;
 pub mod state;
+pub mod system_audio;
 pub mod storage;
 pub mod transcript;
 pub mod types;
@@ -113,6 +114,15 @@ pub fn run() {
             recording::list_recoverable_recordings,
             recording::recover_recording,
             recording::discard_recoverable_recording,
+            system_audio::system_audio_permission,
+            system_audio::request_system_audio_permission,
+            system_audio::start_system_recording,
+            system_audio::pause_system_recording,
+            system_audio::resume_system_recording,
+            system_audio::system_recording_levels,
+            system_audio::stop_system_recording,
+            system_audio::cancel_system_recording,
+            system_audio::get_system_recording_state,
             commands::list_jobs,
             commands::import_audio,
             commands::import_document,

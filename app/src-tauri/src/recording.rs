@@ -4,6 +4,7 @@
 //! hash、正式记录和转写接入会在后续生命周期工作包中完成。当前模块刻意
 //! 不做网络请求、实时转写或系统音频捕获。
 
+use crate::db::repository::RecordingSessionRow;
 use crate::error::{AppError, AppResult};
 use crate::library::ManagedLibrary;
 use crate::state::AppState;
@@ -241,7 +242,7 @@ pub struct RecordingState {
 }
 
 impl RecordingState {
-    fn idle() -> Self {
+    pub(crate) fn idle() -> Self {
         Self {
             status: RecordingStatus::Idle,
             session_id: None,
@@ -282,6 +283,23 @@ pub struct RecoverableRecording {
     pub duration_ms: i64,
     pub written_bytes: i64,
     pub last_error: Option<String>,
+    /// 会话来源：microphone（麦克风）或 system（系统内放声）。
+    pub source: String,
+}
+
+/// 麦克风会话的落盘文件名；系统内放声会话用 system-capture.wav（见 system_audio.rs）。
+pub const MICROPHONE_CAPTURE_FILE_NAME: &str = "capture.wav";
+
+/// 会话按临时文件名判断来源，恢复/放弃据此分发到对应控制器。
+pub fn session_capture_source(session: &RecordingSessionRow) -> &'static str {
+    if session
+        .temp_path
+        .ends_with(crate::system_audio::SYSTEM_CAPTURE_FILE_NAME)
+    {
+        "system"
+    } else {
+        "microphone"
+    }
 }
 
 #[derive(Debug)]
@@ -591,6 +609,14 @@ impl RecordingController {
             .map(|sessions| {
                 sessions
                     .into_iter()
+                    // 只列麦克风会话：系统内放声会话由 SystemAudioController 负责，
+                    // 混在一起会让「恢复」用错路径校验（capture.wav vs system-capture.wav）。
+                    // 注意必须按完整文件名比而不能用 ends_with：system-capture.wav
+                    // 的字符串后缀同样是 capture.wav，用后缀会把系统会话误收进来。
+                    .filter(|session| {
+                        session.temp_path.ends_with(&format!("/{MICROPHONE_CAPTURE_FILE_NAME}"))
+                            || session.temp_path == MICROPHONE_CAPTURE_FILE_NAME
+                    })
                     .filter(|session| session.status == "recoverable" || session.status == "failed")
                     .map(|session| RecoverableRecording {
                         session_id: session.id,
@@ -600,6 +626,7 @@ impl RecordingController {
                         duration_ms: session.duration_ms,
                         written_bytes: session.written_bytes,
                         last_error: session.last_error,
+                        source: "microphone".to_owned(),
                     })
                     .collect()
             })
@@ -853,10 +880,23 @@ pub fn get_recording_state(state: State<AppState>) -> RecordingState {
 pub fn list_recoverable_recordings(
     state: State<AppState>,
 ) -> Result<Vec<RecoverableRecording>, String> {
-    state
+    let mut all = state
         .recording
         .recoverable_sessions(&state.library)
-        .map_err(|error| error.to_frontend())
+        .map_err(|error| error.to_frontend())?;
+    crate::system_audio::system_recoverable_into(&state.library, &mut all)
+        .map_err(|error| error.to_frontend())?;
+    all.sort_by(|left, right| right.started_at.cmp(&left.started_at));
+    Ok(all)
+}
+
+/// 查会话来源（麦克风 / 系统内放声），恢复与放弃据此分发到对应控制器。
+fn session_capture_source_of(
+    library: &ManagedLibrary,
+    session_id: &str,
+) -> AppResult<&'static str> {
+    let session: RecordingSessionRow = library.repository().get_recording_session(session_id)?;
+    Ok(session_capture_source(&session))
 }
 
 #[tauri::command]
@@ -864,12 +904,37 @@ pub async fn recover_recording(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<StoppedRecording, String> {
-    let recording = state.recording.clone();
     let library = state.library.clone();
-    tauri::async_runtime::spawn_blocking(move || recording.recover_recording(&library, &session_id))
-        .await
-        .map_err(|_| "恢复录音后台任务异常".to_owned())?
-        .map_err(|error| error.to_frontend())
+    let source = tauri::async_runtime::spawn_blocking({
+        let library = library.clone();
+        let session_id = session_id.clone();
+        move || session_capture_source_of(&library, &session_id)
+    })
+    .await
+    .map_err(|_| "恢复录音后台任务异常".to_owned())?
+    .map_err(|error| error.to_frontend())?;
+    match source {
+        "system" => {
+            let controller = state.system_audio.clone();
+            let library = state.library.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                controller.recover_recording(&library, &session_id)
+            })
+            .await
+            .map_err(|_| "恢复录音后台任务异常".to_owned())?
+            .map_err(|error| error.to_frontend())
+        }
+        _ => {
+            let controller = state.recording.clone();
+            let library = state.library.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                controller.recover_recording(&library, &session_id)
+            })
+            .await
+            .map_err(|_| "恢复录音后台任务异常".to_owned())?
+            .map_err(|error| error.to_frontend())
+        }
+    }
 }
 
 #[tauri::command]
@@ -877,10 +942,18 @@ pub fn discard_recoverable_recording(
     state: State<AppState>,
     session_id: String,
 ) -> Result<(), String> {
-    state
-        .recording
-        .discard_recoverable(&state.library, &session_id)
-        .map_err(|error| error.to_frontend())
+    let result = match session_capture_source_of(&state.library, &session_id) {
+        Ok("system") => {
+            state
+                .system_audio
+                .discard_recoverable(&state.library, &session_id)
+        }
+        Ok(_) => state
+            .recording
+            .discard_recoverable(&state.library, &session_id),
+        Err(error) => Err(error),
+    };
+    result.map_err(|error| error.to_frontend())
 }
 
 #[cfg(test)]
@@ -893,6 +966,24 @@ mod tests {
         assert_eq!(state.status, RecordingStatus::Idle);
         assert!(state.session_id.is_none());
         assert!(state.file_path.is_none());
+    }
+
+    #[test]
+    fn system_sessions_are_not_mislisted_as_microphone() {
+        // 回归：「system-capture.wav」字符串后缀包含「capture.wav」，
+        // 过滤若用 ends_with 会把系统会话同时列进麦克风恢复列表（来源标错 + 重复行）。
+        let system_path = format!(
+            "recordings/inflight/{}/{}",
+            Uuid::new_v4(),
+            crate::system_audio::SYSTEM_CAPTURE_FILE_NAME
+        );
+        let mic_path = format!(
+            "recordings/inflight/{}/{}",
+            Uuid::new_v4(),
+            MICROPHONE_CAPTURE_FILE_NAME
+        );
+        assert!(!system_path.ends_with(&format!("/{MICROPHONE_CAPTURE_FILE_NAME}")));
+        assert!(mic_path.ends_with(&format!("/{MICROPHONE_CAPTURE_FILE_NAME}")));
     }
 
     #[test]

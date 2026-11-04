@@ -417,6 +417,7 @@ input::placeholder, textarea::placeholder { color: var(--em-ink-4); }
 
 .workspace-heading { margin-bottom: 12px; }
 .segmented-control { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 2px; border-radius: 7px; background: var(--em-soft-fill-2); }
+.segmented-control.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .segmented-control button { padding: 5px 8px; border: 0; border-radius: 5px; background: transparent; color: var(--em-ink-3); cursor: pointer; font-size: 12px; font-weight: 600; }
 .segmented-control button.selected { background: var(--em-panel); color: var(--em-ink); box-shadow: var(--em-shadow-sm); }
 .segmented-control button span { margin-left: 3px; color: var(--em-ink-4); font-size: 10px; }

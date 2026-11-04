@@ -4,26 +4,42 @@
  * 它是自足的：开始、暂停、继续、停止、放弃全部发生在这张卡片内部，
  * 不另行拉起全局控制条——状态变化只在框内发生，避免"点一下上面多出一条"的割裂感。
  * 录音时的计时与电平也在这里刷新。
+ *
+ * v1.1 起支持两种来源：本机麦克风（原有链路）与系统内放声（ScreenCaptureKit）。
+ * 系统内录的隐私底线在界面层落地：开始前必须走一遍显性告知与确认（确认框里写清
+ * 会录到谁的声音、声音存哪里、入记忆前还要确认），权限被拒时只报错、绝不静默
+ * 继续或改走麦克风。
  */
 import { useEffect, useRef, useState } from "react";
 import type {
+  CaptureSource,
   MicrophonePermission,
   RecoverableRecording,
   RecordingState,
+  SystemAudioPermission,
 } from "../shared/types";
 import {
   cancelRecording,
+  cancelSystemRecording,
   discardRecoverableRecording,
   getRecordingState,
+  getSystemRecordingState,
   listRecoverableRecordings,
   microphonePermission,
   pauseRecording,
+  pauseSystemRecording,
   recoverRecording,
   recordingLevels,
   requestMicrophonePermission,
+  requestSystemAudioPermission,
   resumeRecording,
+  resumeSystemRecording,
   startRecording,
+  startSystemRecording,
   stopRecording,
+  stopSystemRecording,
+  systemAudioPermission,
+  systemRecordingLevels,
   transcribeRecord,
 } from "../lib/tauri";
 import { formatBytes, formatMinutesSeconds as formatDuration } from "../lib/format";
@@ -54,6 +70,30 @@ function permissionHint(permission: MicrophonePermission): string {
   }
 }
 
+function systemPermissionHint(permission: SystemAudioPermission): string {
+  switch (permission) {
+    case "denied":
+      return "系统声音权限已拒绝。请在「系统设置 → 隐私与安全性 → 屏幕与系统声音录制」中允许回声记忆并重启应用；麦克风录音不受影响。";
+    case "unsupported":
+      return "当前 macOS 不支持系统声采集（需要 macOS 12.3 及以上），可以继续用麦克风录音。";
+    case "granted":
+      return "系统声音录制结束后自动进入转写队列。";
+    default:
+      return "首次使用会请求「屏幕与系统声音录制」权限。";
+  }
+}
+
+/**
+ * 系统内录的显性告知（隐私红线）：开始前用户必须确认过这段话才能开始。
+ * 说清三件事——录到谁的声音、存在哪里、入记忆前还要确认。
+ */
+const SYSTEM_CAPTURE_NOTICE = [
+  "开始录制系统声音前请确认：",
+  "系统内录会录到这台 Mac 正在播放的所有声音——包括线上会议里对方说的话、视频、音乐和提示音。麦克风不会被打开。",
+  "音频只保存在这台 Mac 上，转写与分析全部本机完成；只有你之后亲自确认的内容才会进入记忆库。",
+  "如果录的是会议，请确认你已告知参会者或有权录制。",
+].join("\n\n");
+
 /** 电平条宽度：把 -60dB~0dB 映射到 0%~100%，与系统表头量程一致。 */
 function levelWidth(db: number | null | undefined): string {
   if (db === null || db === undefined || !Number.isFinite(db)) return "0%";
@@ -61,15 +101,28 @@ function levelWidth(db: number | null | undefined): string {
   return `${normalized}%`;
 }
 
+function isActiveState(state: RecordingState | null): boolean {
+  return state?.status === "recording" || state?.status === "paused";
+}
+
 export default function RecordingEntry({ projectId, onImported, refreshKey }: Props) {
-  const [state, setState] = useState<RecordingState | null>(null);
-  const [permission, setPermission] = useState<MicrophonePermission>("undetermined");
+  const [micState, setMicState] = useState<RecordingState | null>(null);
+  const [sysState, setSysState] = useState<RecordingState | null>(null);
+  const [micPermission, setMicPermission] = useState<MicrophonePermission>("undetermined");
+  const [sysPermission, setSysPermission] = useState<SystemAudioPermission>("undetermined");
   const [recoverable, setRecoverable] = useState<RecoverableRecording[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [captureSource, setCaptureSource] = useState<CaptureSource>("microphone");
 
-  const active = state?.status === "recording" || state?.status === "paused";
+  const micActive = isActiveState(micState);
+  const sysActive = isActiveState(sysState);
+  const active = micActive || sysActive;
+  // 界面上同一时刻只展示一条进行中的采集；哪条活着就控制哪条。
+  const activeSource: CaptureSource = sysActive ? "system" : "microphone";
+  const state = sysActive ? sysState : micState;
+
   // 轮询代际：停止/放弃后，在途的电平快照不得把界面拉回「正在记录」。
   const pollGeneration = useRef(0);
 
@@ -84,16 +137,25 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
   }
 
   async function refreshState() {
-    try {
-      const [current, currentPermission] = await Promise.all([
-        getRecordingState(),
-        microphonePermission(),
-      ]);
-      if (current) setState(current);
-      if (currentPermission) setPermission(currentPermission);
-    } catch {
-      // 状态读取失败不阻塞入口渲染；开始录音时后端会给出明确错误。
-    }
+    // 每个状态各自兜底：任一读取失败（含旧后端没有系统声命令）都不能拖垮
+    // 其它状态的渲染，更不能阻塞入口。
+    const read = async <T,>(call: () => Promise<T>): Promise<T | null> => {
+      try {
+        return await Promise.resolve(call());
+      } catch {
+        return null;
+      }
+    };
+    const [current, currentMic, currentSys, currentSysPermission] = await Promise.all([
+      read(getRecordingState),
+      read(microphonePermission),
+      read(getSystemRecordingState),
+      read(systemAudioPermission),
+    ]);
+    if (current) setMicState(isActiveState(current) ? current : null);
+    if (currentMic) setMicPermission(currentMic);
+    if (currentSys) setSysState(isActiveState(currentSys) ? currentSys : null);
+    if (currentSysPermission) setSysPermission(currentSysPermission);
     await refreshRecoverable();
   }
 
@@ -106,30 +168,56 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
     if (!active) return;
     const generation = pollGeneration.current;
     const timer = window.setInterval(() => {
-      void recordingLevels()
+      const poll = activeSource === "system" ? systemRecordingLevels() : recordingLevels();
+      void poll
         .then((next) => {
-          // 停止/放弃后丢弃在途快照，避免界面被拉回「正在记录」。
-          if (generation === pollGeneration.current) setState(next);
+          if (generation !== pollGeneration.current) return;
+          if (activeSource === "system") setSysState(next);
+          else setMicState(next);
         })
         .catch(() => undefined);
     }, 500);
     return () => window.clearInterval(timer);
-  }, [active]);
+  }, [active, activeSource]);
+
+  async function beginMicrophone() {
+    let currentPermission = micPermission;
+    if (currentPermission !== "granted") {
+      currentPermission = await requestMicrophonePermission();
+      setMicPermission(currentPermission);
+    }
+    if (currentPermission !== "granted") {
+      throw new Error(permissionHint(currentPermission));
+    }
+    setMicState(await startRecording(projectId));
+  }
+
+  async function beginSystem() {
+    let currentPermission = sysPermission;
+    if (currentPermission !== "granted") {
+      currentPermission = await requestSystemAudioPermission();
+      setSysPermission(currentPermission);
+    }
+    if (currentPermission !== "granted") {
+      // 明确报错并停在这里；麦克风录音能力不受影响，用户可切回麦克风来源。
+      throw new Error(systemPermissionHint(currentPermission));
+    }
+    // 隐私红线：没有确认过显性告知，就不开始录系统声。
+    // confirmed=true 是后端的硬性参数：没走确认框后端直接拒绝。
+    if (!(await confirmAction(SYSTEM_CAPTURE_NOTICE))) return;
+    setSysState(await startSystemRecording(projectId, true));
+  }
 
   async function begin() {
     setBusy(true);
     setError("");
     setNotice("");
     try {
-      let currentPermission = permission;
-      if (currentPermission !== "granted") {
-        currentPermission = await requestMicrophonePermission();
-        setPermission(currentPermission);
+      if (captureSource === "system") {
+        await beginSystem();
+      } else {
+        await beginMicrophone();
       }
-      if (currentPermission !== "granted") {
-        throw new Error(permissionHint(currentPermission));
-      }
-      setState(await startRecording(projectId));
     } catch (reason) {
       setError(displayError(reason));
     } finally {
@@ -141,7 +229,15 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
     setBusy(true);
     setError("");
     try {
-      setState(state?.status === "paused" ? await resumeRecording() : await pauseRecording());
+      if (activeSource === "system") {
+        setSysState(
+          sysState?.status === "paused" ? await resumeSystemRecording() : await pauseSystemRecording(),
+        );
+      } else {
+        setMicState(
+          micState?.status === "paused" ? await resumeRecording() : await pauseRecording(),
+        );
+      }
     } catch (reason) {
       setError(displayError(reason));
     } finally {
@@ -153,9 +249,11 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
     setBusy(true);
     setError("");
     try {
-      const result = await stopRecording();
+      const result =
+        activeSource === "system" ? await stopSystemRecording() : await stopRecording();
       pollGeneration.current += 1;
-      setState(null);
+      if (activeSource === "system") setSysState(null);
+      else setMicState(null);
       setNotice(`已保存“${result.title}”，正在准备本机转写。`);
       onImported();
       try {
@@ -176,14 +274,27 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
   }
 
   async function cancel() {
-    if (!(await confirmAction("放弃这次录音吗？未封存的音频会被删除，无法恢复。"))) return;
+    if (
+      !(await confirmAction(
+        activeSource === "system"
+          ? "放弃这次系统声音录制吗？未封存的音频会被删除，无法恢复。"
+          : "放弃这次录音吗？未封存的音频会被删除，无法恢复。",
+      ))
+    ) {
+      return;
+    }
     setBusy(true);
     setError("");
     setNotice("");
     try {
-      await cancelRecording();
+      if (activeSource === "system") {
+        await cancelSystemRecording();
+        setSysState(null);
+      } else {
+        await cancelRecording();
+        setMicState(null);
+      }
       pollGeneration.current += 1;
-      setState(null);
       setNotice("已放弃本次录音。");
       onImported();
     } catch (reason) {
@@ -231,18 +342,29 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
     }
   }
 
+  const lead =
+    captureSource === "system"
+      ? "录制这台 Mac 正在播放的声音（例如线上会议里对方的话），不打开麦克风，音频只保存在本机。"
+      : "只使用本机麦克风，音频默认只保存在这台 Mac 上。";
+
   return (
     <section className="recording-entry" aria-label="本地记录">
       <div className="recording-entry-header">
         <div>
           <p className="recording-entry-eyebrow">本地记录</p>
           <h3>电脑设备直录</h3>
-          <p className="recording-entry-lead">只使用本机麦克风，音频默认只保存在这台 Mac 上。</p>
+          <p className="recording-entry-lead">{lead}</p>
         </div>
         {active ? (
           <div className="recording-entry-state" role="status" aria-live="polite">
             <span className="recording-live-dot" aria-hidden="true" />
-            <strong>{state?.status === "paused" ? "已暂停" : "正在记录"}</strong>
+            <strong>
+              {state?.status === "paused"
+                ? "已暂停"
+                : activeSource === "system"
+                  ? "正在记录系统声音"
+                  : "正在记录"}
+            </strong>
             <time>{formatDuration(state?.elapsedMs ?? 0, true)}</time>
           </div>
         ) : (
@@ -250,12 +372,44 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
             type="button"
             className="primary-button recording-entry-start"
             onClick={() => void begin()}
-            disabled={busy || permission === "unsupported"}
+            disabled={
+              busy ||
+              (captureSource === "microphone"
+                ? micPermission === "unsupported"
+                : sysPermission === "unsupported")
+            }
           >
-            {busy ? "准备中…" : "开始记录"}
+            {busy ? "准备中…" : captureSource === "system" ? "开始录系统声音" : "开始记录"}
           </button>
         )}
       </div>
+
+      {!active && (
+        <div
+          className="segmented-control two"
+          role="tablist"
+          aria-label="录音来源"
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={captureSource === "microphone"}
+            className={captureSource === "microphone" ? "selected" : ""}
+            onClick={() => setCaptureSource("microphone")}
+          >
+            麦克风
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={captureSource === "system"}
+            className={captureSource === "system" ? "selected" : ""}
+            onClick={() => setCaptureSource("system")}
+          >
+            系统声音
+          </button>
+        </div>
+      )}
 
       {active && (
         <>
@@ -276,7 +430,13 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
         </>
       )}
 
-      {!active && <p className="recording-entry-hint">{permissionHint(permission)}</p>}
+      {!active && (
+        <p className="recording-entry-hint">
+          {captureSource === "system"
+            ? systemPermissionHint(sysPermission)
+            : permissionHint(micPermission)}
+        </p>
+      )}
 
       {recoverable.length > 0 && (
         <div className="recording-recovery" role="region" aria-label="可恢复录音">
@@ -287,7 +447,10 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
           {recoverable.map((session) => (
             <div className="recording-recovery-row" key={session.sessionId}>
               <div>
-                <strong>{session.title}</strong>
+                <strong>
+                  {session.source === "system" ? "系统声音 · " : ""}
+                  {session.title}
+                </strong>
                 <span>{new Date(session.startedAt).toLocaleString()} · {formatBytes(session.writtenBytes)}</span>
               </div>
               <div className="recording-recovery-actions">

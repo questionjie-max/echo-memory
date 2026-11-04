@@ -30,6 +30,8 @@ mod transcripts;
 
 /// 中断文案需要被命令层的启动恢复与集成测试引用，这里统一再导出。
 pub use processing_jobs::{INTERRUPTED_JOB_ERROR, INTERRUPTED_RESUME_MAX_ATTEMPTS};
+/// 录音会话行类型被命令层用于按来源分发恢复/放弃（麦克风 vs 系统内放声）。
+pub use recording_sessions::RecordingSessionRow;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -128,6 +128,7 @@ pub fn consume_export_ticket(ticket: &str) -> bool {
 pub struct AppState {
     pub library: ManagedLibrary,
     pub recording: crate::recording::RecordingController,
+    pub system_audio: crate::system_audio::SystemAudioController,
     cancelled_generations: Arc<Mutex<HashSet<String>>>,
     generation_jobs: Arc<Mutex<HashMap<String, MemoryGenerationJob>>>,
     active_knowledge_indexes: Arc<Mutex<HashSet<String>>>,
@@ -149,6 +150,7 @@ impl AppState {
         Ok(Self {
             library,
             recording: crate::recording::RecordingController::default(),
+            system_audio: crate::system_audio::SystemAudioController::default(),
             cancelled_generations: Arc::new(Mutex::new(HashSet::new())),
             generation_jobs: Arc::new(Mutex::new(HashMap::new())),
             active_knowledge_indexes: Arc::new(Mutex::new(HashSet::new())),

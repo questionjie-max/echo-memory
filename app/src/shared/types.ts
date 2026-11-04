@@ -65,7 +65,19 @@ export interface RecoverableRecording {
   durationMs: number;
   writtenBytes: number;
   lastError: string | null;
+  /** 会话来源：microphone（麦克风）或 system（系统内放声）。 */
+  source: string;
 }
+
+/** 系统内放声采集权限状态（macOS 15 的「屏幕与系统声音录制」）。 */
+export type SystemAudioPermission =
+  | "undetermined"
+  | "denied"
+  | "granted"
+  | "unsupported";
+
+/** 录音来源：麦克风、系统内放声。 */
+export type CaptureSource = "microphone" | "system";
 
 export interface Project {
   id: string; // UUID

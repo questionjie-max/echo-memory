@@ -53,6 +53,7 @@ import type {
   RecordingState,
   StoppedRecording,
   RecoverableRecording,
+  SystemAudioPermission,
 } from "../shared/types";
 
 export function createProject(name: string): Promise<Project> {
@@ -315,6 +316,50 @@ export function recoverRecording(sessionId: string): Promise<StoppedRecording> {
 
 export function discardRecoverableRecording(sessionId: string): Promise<void> {
   return invoke<void>("discard_recoverable_recording", { sessionId });
+}
+
+/* ---------- 系统内放声采集（v1.1） ---------- */
+
+export function systemAudioPermission(): Promise<SystemAudioPermission> {
+  return invoke<SystemAudioPermission>("system_audio_permission");
+}
+
+export function requestSystemAudioPermission(): Promise<SystemAudioPermission> {
+  return invoke<SystemAudioPermission>("request_system_audio_permission");
+}
+
+export function startSystemRecording(
+  projectId: string | null | undefined,
+  confirmed: boolean,
+): Promise<RecordingState> {
+  return invoke<RecordingState>("start_system_recording", {
+    projectId: projectId ?? null,
+    confirmed,
+  });
+}
+
+export function pauseSystemRecording(): Promise<RecordingState> {
+  return invoke<RecordingState>("pause_system_recording");
+}
+
+export function resumeSystemRecording(): Promise<RecordingState> {
+  return invoke<RecordingState>("resume_system_recording");
+}
+
+export function systemRecordingLevels(): Promise<RecordingState> {
+  return invoke<RecordingState>("system_recording_levels");
+}
+
+export function stopSystemRecording(): Promise<StoppedRecording> {
+  return invoke<StoppedRecording>("stop_system_recording");
+}
+
+export function cancelSystemRecording(): Promise<void> {
+  return invoke<void>("cancel_system_recording");
+}
+
+export function getSystemRecordingState(): Promise<RecordingState> {
+  return invoke<RecordingState>("get_system_recording_state");
 }
 
 export function listTranscriptSegments(recordId: string): Promise<TranscriptSegment[]> {
