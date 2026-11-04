@@ -419,6 +419,19 @@ input::placeholder, textarea::placeholder { color: var(--em-ink-4); }
 .segmented-control { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 2px; border-radius: 7px; background: var(--em-soft-fill-2); }
 .segmented-control.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .segmented-control button { padding: 5px 8px; border: 0; border-radius: 5px; background: transparent; color: var(--em-ink-3); cursor: pointer; font-size: 12px; font-weight: 600; }
+
+/* 实时文字（录音卡片内的流式预览区） */
+.live-transcript { display: grid; gap: 6px; margin-top: 10px; }
+.live-transcript-heading { display: flex; align-items: baseline; justify-content: space-between; }
+.live-transcript-heading strong { font-size: 12px; color: var(--em-ink); }
+.live-transcript-heading span { font-size: 10px; color: var(--em-ink-4); }
+.live-transcript-lines { display: grid; gap: 4px; max-height: 180px; overflow-y: auto; padding: 8px 10px; border: 1px solid var(--em-hairline-soft); border-radius: 8px; background: var(--em-panel); }
+.live-transcript-line { display: flex; gap: 8px; margin: 0; font-size: 12px; line-height: 1.5; }
+.live-transcript-line time { flex: 0 0 auto; color: var(--em-ink-4); font-variant-numeric: tabular-nums; font-size: 10px; padding-top: 2px; }
+.live-transcript-line span { color: var(--em-ink); }
+.live-transcript-line.provisional span { color: var(--em-ink-3); }
+.live-transcript-empty { margin: 0; color: var(--em-ink-4); font-size: 11px; text-align: center; padding: 6px 0; }
+.live-transcript-status { margin: 0; color: var(--em-ink-3); font-size: 11px; }
 .segmented-control button.selected { background: var(--em-panel); color: var(--em-ink); box-shadow: var(--em-shadow-sm); }
 .segmented-control button span { margin-left: 3px; color: var(--em-ink-4); font-size: 10px; }
 .import-strip { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 12px 0 8px; padding: 9px 0; border-bottom: 1px solid var(--em-hairline-soft); }

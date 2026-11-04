@@ -812,15 +812,31 @@ pub async fn request_microphone_permission(
 
 #[tauri::command]
 pub async fn start_recording(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     project_id: Option<String>,
 ) -> Result<RecordingState, String> {
     let recording = state.recording.clone();
     let library = state.library.clone();
-    tauri::async_runtime::spawn_blocking(move || recording.start(&library, project_id.as_deref()))
-        .await
-        .map_err(|_| "开始录音后台任务异常".to_owned())?
-        .map_err(|error| error.to_frontend())
+    let started =
+        tauri::async_runtime::spawn_blocking(move || recording.start(&library, project_id.as_deref()))
+            .await
+            .map_err(|_| "开始录音后台任务异常".to_owned())?
+            .map_err(|error| error.to_frontend())?;
+    // 录音已成立：启动实时文字线程（模型不可用只影响预览，不影响录音）。
+    let config = crate::live_transcript::config_from_library(&state.library);
+    if let Some(session_id) = started.session_id.clone() {
+        let wav_path = PathBuf::from(started.file_path.clone().unwrap_or_default());
+        crate::live_transcript::spawn(
+            app,
+            state.live_transcripts.clone(),
+            session_id,
+            "microphone",
+            wav_path,
+            config,
+        );
+    }
+    Ok(started)
 }
 
 #[tauri::command]
@@ -855,20 +871,32 @@ pub fn recording_levels(state: State<AppState>) -> Result<RecordingState, String
 pub async fn stop_recording(state: State<'_, AppState>) -> Result<StoppedRecording, String> {
     let recording = state.recording.clone();
     let library = state.library.clone();
-    tauri::async_runtime::spawn_blocking(move || recording.stop(&library))
+    // 无论停止成败都必须停掉实时线程：停止失败（比如没录到有效音频）时，
+    // 泄漏的线程会带着 574MB 模型每秒空转到应用退出。
+    let session_id = state.recording.state().session_id.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || recording.stop(&library))
         .await
-        .map_err(|_| "停止录音后台任务异常".to_owned())?
-        .map_err(|error| error.to_frontend())
+        .map_err(|_| "停止录音后台任务异常".to_owned())?;
+    if let Some(session_id) =
+        session_id.or_else(|| result.as_ref().ok().map(|stopped| stopped.session_id.clone()))
+    {
+        state.live_transcripts.stop_session(&session_id);
+    }
+    result.map_err(|error| error.to_frontend())
 }
 
 #[tauri::command]
 pub async fn cancel_recording(state: State<'_, AppState>) -> Result<(), String> {
     let recording = state.recording.clone();
     let library = state.library.clone();
-    tauri::async_runtime::spawn_blocking(move || recording.cancel(&library))
+    let session_id = state.recording.state().session_id.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || recording.cancel(&library))
         .await
-        .map_err(|_| "取消录音后台任务异常".to_owned())?
-        .map_err(|error| error.to_frontend())
+        .map_err(|_| "取消录音后台任务异常".to_owned())?;
+    if let Some(session_id) = session_id {
+        state.live_transcripts.stop_session(&session_id);
+    }
+    result.map_err(|error| error.to_frontend())
 }
 
 #[tauri::command]

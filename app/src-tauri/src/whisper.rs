@@ -71,6 +71,27 @@ impl WhisperSession {
         language: &str,
         initial_prompt: Option<&str>,
     ) -> AppResult<Vec<WhisperSegment>> {
+        self.transcribe_inner(audio, language, initial_prompt, false)
+    }
+
+    /// 实时预览专用：静音/无语音的窗口返回空结果而不是错误——
+    /// 「这一拍没话」不是失败，调用方需要据此推进边界而不是空转重试。
+    pub fn transcribe_allow_empty(
+        &self,
+        audio: &[f32],
+        language: &str,
+        initial_prompt: Option<&str>,
+    ) -> AppResult<Vec<WhisperSegment>> {
+        self.transcribe_inner(audio, language, initial_prompt, true)
+    }
+
+    fn transcribe_inner(
+        &self,
+        audio: &[f32],
+        language: &str,
+        initial_prompt: Option<&str>,
+        allow_empty: bool,
+    ) -> AppResult<Vec<WhisperSegment>> {
         use whisper_rs::{FullParams, SamplingStrategy};
         let mut state = self
             .context
@@ -119,7 +140,7 @@ impl WhisperSession {
                 text,
             });
         }
-        if segments.is_empty() {
+        if segments.is_empty() && !allow_empty {
             return Err(AppError::Import("Whisper 没有生成可用片段".into()));
         }
         Ok(segments)

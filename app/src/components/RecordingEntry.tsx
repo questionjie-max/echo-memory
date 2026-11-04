@@ -11,13 +11,23 @@
  * 继续或改走麦克风。
  */
 import { useEffect, useRef, useState } from "react";
+import { isTauri } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import type {
   CaptureSource,
+  LiveStatusPayload,
+  LiveTickPayload,
   MicrophonePermission,
   RecoverableRecording,
   RecordingState,
   SystemAudioPermission,
 } from "../shared/types";
+import {
+  applyLiveTick,
+  emptyLiveView,
+  formatSegmentTime,
+  type LiveTranscriptView,
+} from "../lib/liveTranscript";
 import {
   cancelRecording,
   cancelSystemRecording,
@@ -115,6 +125,8 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [captureSource, setCaptureSource] = useState<CaptureSource>("microphone");
+  const [liveView, setLiveView] = useState<LiveTranscriptView>(emptyLiveView());
+  const [liveMessage, setLiveMessage] = useState("");
 
   const micActive = isActiveState(micState);
   const sysActive = isActiveState(sysState);
@@ -125,6 +137,50 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
 
   // 轮询代际：停止/放弃后，在途的电平快照不得把界面拉回「正在记录」。
   const pollGeneration = useRef(0);
+  // 实时文字：事件订阅一次，会话切换时清空视图；旧会话的迟到 tick 一律丢弃。
+  const liveSessionRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const sessionId = state?.sessionId ?? null;
+    if (liveSessionRef.current !== sessionId) {
+      liveSessionRef.current = sessionId;
+      setLiveView(emptyLiveView());
+      setLiveMessage("");
+    }
+  }, [state?.sessionId]);
+
+  useEffect(() => {
+    if (!active) {
+      setLiveView(emptyLiveView());
+      setLiveMessage("");
+    }
+  }, [active]);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    let cancelled = false;
+    let unlisten: (() => void) | null = null;
+    void listen<LiveTickPayload | LiveStatusPayload>("live-transcript", (event) => {
+      const payload = event.payload;
+      if ("available" in payload) {
+        // 状态事件也按会话过滤：旧会话线程退出前的失败消息不串台到新会话。
+        if (payload.sessionId !== liveSessionRef.current) return;
+        setLiveMessage(payload.available ? "" : payload.message);
+        return;
+      }
+      if (payload.sessionId !== liveSessionRef.current) return;
+      // 收到新的一拍说明实时链路活着：清掉上一拍的瞬时失败提示。
+      setLiveMessage("");
+      setLiveView((view) => applyLiveTick(view, payload));
+    }).then((dispose) => {
+      if (cancelled) dispose();
+      else unlisten = dispose;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
 
   async function refreshRecoverable() {
     try {
@@ -415,6 +471,30 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
         <>
           <div className="recording-meter" aria-label="输入电平">
             <span style={{ width: levelWidth(state?.peakLevelDb ?? state?.inputLevelDb) }} />
+          </div>
+          <div className="live-transcript" aria-label="实时文字">
+            <div className="live-transcript-heading">
+              <strong>实时文字</strong>
+              <span>边录边出，停止后以全量转写为准</span>
+            </div>
+            <div className="live-transcript-lines">
+              {liveView.finals.length === 0 && liveView.provisional.length === 0 && (
+                <p className="live-transcript-empty">说话后这里会出现带时间戳的文字。</p>
+              )}
+              {liveView.finals.map((segment) => (
+                <p className="live-transcript-line" key={segment.startMs}>
+                  <time>{formatSegmentTime(segment.startMs)}</time>
+                  <span>{segment.text}</span>
+                </p>
+              ))}
+              {liveView.provisional.map((segment) => (
+                <p className="live-transcript-line provisional" key={`p-${segment.startMs}`}>
+                  <time>{formatSegmentTime(segment.startMs)}</time>
+                  <span>{segment.text}…</span>
+                </p>
+              ))}
+            </div>
+            {liveMessage && <p className="live-transcript-status" role="status">{liveMessage}</p>}
           </div>
           <div className="recording-entry-actions">
             <button type="button" className="secondary-button" onClick={() => void pauseOrResume()} disabled={busy}>

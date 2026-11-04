@@ -79,6 +79,32 @@ export type SystemAudioPermission =
 /** 录音来源：麦克风、系统内放声。 */
 export type CaptureSource = "microphone" | "system";
 
+/** 实时文字的一句（会话绝对时间轴，毫秒）。 */
+export interface LiveSegment {
+  startMs: number;
+  endMs: number;
+  text: string;
+}
+
+/** 实时文字每拍推送：newFinal 新定稿（含被接续合并改写后重发的尾句），provisionalTail 压线句。 */
+export interface LiveTickPayload {
+  sessionId: string;
+  source: string;
+  newFinal: LiveSegment[];
+  provisionalTail: LiveSegment[];
+  committedMs: number;
+  capturedMs: number;
+  sentAtUnixMs: number;
+}
+
+/** 实时文字可用性状态（模型不可用等）。 */
+export interface LiveStatusPayload {
+  sessionId: string;
+  source: string;
+  available: boolean;
+  message: string;
+}
+
 export interface Project {
   id: string; // UUID
   name: string;

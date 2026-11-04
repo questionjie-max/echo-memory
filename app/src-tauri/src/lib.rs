@@ -16,6 +16,7 @@ pub mod external_asr;
 pub mod inbox;
 pub mod knowledge;
 pub mod library;
+pub mod live_transcript;
 pub mod memory;
 pub mod memory_index;
 pub mod record_commands;
