@@ -18,6 +18,7 @@ mod hotwords;
 mod inbox;
 mod knowledge;
 mod mcp;
+mod minutes;
 mod memory_snapshots;
 mod processing_jobs;
 mod projects;
@@ -32,6 +33,8 @@ mod transcripts;
 pub use processing_jobs::{INTERRUPTED_JOB_ERROR, INTERRUPTED_RESUME_MAX_ATTEMPTS};
 /// 录音会话行类型被命令层用于按来源分发恢复/放弃（麦克风 vs 系统内放声）。
 pub use recording_sessions::RecordingSessionRow;
+/// 纪要条目行类型被块4 确认命令与 MCP 侧已确认记忆读取使用。
+pub use minutes::MinutesItemRow;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]

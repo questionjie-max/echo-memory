@@ -105,6 +105,58 @@ export interface LiveStatusPayload {
   message: string;
 }
 
+/* ---------- 会议纪要（v1.1 块3/块4） ---------- */
+
+export type MinutesStatus = "pending" | "generating" | "completed" | "failed";
+
+export type MinutesItemStatus = "provisional" | "confirmed";
+
+export interface MinutesEvidence {
+  startMs: number;
+  endMs: number;
+  quoteText: string;
+}
+
+export interface MinutesItem {
+  id: string;
+  kind: "conclusion" | "action";
+  text: string;
+  owner: string | null;
+  evidence: MinutesEvidence;
+}
+
+export interface MinutesTopic {
+  id: string;
+  title: string;
+  summary: string;
+  startMs: number | null;
+  endMs: number | null;
+}
+
+export interface GlossaryEntry {
+  term: string;
+  variants: string[];
+}
+
+export interface MinutesDocument {
+  topics: MinutesTopic[];
+  conclusions: MinutesItem[];
+  actionItems: MinutesItem[];
+  glossary: GlossaryEntry[];
+  droppedUnverifiable: number;
+}
+
+export interface MinutesView {
+  recordId: string;
+  status: MinutesStatus;
+  document: MinutesDocument | null;
+  itemStatuses: [string, MinutesItemStatus][];
+  provider: string | null;
+  model: string | null;
+  error: string | null;
+  generatedAt: string | null;
+}
+
 export interface Project {
   id: string; // UUID
   name: string;

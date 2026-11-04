@@ -2135,6 +2135,14 @@ fn run_transcription_with_engine(
         }
         return Err(error);
     }
+    // v1.1 块3：内嵌 whisper.cpp 与 whisperX 两条路径在此汇合（外部 ASR 在
+    // run_external_transcription 里提前返回、有自己的同款钩子）。转写成功 →
+    // 纪要自动入队（后台线程），失败只记 minutes.failed 可重试，
+    // 绝不阻塞/影响录音与逐字稿本身。
+    crate::minutes::maybe_autogenerate_minutes(
+        library.root().to_path_buf(),
+        record_id.to_owned(),
+    );
     Ok(())
 }
 
@@ -2237,6 +2245,12 @@ fn run_external_transcription(
         }
         return Err(error);
     }
+    // v1.1 块3：转写成功 → 纪要自动入队（后台线程）。生成失败只记 minutes
+    // 的 failed 状态可重试，绝不阻塞/影响录音与逐字稿本身（录音先入库）。
+    crate::minutes::maybe_autogenerate_minutes(
+        library.root().to_path_buf(),
+        record_id.to_owned(),
+    );
     Ok(())
 }
 

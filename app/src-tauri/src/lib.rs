@@ -19,6 +19,7 @@ pub mod library;
 pub mod live_transcript;
 pub mod memory;
 pub mod memory_index;
+pub mod minutes;
 pub mod record_commands;
 pub mod recording;
 pub mod state;
@@ -124,6 +125,8 @@ pub fn run() {
             system_audio::stop_system_recording,
             system_audio::cancel_system_recording,
             system_audio::get_system_recording_state,
+            minutes::get_record_minutes,
+            minutes::generate_minutes,
             commands::list_jobs,
             commands::import_audio,
             commands::import_document,

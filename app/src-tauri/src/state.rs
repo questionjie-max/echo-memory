@@ -145,6 +145,8 @@ impl AppState {
         repository.recover_interrupted_knowledge_indexes()?;
         repository.recover_interrupted_processing_jobs()?;
         repository.recover_interrupted_recording_sessions()?;
+        // 崩溃遗留的 generating 纪要复位为 failed（可重试），避免永久卡死。
+        let _ = repository.recover_stale_minutes_generating();
         // 启动时静默清理一次可再生的中间文件（崩溃残留的预处理 WAV 等）。
         // 失败不阻塞启动：清理本来只是防堆积，用户还可以在设置里手动清理。
         let _ = crate::storage::run_cleanup(&library);

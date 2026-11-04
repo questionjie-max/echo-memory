@@ -54,6 +54,7 @@ import type {
   StoppedRecording,
   RecoverableRecording,
   SystemAudioPermission,
+  MinutesView,
 } from "../shared/types";
 
 export function createProject(name: string): Promise<Project> {
@@ -360,6 +361,16 @@ export function cancelSystemRecording(): Promise<void> {
 
 export function getSystemRecordingState(): Promise<RecordingState> {
   return invoke<RecordingState>("get_system_recording_state");
+}
+
+/* ---------- 会议纪要（v1.1 块3/块4） ---------- */
+
+export function getRecordMinutes(recordId: string): Promise<MinutesView | null> {
+  return invoke<MinutesView | null>("get_record_minutes", { recordId });
+}
+
+export function generateMinutes(recordId: string): Promise<MinutesView> {
+  return invoke<MinutesView>("generate_minutes", { recordId });
 }
 
 export function listTranscriptSegments(recordId: string): Promise<TranscriptSegment[]> {

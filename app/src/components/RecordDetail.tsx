@@ -1,6 +1,7 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { PauseIcon, PlayIcon, SkipBackIcon, SkipForwardIcon } from "./icons";
+import MinutesPanel from "./MinutesPanel";
 import { useEffect, useRef, useState } from "react";
 import type { RecordNavigation } from "../App";
 import type {
@@ -50,7 +51,7 @@ interface Props {
   onChanged: (record?: RecordBrief) => void;
 }
 
-type DetailTab = "transcript" | "analysis";
+type DetailTab = "transcript" | "analysis" | "minutes";
 type AudioLoadState = "loading" | "ready" | "error";
 
 const TRANSCRIPTION_LANGUAGES = [
@@ -702,12 +703,17 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
       <div className="detail-tabs" role="tablist" aria-label={isDocument ? "文档内容" : "录音内容"}>
         <button type="button" role="tab" aria-selected={activeTab === "transcript"} className={activeTab === "transcript" ? "selected" : ""} onClick={() => setActiveTab("transcript")}>{isDocument ? "文档正文" : "逐字稿"}</button>
         <button type="button" role="tab" aria-selected={activeTab === "analysis"} className={activeTab === "analysis" ? "selected" : ""} onClick={() => setActiveTab("analysis")}>内容分析</button>
+        {!isDocument && (
+          <button type="button" role="tab" aria-selected={activeTab === "minutes"} className={activeTab === "minutes" ? "selected" : ""} onClick={() => setActiveTab("minutes")}>会议纪要</button>
+        )}
       </div>
 
       {error && <p className="detail-error">{error}</p>}
 
       <div className="detail-content" ref={detailContent}>
-        {activeTab === "transcript" ? (
+        {activeTab === "minutes" && !isDocument ? (
+          <MinutesPanel recordId={currentRecord.id} onSeek={(ms) => seek(ms)} />
+        ) : activeTab === "transcript" ? (
           segments.length === 0 ? (
             <div className="detail-placeholder">
               <p>{isDocument ? "文档正文为空或解析失败，请重新导入有效文档。" : isProcessing(currentRecord.status) ? "正在本机转写，可继续使用其他功能。" : currentRecord.status === "failed" ? "本地转写失败，音频仍已安全保存。" : "尚未生成逐字稿。"}</p>
