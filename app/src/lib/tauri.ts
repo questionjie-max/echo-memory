@@ -373,6 +373,13 @@ export function generateMinutes(recordId: string): Promise<MinutesView> {
   return invoke<MinutesView>("generate_minutes", { recordId });
 }
 
+export function setMinutesItemStatus(
+  itemId: string,
+  status: "provisional" | "confirmed",
+): Promise<"provisional" | "confirmed"> {
+  return invoke<"provisional" | "confirmed">("set_minutes_item_status", { itemId, status });
+}
+
 export function listTranscriptSegments(recordId: string): Promise<TranscriptSegment[]> {
   return invoke<TranscriptSegment[]>("list_transcript_segments", { recordId });
 }

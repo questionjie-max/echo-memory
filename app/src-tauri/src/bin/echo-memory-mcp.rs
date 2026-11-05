@@ -46,7 +46,7 @@ fn tools() -> Vec<Value> {
         ("list_projects", "List local projects.", json!({})),
         ("get_project_context", "List recent records for a project.", json!({"project_id":{"type":"string"}})),
         ("list_action_items", "List local action items. Alpha currently returns no external writes.", json!({"project_id":{"type":"string"},"status":{"type":"string"}})),
-        ("get_my_context", "Get the user's L3 profile summary and recently confirmed memory items (read-only personal context).", json!({})),
+        ("get_my_context", "Get the user's L3 profile summary, recently confirmed memory items, and minutes conclusions/action items the user explicitly confirmed (read-only personal context).", json!({})),
     ].into_iter().map(|(name, description, properties)| json!({"name":name,"description":description,"inputSchema":{"type":"object","properties":properties}})).collect()
 }
 
@@ -161,7 +161,11 @@ fn call_tool(library: &ManagedLibrary, params: &Value, id: Value) -> Value {
                 })
                 .unwrap_or(Value::Null);
             let confirmed = repo.confirmed_memory_items(20).map_err(|e| e.to_string())?;
-            Ok(json!({"profile": profile, "confirmedItems": confirmed}))
+            // v1.1 块4：会议纪要已确认条目（同样只读 confirmed，未确认不可见）。
+            let minutes_items = repo
+                .confirmed_minutes_memory_entries(20)
+                .map_err(|e| e.to_string())?;
+            Ok(json!({"profile": profile, "confirmedItems": confirmed, "minutesItems": minutes_items}))
         }
         _ => Err("unknown tool".to_owned()),
     })();

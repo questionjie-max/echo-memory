@@ -256,12 +256,16 @@ impl LibraryRepository {
     }
 
     /// 某记录下全部已确认条目（MCP get_my_context 只读这里）。
+    /// 归档记录的条目一并排除：与 search_records 的 archived_at 过滤对齐，
+    /// 归档动作同时把对应记忆从 Agent 视野收回。
     pub fn list_confirmed_minutes_items(&self, limit: usize) -> AppResult<Vec<MinutesItemRow>> {
-        let connection = self.connect()?;
+        let mut connection = self.connect()?;
         let mut statement = connection
             .prepare(
-                "SELECT id, minutes_id, record_id, kind, text, owner_text, evidence_json, status, updated_at
-                 FROM minutes_items WHERE status = 'confirmed' ORDER BY updated_at DESC LIMIT ?1",
+                "SELECT minutes_items.id, minutes_items.minutes_id, minutes_items.record_id, minutes_items.kind, minutes_items.text, minutes_items.owner_text, minutes_items.evidence_json, minutes_items.status, minutes_items.updated_at
+                 FROM minutes_items JOIN records ON records.id = minutes_items.record_id
+                 WHERE minutes_items.status = 'confirmed' AND records.archived_at IS NULL
+                 ORDER BY minutes_items.updated_at DESC LIMIT ?1",
             )
             .map_err(|error| AppError::Invalid(format!("读取已确认条目失败：{error}")))?;
         let rows = statement

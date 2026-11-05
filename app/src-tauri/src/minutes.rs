@@ -747,6 +747,28 @@ pub async fn generate_minutes(
         .ok_or_else(|| "纪要初始化失败".to_owned().into())
 }
 
+/// 条目两态切换（块4）：确认后进入记忆库（MCP get_my_context 只读
+/// confirmed 条目）；未确认的对 MCP 完全不可见。
+#[tauri::command]
+pub fn set_minutes_item_status(
+    state: tauri::State<'_, crate::state::AppState>,
+    item_id: String,
+    status: MinutesItemStatus,
+) -> Result<MinutesItemStatus, String> {
+    state
+        .library
+        .repository()
+        .set_minutes_item_status(&item_id, status)
+        .map(|row| {
+            if row.status == "confirmed" {
+                MinutesItemStatus::Confirmed
+            } else {
+                MinutesItemStatus::Provisional
+            }
+        })
+        .map_err(|error| error.to_frontend())
+}
+
 /// 转写完成后自动入队：只在 minutes 尚无任何行时触发一次。
 /// 生成失败记 failed 状态，录音与逐字稿不受任何影响。
 pub fn maybe_autogenerate_minutes(library_root: std::path::PathBuf, record_id: String) {
@@ -1114,6 +1136,46 @@ mod tests {
             .set_minutes_item_status(&target.id, MinutesItemStatus::Provisional)
             .unwrap();
         assert!(repository.list_confirmed_minutes_items(100).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn mcp_memory_entries_only_expose_confirmed_with_provenance() {
+        let (library, root) = test_library();
+        let record_id = seed_record_with_transcript(&library);
+        let repository = library.repository();
+        repository.ensure_minutes_pending(&record_id).unwrap();
+        repository
+            .save_minutes_document(&record_id, "fake", "fake", &verified_document())
+            .unwrap();
+        // 未确认：MCP 记忆段必须为空（隐私红线：未确认的 Agent 读不到）。
+        assert!(repository
+            .confirmed_minutes_memory_entries(20)
+            .unwrap()
+            .is_empty());
+
+        // 确认一条：出现在 MCP 记忆段，且带完整溯源坐标。
+        let items = repository.list_minutes_items(&record_id).unwrap();
+        let target = items.iter().find(|i| i.kind == "conclusion").unwrap();
+        repository
+            .set_minutes_item_status(&target.id, MinutesItemStatus::Confirmed)
+            .unwrap();
+        let entries = repository.confirmed_minutes_memory_entries(20).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].item_id, target.id);
+        assert_eq!(entries[0].record_id, record_id);
+        assert_eq!(entries[0].record_title, "测试会议");
+        assert!(entries[0].end_ms > entries[0].start_ms);
+        assert!(!entries[0].quote_text.is_empty());
+
+        // 取消确认：再次不可见。
+        repository
+            .set_minutes_item_status(&target.id, MinutesItemStatus::Provisional)
+            .unwrap();
+        assert!(repository
+            .confirmed_minutes_memory_entries(20)
+            .unwrap()
+            .is_empty());
         let _ = std::fs::remove_dir_all(root);
     }
 

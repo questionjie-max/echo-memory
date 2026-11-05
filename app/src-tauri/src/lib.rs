@@ -127,6 +127,7 @@ pub fn run() {
             system_audio::get_system_recording_state,
             minutes::get_record_minutes,
             minutes::generate_minutes,
+            minutes::set_minutes_item_status,
             commands::list_jobs,
             commands::import_audio,
             commands::import_document,

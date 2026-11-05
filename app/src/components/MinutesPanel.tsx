@@ -9,8 +9,8 @@
  * generating 时自动轮询，完成后停止。
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { MinutesItem, MinutesView } from "../shared/types";
-import { generateMinutes, getRecordMinutes } from "../lib/tauri";
+import type { MinutesItem, MinutesItemStatus, MinutesView } from "../shared/types";
+import { generateMinutes, getRecordMinutes, setMinutesItemStatus } from "../lib/tauri";
 
 interface Props {
   recordId: string;
@@ -91,7 +91,28 @@ export default function MinutesPanel({ recordId, onSeek }: Props) {
     }
   }
 
-  function renderItem(item: MinutesItem) {
+  async function toggleItem(item: MinutesItem, current: MinutesItemStatus) {
+    const next: MinutesItemStatus = current === "confirmed" ? "provisional" : "confirmed";
+    setError("");
+    try {
+      const confirmed = await setMinutesItemStatus(item.id, next);
+      setView((current) =>
+        current
+          ? {
+              ...current,
+              itemStatuses: current.itemStatuses.map(([id, status]) =>
+                id === item.id ? [id, confirmed] : [id, status],
+              ),
+            }
+          : current,
+      );
+    } catch (reason) {
+      setError(displayError(reason));
+    }
+  }
+
+  function renderItem(item: MinutesItem, status: MinutesItemStatus | undefined) {
+    const confirmed = status === "confirmed";
     return (
       <li className="minutes-item" key={item.id}>
         <button
@@ -103,15 +124,43 @@ export default function MinutesPanel({ recordId, onSeek }: Props) {
           {formatTimestamp(item.evidence.startMs)}
         </button>
         <div className="minutes-item-body">
-          <p>{item.text}</p>
+          <p>
+            {item.text}
+            <span className={`minutes-item-state${confirmed ? " confirmed" : ""}`}>
+              {confirmed ? "已确认" : "暂定"}
+            </span>
+          </p>
           <blockquote>{item.evidence.quoteText}</blockquote>
           {item.owner && <span className="minutes-owner">负责人：{item.owner}</span>}
+        </div>
+        <div className="minutes-item-status">
+          <button
+            type="button"
+            className={confirmed ? "secondary-button" : "link-button"}
+            // 生成窗口期的确认会随全量重建被静默丢弃（回到暂定），
+            // 直接禁用而不是让用户做一个注定丢失的操作。
+            disabled={busy || view?.status === "generating"}
+            title={
+              view?.status === "generating"
+                ? "纪要正在重新生成，生成完成后才能确认"
+                : confirmed
+                  ? "从记忆库撤回这条内容"
+                  : "确认后这条内容才会进入记忆库，可被 MCP 读取"
+            }
+            onClick={() => void toggleItem(item, status ?? "provisional")}
+          >
+            {confirmed ? "撤回" : "确认入记忆"}
+          </button>
         </div>
       </li>
     );
   }
 
   const document = view?.document ?? null;
+  const statusOf = (id: string): MinutesItemStatus | undefined => {
+    const match = view?.itemStatuses.find(([itemId]) => itemId === id);
+    return match?.[1];
+  };
   const hasContent =
     document !== null &&
     (document.topics.length > 0 ||
@@ -180,14 +229,18 @@ export default function MinutesPanel({ recordId, onSeek }: Props) {
           )}
           {document.conclusions.length > 0 && (
             <section>
-              <h4>结论（{document.conclusions.length}）</h4>
-              <ul className="minutes-list">{document.conclusions.map(renderItem)}</ul>
+              <h4>结论（{document.conclusions.length}）——未确认的不会进入记忆库</h4>
+              <ul className="minutes-list">
+                {document.conclusions.map((item) => renderItem(item, statusOf(item.id)))}
+              </ul>
             </section>
           )}
           {document.actionItems.length > 0 && (
             <section>
-              <h4>待办（{document.actionItems.length}）</h4>
-              <ul className="minutes-list">{document.actionItems.map(renderItem)}</ul>
+              <h4>待办（{document.actionItems.length}）——未确认的不会进入记忆库</h4>
+              <ul className="minutes-list">
+                {document.actionItems.map((item) => renderItem(item, statusOf(item.id)))}
+              </ul>
             </section>
           )}
           {document.glossary.length > 0 && (
