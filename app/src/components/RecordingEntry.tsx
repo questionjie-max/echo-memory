@@ -15,6 +15,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type {
   CaptureSource,
+  LiveMinutesEventPayload,
   LiveStatusPayload,
   LiveTickPayload,
   MicrophonePermission,
@@ -127,6 +128,7 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
   const [captureSource, setCaptureSource] = useState<CaptureSource>("microphone");
   const [liveView, setLiveView] = useState<LiveTranscriptView>(emptyLiveView());
   const [liveMessage, setLiveMessage] = useState("");
+  const [liveMinutes, setLiveMinutes] = useState<LiveMinutesEventPayload | null>(null);
 
   const micActive = isActiveState(micState);
   const sysActive = isActiveState(sysState);
@@ -146,6 +148,7 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
       liveSessionRef.current = sessionId;
       setLiveView(emptyLiveView());
       setLiveMessage("");
+      setLiveMinutes(null);
     }
   }, [state?.sessionId]);
 
@@ -153,32 +156,46 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
     if (!active) {
       setLiveView(emptyLiveView());
       setLiveMessage("");
+      // 停止后增量纪要整体丢弃：权威来源是停止后的事后纪要（无冲突残留）。
+      setLiveMinutes(null);
     }
   }, [active]);
 
   useEffect(() => {
     if (!isTauri()) return;
     let cancelled = false;
-    let unlisten: (() => void) | null = null;
-    void listen<LiveTickPayload | LiveStatusPayload>("live-transcript", (event) => {
-      const payload = event.payload;
-      if ("available" in payload) {
-        // 状态事件也按会话过滤：旧会话线程退出前的失败消息不串台到新会话。
+    const disposers: Array<() => void> = [];
+    const track = (promise: Promise<() => void>) => {
+      void promise.then((dispose) => {
+        if (cancelled) dispose();
+        else disposers.push(dispose);
+      });
+    };
+    track(
+      listen<LiveTickPayload | LiveStatusPayload>("live-transcript", (event) => {
+        const payload = event.payload;
+        if ("available" in payload) {
+          // 状态事件也按会话过滤：旧会话线程退出前的失败消息不串台到新会话。
+          if (payload.sessionId !== liveSessionRef.current) return;
+          setLiveMessage(payload.available ? "" : payload.message);
+          return;
+        }
         if (payload.sessionId !== liveSessionRef.current) return;
-        setLiveMessage(payload.available ? "" : payload.message);
-        return;
-      }
-      if (payload.sessionId !== liveSessionRef.current) return;
-      // 收到新的一拍说明实时链路活着：清掉上一拍的瞬时失败提示。
-      setLiveMessage("");
-      setLiveView((view) => applyLiveTick(view, payload));
-    }).then((dispose) => {
-      if (cancelled) dispose();
-      else unlisten = dispose;
-    });
+        // 收到新的一拍说明实时链路活着：清掉上一拍的瞬时失败提示。
+        setLiveMessage("");
+        setLiveView((view) => applyLiveTick(view, payload));
+      }),
+    );
+    track(
+      listen<LiveMinutesEventPayload>("live-minutes", (event) => {
+        const payload = event.payload;
+        if (payload.sessionId !== liveSessionRef.current) return;
+        setLiveMinutes(payload);
+      }),
+    );
     return () => {
       cancelled = true;
-      unlisten?.();
+      disposers.forEach((dispose) => dispose());
     };
   }, []);
 
@@ -496,6 +513,47 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
             </div>
             {liveMessage && <p className="live-transcript-status" role="status">{liveMessage}</p>}
           </div>
+          {liveMinutes && (
+            <div className="live-minutes" aria-label="实时纪要">
+              <div className="live-minutes-heading">
+                <strong>实时纪要（暂定，以事后为准）</strong>
+                <span>第 {liveMinutes.runIndex} 次生长</span>
+              </div>
+              <div className="live-minutes-body">
+                {liveMinutes.document.conclusions.length === 0 &&
+                liveMinutes.document.actionItems.length === 0 &&
+                liveMinutes.document.topics.length === 0 ? (
+                  <p className="live-transcript-empty">还在听，结论与待办会在这里逐步浮现。</p>
+                ) : (
+                  <>
+                    {liveMinutes.document.topics.slice(0, 3).map((topic) => (
+                      <p className="live-minutes-topic" key={topic.id}>
+                        <strong>{topic.title}</strong>
+                        {topic.summary && <span> — {topic.summary}</span>}
+                      </p>
+                    ))}
+                    <ul className="live-minutes-list">
+                      {liveMinutes.document.conclusions.map((item) => (
+                        <li key={item.id}>
+                          <time>{formatSegmentTime(item.evidence.startMs)}</time>
+                          <span>{item.text}</span>
+                        </li>
+                      ))}
+                      {liveMinutes.document.actionItems.map((item) => (
+                        <li key={item.id} className="todo">
+                          <time>{formatSegmentTime(item.evidence.startMs)}</time>
+                          <span>
+                            待办：{item.text}
+                            {item.owner ? `（${item.owner}）` : ""}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
           <div className="recording-entry-actions">
             <button type="button" className="secondary-button" onClick={() => void pauseOrResume()} disabled={busy}>
               {state?.status === "paused" ? "继续" : "暂停"}

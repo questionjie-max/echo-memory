@@ -157,6 +157,17 @@ export interface MinutesView {
   generatedAt: string | null;
 }
 
+/** 实时增量纪要事件（块5）：document 为完整覆盖，前端整体替换。 */
+export interface LiveMinutesEventPayload {
+  sessionId: string;
+  source: string;
+  document: MinutesDocument;
+  /** 本轮因无法溯源被丢弃的条目数（fail-closed 透明度）。 */
+  droppedUnverifiable: number;
+  generatedAtUnixMs: number;
+  runIndex: number;
+}
+
 export interface Project {
   id: string; // UUID
   name: string;

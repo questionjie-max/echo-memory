@@ -265,6 +265,11 @@ impl LiveTranscriptHandle {
     pub fn is_stopped(&self) -> bool {
         self.stop.load(Ordering::SeqCst)
     }
+
+    /// 增量纪要引擎共享同一停止信号（同一会话一起停）。
+    pub(crate) fn shared_stop(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.stop)
+    }
 }
 
 /// 会话级注册表：录音开始时登记、停止/放弃时摘除。
@@ -291,6 +296,9 @@ impl LiveTranscriptManager {
                 handle.stop();
             }
         }
+        // 会话结束即清实时缓冲：否则下一场录音的增量纪要引擎会把上一场的
+        // 逐字稿当成当场内容跑模型（跨会话内容污染）。
+        self.buffer.clear();
     }
 
     pub fn active_session_ids(&self) -> Vec<String> {
@@ -866,6 +874,24 @@ mod tests {
         trim_samples(&mut samples2, &mut base2, 30_000);
         assert_eq!(base2, 0);
         assert_eq!(samples2.len(), 40 * 16_000);
+    }
+
+    #[test]
+    fn stop_session_clears_buffer_against_cross_session_pollution() {
+        // 回归（块5 审核 P1-1）：停止后缓冲必须清空，否则下一场录音的
+        // 增量引擎会把上一场内容当成当场内容跑模型并推给前端。
+        let manager = LiveTranscriptManager::default();
+        manager.buffer().replace_all(&[LiveSegment {
+            start_ms: 0,
+            end_ms: 1_000,
+            text: "上一场会议的内容".to_owned(),
+        }]);
+        assert_eq!(manager.buffer().snapshot().len(), 1);
+        manager.stop_session("不存在的会话"); // 清缓冲是会话结束语义，与具体 handle 无关
+        assert!(
+            manager.buffer().snapshot().is_empty(),
+            "停止后实时缓冲必须为空"
+        );
     }
 
     #[test]

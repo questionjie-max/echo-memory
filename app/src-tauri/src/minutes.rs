@@ -193,7 +193,7 @@ fn merge_document(merged: &mut MinutesDocument, document: MinutesDocument) {
 }
 
 /// 纪要 JSON 的宽松中间表示（LLM 输出直接反序列化目标）。
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case", default)]
 pub struct MinutesDraftJson {
     topics: Vec<MinutesTopicDraft>,
@@ -202,7 +202,8 @@ pub struct MinutesDraftJson {
     glossary: Vec<GlossaryDraft>,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct MinutesTopicDraft {
     title: String,
     summary: String,
@@ -210,7 +211,8 @@ pub struct MinutesTopicDraft {
     end_ms: Option<i64>,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct MinutesItemDraft {
     text: String,
     #[serde(default)]
@@ -220,7 +222,8 @@ pub struct MinutesItemDraft {
     end_ms: Option<i64>,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct GlossaryDraft {
     term: String,
     #[serde(default)]
@@ -539,6 +542,99 @@ pub fn minutes_document_is_fully_linkable(document: &MinutesDocument) -> bool {
 
 /* ---------------- 生成编排 ---------------- */
 
+/// 纪要生成通道（事后与实时增量共用）：云端需 enabled + 隐私同意 + Key，
+/// 否则本机 Ollama。判定失败给可操作的错误。
+pub struct MinutesGenerator {
+    inner: MinutesGeneratorKind,
+    model: String,
+}
+
+enum MinutesGeneratorKind {
+    Ollama(crate::analysis::OllamaAdapter),
+    External(crate::memory::OpenAiCompatibleClient),
+}
+
+impl MinutesGenerator {
+    pub fn detect(library: &ManagedLibrary) -> AppResult<Self> {
+        let repository = library.repository();
+        let ext_settings = repository.external_ai_settings(false, false)?;
+        if ext_settings.enabled && ext_settings.privacy_consent_at.is_some() {
+            let settings = crate::external_ai_gate::require_external_ai_consent(library)?;
+            let api_key = crate::external_ai_gate::get_api_key()?.ok_or_else(|| {
+                AppError::Invalid("请先配置第三方文本理解 API Key".to_owned())
+            })?;
+            let model = settings.model.clone();
+            return Ok(Self {
+                inner: MinutesGeneratorKind::External(crate::memory::OpenAiCompatibleClient::new(
+                    &settings.base_url,
+                    &settings.model,
+                    &api_key,
+                )?),
+                model,
+            });
+        }
+        let model = repository.knowledge_settings()?.analysis_model;
+        Ok(Self {
+            inner: MinutesGeneratorKind::Ollama(crate::analysis::OllamaAdapter::detect(&model)?),
+            model,
+        })
+    }
+
+    pub fn model_name(&self) -> &str {
+        &self.model
+    }
+
+    pub fn provider_name(&self) -> &'static str {
+        match self.inner {
+            MinutesGeneratorKind::Ollama(_) => "ollama",
+            MinutesGeneratorKind::External(_) => "external-openai-compatible",
+        }
+    }
+
+    pub fn complete(&self, system: &str, prompt: &str) -> AppResult<String> {
+        match &self.inner {
+            MinutesGeneratorKind::Ollama(adapter) => adapter.raw_text(prompt),
+            MinutesGeneratorKind::External(client) => client.complete_text(system, prompt),
+        }
+    }
+
+    /// 纪要专用：输出严格 JSON。Ollama 走 /api/generate + schema（结构化输出，
+    /// 从根上杜绝「模型回了散文」）；外部通道靠强提示词 + 宽松解析（容忍围栏）。
+    pub fn generate_minutes_json(&self, prompt: &str) -> AppResult<MinutesDraftJson> {
+        match &self.inner {
+            MinutesGeneratorKind::Ollama(adapter) => {
+                let value = adapter.raw_generate(prompt, minutes_json_schema(), 4096)?;
+                let text = serde_json::to_string(&value)
+                    .map_err(|error| AppError::Invalid(format!("纪要序列化失败：{error}")))?;
+                parse_minutes_draft(&text)
+            }
+            MinutesGeneratorKind::External(client) => {
+                let raw = client.complete_text(EXTERNAL_MINUTES_SYSTEM, prompt)?;
+                parse_minutes_draft(&raw)
+            }
+        }
+    }
+}
+
+/// Ollama 结构化输出的 JSON schema（宽松：只约束形状，不约束内容）。
+/// 四个数组标 required：模型返回 `{}` 形状时也能通过 schema，
+/// 但解析后是空文档——是否可用由调用方按业务判断，这里保证形状诚实。
+fn minutes_json_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "topics": {"type": "array", "items": {"type": "object"}},
+            "conclusions": {"type": "array", "items": {"type": "object"}},
+            "action_items": {"type": "array", "items": {"type": "object"}},
+            "glossary": {"type": "array", "items": {"type": "object"}}
+        },
+        "required": ["topics", "conclusions", "action_items", "glossary"]
+    })
+}
+
+pub const EXTERNAL_MINUTES_SYSTEM: &str =
+    "你是会议纪要整理器。仅返回约定的简体中文 JSON，不要使用 Markdown 或额外说明。";
+
 pub struct GenerationOutcome {
     pub provider: String,
     pub model: String,
@@ -595,44 +691,22 @@ pub fn run_minutes_generation(library: &ManagedLibrary, record_id: &str) -> AppR
         .get_record(record_id)
         .map(|record| record.audio_duration_ms)
         .unwrap_or(0);
+    let generator = MinutesGenerator::detect(library)?;
     let outcome = (|| -> AppResult<GenerationOutcome> {
-        // 通道判定与分析链路同款：走云端当且仅当理解整理已启用 + 隐私同意已给
-        // + Key 可用；纪要同样会把转写文本发给模型，隐私门禁一个都不能少。
-        let ext_settings = repository.external_ai_settings(false, false)?;
-        if ext_settings.enabled && ext_settings.privacy_consent_at.is_some() {
-            let settings = crate::external_ai_gate::require_external_ai_consent(library)?;
-            let api_key = crate::external_ai_gate::get_api_key()?.ok_or_else(|| {
-                AppError::Invalid("请先配置第三方文本理解 API Key".to_owned())
-            })?;
-            let client = crate::memory::OpenAiCompatibleClient::new(
-                &settings.base_url,
-                &settings.model,
-                &api_key,
-            )?;
-            let document = generate_minutes_document(segments.as_slice(), duration_ms, |prompt| {
-                // 心跳挂在生成闭包上：每个分块一次模型调用，调用间刷新 updated_at，
-                // 防长生成被陈旧抢占误伤。
-                let _ = repository.touch_minutes_generation(record_id);
-                client.complete_text(
-                    "你是会议纪要整理器。仅返回约定的简体中文 JSON，不要使用 Markdown 或额外说明。",
-                    prompt,
-                )
-            })?;
-            return Ok(GenerationOutcome {
-                provider: "external-openai-compatible".to_owned(),
-                model: settings.model,
-                document,
-            });
-        }
-        let model = repository.knowledge_settings()?.analysis_model;
-        let adapter = crate::analysis::OllamaAdapter::detect(&model)?;
         let document = generate_minutes_document(segments.as_slice(), duration_ms, |prompt| {
+            // 心跳挂在生成闭包上：每个分块一次模型调用，调用间刷新 updated_at，
+            // 防长生成被陈旧抢占误伤。
             let _ = repository.touch_minutes_generation(record_id);
-            adapter.raw_text(prompt)
+            generator
+                .generate_minutes_json(prompt)
+                .and_then(|draft| {
+                    serde_json::to_string(&draft)
+                        .map_err(|error| AppError::Invalid(format!("纪要序列化失败：{error}")))
+                })
         })?;
         Ok(GenerationOutcome {
-            provider: "ollama".to_owned(),
-            model,
+            provider: generator.provider_name().to_owned(),
+            model: generator.model_name().to_owned(),
             document,
         })
     })();

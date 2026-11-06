@@ -827,13 +827,22 @@ pub async fn start_recording(
     let config = crate::live_transcript::config_from_library(&state.library);
     if let Some(session_id) = started.session_id.clone() {
         let wav_path = PathBuf::from(started.file_path.clone().unwrap_or_default());
-        crate::live_transcript::spawn(
-            app,
+        let handle = crate::live_transcript::spawn(
+            app.clone(),
             state.live_transcripts.clone(),
-            session_id,
+            session_id.clone(),
             "microphone",
             wav_path,
             config,
+        );
+        // 块5：实时增量纪要引擎，共享实时文字线程的停止信号。
+        crate::live_minutes::spawn_incremental(
+            app,
+            state.library.clone(),
+            state.live_transcripts.clone(),
+            session_id,
+            "microphone",
+            handle.shared_stop(),
         );
     }
     Ok(started)
