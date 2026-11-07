@@ -21,6 +21,10 @@ pub struct RecordingSessionRow {
     pub record_id: Option<String>,
     pub last_error: Option<String>,
     pub updated_at: String,
+    /// 块8 双路：主会话指向副会话（系统声）。
+    pub paired_session_id: Option<String>,
+    /// 块8 双路：两路启动实测偏移（毫秒）。
+    pub alignment_offset_ms: Option<i64>,
 }
 
 impl LibraryRepository {
@@ -52,6 +56,8 @@ impl LibraryRepository {
             record_id: None,
             last_error: None,
             updated_at: started_at.to_owned(),
+            paired_session_id: None,
+            alignment_offset_ms: None,
         };
         self.connect()?.execute(
             "INSERT INTO recording_sessions
@@ -136,13 +142,66 @@ impl LibraryRepository {
         self.connect()?
             .query_row(
                 "SELECT id, status, temp_path, title, project_id, started_at, ended_at, duration_ms, paused_ms,
-                        input_device, sample_rate, channels, written_bytes, record_id, last_error, updated_at
+                        input_device, sample_rate, channels, written_bytes, record_id, last_error, updated_at,
+                        paired_session_id, alignment_offset_ms
                  FROM recording_sessions WHERE id = ?1",
                 params![id],
                 map_recording_session,
             )
             .optional()?
             .ok_or_else(|| AppError::NotFound(format!("recording session {id}")))
+    }
+
+    /* ---------------- 双路录音（块8） ---------------- */
+
+    /// 主会话（麦克风）登记副会话（系统声）。
+    pub fn set_paired_session(
+        &self,
+        mic_session_id: &str,
+        system_session_id: &str,
+    ) -> AppResult<()> {
+        self.connect()?.execute(
+            "UPDATE recording_sessions SET paired_session_id = ?2, updated_at = ?3 WHERE id = ?1",
+            params![mic_session_id, system_session_id, Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    /// 记录两路启动的实测偏移（对齐误差可见、可查）。
+    pub fn set_alignment_offset(&self, session_id: &str, offset_ms: i64) -> AppResult<()> {
+        self.connect()?.execute(
+            "UPDATE recording_sessions SET alignment_offset_ms = ?2, updated_at = ?3 WHERE id = ?1",
+            params![session_id, offset_ms, Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    /// 副会话收尾：canceled + 指向合并后的记录（0021 的 status CHECK 不含
+    /// 新枚举，不动表结构；canceled + record_id 即「已并入」的对账语义）。
+    pub fn finish_paired_session(
+        &self,
+        system_session_id: &str,
+        record_id: &str,
+        duration_ms: i64,
+        written_bytes: i64,
+    ) -> AppResult<()> {
+        let affected = self.connect()?.execute(
+            "UPDATE recording_sessions SET status = 'canceled', record_id = ?2, duration_ms = ?3,
+             written_bytes = ?4, updated_at = ?5 WHERE id = ?1",
+            params![
+                system_session_id,
+                record_id,
+                duration_ms,
+                written_bytes,
+                Utc::now().to_rfc3339()
+            ],
+        )?;
+        if affected == 0 {
+            return Err(AppError::NotFound(format!(
+                "recording session {system_session_id}"
+            )));
+        }
+        Ok(())
     }
 
     /// 应用重新启动后，进程内的原生录音器已经不存在；活动会话只能交给用户恢复或放弃。
@@ -161,7 +220,8 @@ impl LibraryRepository {
         let connection = self.connect()?;
         let mut statement = connection.prepare(
             "SELECT id, status, temp_path, title, project_id, started_at, ended_at, duration_ms, paused_ms,
-                    input_device, sample_rate, channels, written_bytes, record_id, last_error, updated_at
+                    input_device, sample_rate, channels, written_bytes, record_id, last_error, updated_at,
+                    paired_session_id, alignment_offset_ms
              FROM recording_sessions WHERE status IN ('starting', 'recording', 'paused', 'finalizing', 'recoverable', 'failed')
              ORDER BY updated_at ASC",
         )?;
@@ -190,6 +250,8 @@ fn map_recording_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<RecordingS
         record_id: row.get(13)?,
         last_error: row.get(14)?,
         updated_at: row.get(15)?,
+        paired_session_id: row.get(16)?,
+        alignment_offset_ms: row.get(17)?,
     })
 }
 

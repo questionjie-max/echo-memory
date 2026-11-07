@@ -11,7 +11,7 @@
 
 use crate::error::{AppError, AppResult};
 use crate::library::ManagedLibrary;
-use crate::recording::{RecordingState, RecordingStatus, StoppedRecording};
+use crate::recording::{CapturedRecording, RecordingState, RecordingStatus, StoppedRecording};
 use crate::state::AppState;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -660,6 +660,13 @@ impl SystemAudioController {
     }
 
     pub fn stop(&self, library: &ManagedLibrary) -> AppResult<StoppedRecording> {
+        let captured = self.stop_capture_only(library)?;
+        self.ingest_captured(library, captured)
+    }
+
+    /// 封存阶段（不入库）：停流、落 WAV、校验，会话置 finalizing。
+    /// 双路合并（块8）在两路都封存后统一由主会话 ingest。
+    pub fn stop_capture_only(&self, library: &ManagedLibrary) -> AppResult<CapturedRecording> {
         // 先在锁内把会话摘下来（锁只护状态，不护 I/O），再去停流——
         // 否则 stop 最长 10 秒的等待会让 levels 轮询一起卡住。
         let (finished, duration) = {
@@ -741,21 +748,41 @@ impl SystemAudioController {
             );
             return Err(AppError::Import(message.to_owned()));
         }
+        let paused_ms = self.paused_millis(&finished);
+        Ok(CapturedRecording {
+            session_id: finished.session_id,
+            project_id: finished.project_id,
+            file_path: finished.file_path,
+            title: finished.title,
+            duration_ms,
+            paused_ms,
+            bytes: total_bytes,
+        })
+    }
+
+    /// 封存会话入库（系统声单路 stop 用；双路合并后由主会话接管）。
+    fn ingest_captured(
+        &self,
+        library: &ManagedLibrary,
+        captured: CapturedRecording,
+    ) -> AppResult<StoppedRecording> {
+        let bytes = captured.bytes;
+        let duration_ms = captured.duration_ms;
         let ingest = match library.import_audio_with_source_named(
-            &finished.file_path,
-            finished.project_id.as_deref(),
+            &captured.file_path,
+            captured.project_id.as_deref(),
             true,
             "recording",
-            Some(&finished.title),
+            Some(&captured.title),
         ) {
             Ok(result) => result,
             Err(error) => {
                 let _ = library.repository().update_recording_session_status(
-                    &finished.session_id,
+                    &captured.session_id,
                     "failed",
                     duration_ms,
-                    self.paused_millis(&finished),
-                    total_bytes.min(i64::MAX as u64) as i64,
+                    captured.paused_ms,
+                    bytes.min(i64::MAX as u64) as i64,
                     Some(&error.to_string()),
                 );
                 return Err(error);
@@ -763,12 +790,12 @@ impl SystemAudioController {
         };
         library
             .repository()
-            .complete_recording_session(&finished.session_id, &ingest.record_id)?;
-        if let Some(parent) = finished.file_path.parent() {
+            .complete_recording_session(&captured.session_id, &ingest.record_id)?;
+        if let Some(parent) = captured.file_path.parent() {
             let _ = fs::remove_dir_all(parent);
         }
         Ok(StoppedRecording {
-            session_id: finished.session_id,
+            session_id: captured.session_id,
             record_id: ingest.record_id,
             duration_ms: ingest.duration_ms,
             title: ingest.title,
@@ -1077,6 +1104,9 @@ pub async fn start_system_recording(
     if confirmed != Some(true) {
         return Err("系统内录开始前必须完成用户确认：本功能会录到 Mac 正在播放的所有声音（包括他人的声音），需要你显性同意后才能开始".to_owned());
     }
+    // 跨源互斥（块5 挂账收口）：双路或麦克风在录时拒绝。
+    crate::dual_recording::DualRecordingController::ensure_no_capture_active(state.inner())
+        .map_err(|error| error.to_frontend())?;
     let controller = state.system_audio.clone();
     let library = state.library.clone();
     let started = tauri::async_runtime::spawn_blocking(move || {
@@ -1112,6 +1142,10 @@ pub async fn start_system_recording(
 
 #[tauri::command]
 pub async fn pause_system_recording(state: State<'_, AppState>) -> Result<RecordingState, String> {
+    // 双路进行中禁止单路操作系统声（会拆散双路编排，见块8）。
+    if state.dual.state().is_some() {
+        return Err("当前是双路录音：请使用主录音卡片上的按钮操作".to_owned());
+    }
     let controller = state.system_audio.clone();
     let library = state.library.clone();
     tauri::async_runtime::spawn_blocking(move || controller.pause(&library))
@@ -1122,6 +1156,10 @@ pub async fn pause_system_recording(state: State<'_, AppState>) -> Result<Record
 
 #[tauri::command]
 pub async fn resume_system_recording(state: State<'_, AppState>) -> Result<RecordingState, String> {
+    // 双路进行中禁止单路操作系统声（会拆散双路编排，见块8）。
+    if state.dual.state().is_some() {
+        return Err("当前是双路录音：请使用主录音卡片上的按钮操作".to_owned());
+    }
     let controller = state.system_audio.clone();
     let library = state.library.clone();
     tauri::async_runtime::spawn_blocking(move || controller.resume(&library))
@@ -1142,6 +1180,10 @@ pub fn system_recording_levels(state: State<AppState>) -> Result<RecordingState,
 pub async fn stop_system_recording(
     state: State<'_, AppState>,
 ) -> Result<StoppedRecording, String> {
+    // 双路进行中禁止单路操作系统声（会拆散双路编排，见块8）。
+    if state.dual.state().is_some() {
+        return Err("当前是双路录音：请使用主录音卡片上的按钮操作".to_owned());
+    }
     let controller = state.system_audio.clone();
     let library = state.library.clone();
     // 无论停止成败都必须停掉实时线程（理由同麦克风链路）。
@@ -1159,6 +1201,10 @@ pub async fn stop_system_recording(
 
 #[tauri::command]
 pub async fn cancel_system_recording(state: State<'_, AppState>) -> Result<(), String> {
+    // 双路进行中禁止单路操作系统声（会拆散双路编排，见块8）。
+    if state.dual.state().is_some() {
+        return Err("当前是双路录音：请使用主录音卡片上的按钮操作".to_owned());
+    }
     let controller = state.system_audio.clone();
     let library = state.library.clone();
     let session_id = state.system_audio.state().session_id.clone();
@@ -1174,6 +1220,11 @@ pub async fn cancel_system_recording(state: State<'_, AppState>) -> Result<(), S
 #[tauri::command]
 pub fn get_system_recording_state(state: State<AppState>) -> RecordingState {
     state.system_audio.state()
+}
+
+#[tauri::command]
+pub fn is_dual_recording(state: State<AppState>) -> bool {
+    state.dual.state().is_some()
 }
 
 #[cfg(test)]

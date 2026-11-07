@@ -51,6 +51,7 @@ beforeEach(() => {
   vi.mocked(tauri.microphonePermission).mockResolvedValue("granted");
   vi.mocked(tauri.listRecoverableRecordings).mockResolvedValue([]);
   vi.mocked(tauri.recordingLevels).mockResolvedValue(activeState("recording"));
+  vi.mocked(tauri.isDualRecording).mockResolvedValue(false);
 });
 
 describe("本地记录模块", () => {
@@ -173,6 +174,20 @@ describe("本地记录模块", () => {
     expect(tauri.startSystemRecording).not.toHaveBeenCalled();
     expect(tauri.startRecording).not.toHaveBeenCalled();
     confirmSpy.mockRestore();
+  });
+
+  it("双路录音中切视图重挂载后，停止仍走双路分发而不是单路停系统声（块8 审核 P0）", async () => {
+    // 模拟重挂载场景：两路都在录 + 后端报双路态。
+    vi.mocked(tauri.getRecordingState).mockResolvedValue(activeState("recording"));
+    vi.mocked(tauri.getSystemRecordingState).mockResolvedValue(activeState("recording"));
+    vi.mocked(tauri.isDualRecording).mockResolvedValue(true);
+    render(<RecordingEntry projectId={null} onImported={() => undefined} />);
+
+    // 双路标签可达（修复前是死代码）。
+    expect(await screen.findByText("正在记录（双路）")).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: "停止并保存" }));
+    await waitFor(() => expect(tauri.stopRecording).toHaveBeenCalled());
+    expect(tauri.stopSystemRecording).not.toHaveBeenCalled();
   });
 
   it("系统声权限被拒时明确报错、不启动，且麦克风照常可用（降级）", async () => {

@@ -279,8 +279,16 @@ export function requestMicrophonePermission(): Promise<MicrophonePermission> {
   return invoke<MicrophonePermission>("request_microphone_permission");
 }
 
-export function startRecording(projectId?: string | null): Promise<RecordingState> {
-  return invoke<RecordingState>("start_recording", { projectId: projectId ?? null });
+export function startRecording(
+  projectId?: string | null,
+  source?: "microphone" | "both",
+  confirmed?: boolean,
+): Promise<RecordingState> {
+  return invoke<RecordingState>("start_recording", {
+    projectId: projectId ?? null,
+    source: source ?? "microphone",
+    confirmed: confirmed ?? null,
+  });
 }
 
 export function pauseRecording(): Promise<RecordingState> {
@@ -361,6 +369,10 @@ export function cancelSystemRecording(): Promise<void> {
 
 export function getSystemRecordingState(): Promise<RecordingState> {
   return invoke<RecordingState>("get_system_recording_state");
+}
+
+export function isDualRecording(): Promise<boolean> {
+  return invoke<boolean>("is_dual_recording");
 }
 
 /* ---------- 会议纪要（v1.1 块3/块4） ---------- */

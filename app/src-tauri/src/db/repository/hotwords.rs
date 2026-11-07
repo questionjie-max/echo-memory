@@ -3,7 +3,6 @@ use crate::error::AppResult;
 use crate::types::Hotword;
 use chrono::Utc;
 use rusqlite::params;
-use rusqlite::OptionalExtension;
 use uuid::Uuid;
 
 impl LibraryRepository {

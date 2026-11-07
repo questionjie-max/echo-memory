@@ -9,6 +9,7 @@ pub mod degeneration;
 pub mod disk_space;
 pub mod dock;
 pub mod document;
+pub mod dual_recording;
 pub mod error;
 pub mod export;
 pub mod external_ai_gate;
@@ -126,6 +127,7 @@ pub fn run() {
             system_audio::stop_system_recording,
             system_audio::cancel_system_recording,
             system_audio::get_system_recording_state,
+            system_audio::is_dual_recording,
             minutes::get_record_minutes,
             minutes::generate_minutes,
             minutes::set_minutes_item_status,

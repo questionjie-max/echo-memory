@@ -52,6 +52,7 @@ import {
   systemAudioPermission,
   systemRecordingLevels,
   transcribeRecord,
+  isDualRecording,
 } from "../lib/tauri";
 import { formatBytes, formatMinutesSeconds as formatDuration } from "../lib/format";
 import { confirmAction } from "../lib/dialogs";
@@ -105,6 +106,14 @@ const SYSTEM_CAPTURE_NOTICE = [
   "如果录的是会议，请确认你已告知参会者或有权录制。",
 ].join("\n\n");
 
+/** 双路录音的显性告知：同时录麦克风与系统声（合并为立体声两个声道）。 */
+const DUAL_CAPTURE_NOTICE = [
+  "开始双路录音前请确认：",
+  "双路录音会同时录制麦克风（你这边的声音）和这台 Mac 正在播放的所有声音（包括线上会议里对方说的话），合并成一个立体声文件保存。",
+  "音频只保存在这台 Mac 上，转写与分析全部本机完成；只有你之后亲自确认的内容才会进入记忆库。",
+  "如果录的是会议，请确认你已告知参会者或有权录制。",
+].join("\n\n");
+
 /** 电平条宽度：把 -60dB~0dB 映射到 0%~100%，与系统表头量程一致。 */
 function levelWidth(db: number | null | undefined): string {
   if (db === null || db === undefined || !Number.isFinite(db)) return "0%";
@@ -129,13 +138,17 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
   const [liveView, setLiveView] = useState<LiveTranscriptView>(emptyLiveView());
   const [liveMessage, setLiveMessage] = useState("");
   const [liveMinutes, setLiveMinutes] = useState<LiveMinutesEventPayload | null>(null);
+  // 双路模式由前端发起（backend 侧 stop/pause/cancel 按双路态自动分发）。
+  const [dualActive, setDualActive] = useState(false);
 
   const micActive = isActiveState(micState);
   const sysActive = isActiveState(sysState);
   const active = micActive || sysActive;
   // 界面上同一时刻只展示一条进行中的采集；哪条活着就控制哪条。
-  const activeSource: CaptureSource = sysActive ? "system" : "microphone";
-  const state = sysActive ? sysState : micState;
+  // 双路态必须走麦克风系命令（后端按双路态自动分发到两路）——否则切视图
+  // 重挂载后会把系统声单路停掉，拆散双路编排（块8 审核 P0）。
+  const activeSource: CaptureSource = dualActive ? "microphone" : sysActive ? "system" : "microphone";
+  const state = sysActive && !dualActive ? sysState : micState;
 
   // 轮询代际：停止/放弃后，在途的电平快照不得把界面拉回「正在记录」。
   const pollGeneration = useRef(0);
@@ -158,6 +171,7 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
       setLiveMessage("");
       // 停止后增量纪要整体丢弃：权威来源是停止后的事后纪要（无冲突残留）。
       setLiveMinutes(null);
+      setDualActive(false);
     }
   }, [active]);
 
@@ -219,16 +233,20 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
         return null;
       }
     };
-    const [current, currentMic, currentSys, currentSysPermission] = await Promise.all([
+    const [current, currentMic, currentSys, currentSysPermission, dual] = await Promise.all([
       read(getRecordingState),
       read(microphonePermission),
       read(getSystemRecordingState),
       read(systemAudioPermission),
+      read(isDualRecording),
     ]);
     if (current) setMicState(isActiveState(current) ? current : null);
     if (currentMic) setMicPermission(currentMic);
     if (currentSys) setSysState(isActiveState(currentSys) ? currentSys : null);
     if (currentSysPermission) setSysPermission(currentSysPermission);
+    // 双路态以后端真值为准（组件重挂载后本地 flag 会丢）；
+    // busy 窗口内（begin 尚未返回）不降级本地乐观值，防止 activeSource 翻转。
+    setDualActive((previous) => (dual === true ? true : previous && busy));
     await refreshRecoverable();
   }
 
@@ -288,10 +306,17 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
     try {
       if (captureSource === "system") {
         await beginSystem();
+      } else if (captureSource === "both") {
+        // 双路的隐私红线：与系统声同款显性确认，确认后才带 confirmed=true。
+        if (!(await confirmAction(DUAL_CAPTURE_NOTICE))) return;
+        setDualActive(true);
+        setMicState(await startRecording(projectId, "both", true));
       } else {
+        setDualActive(false);
         await beginMicrophone();
       }
     } catch (reason) {
+      setDualActive(false);
       setError(displayError(reason));
     } finally {
       setBusy(false);
@@ -327,6 +352,10 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
       pollGeneration.current += 1;
       if (activeSource === "system") setSysState(null);
       else setMicState(null);
+      // 双路成功后系统声状态一并清掉：重挂载场景 refreshState 可能已把
+      // sysState 置 active，不清会让 UI 停在幽灵「正在记录（双路）」。
+      setSysState(null);
+      setDualActive(false);
       setNotice(`已保存“${result.title}”，正在准备本机转写。`);
       onImported();
       try {
@@ -349,9 +378,11 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
   async function cancel() {
     if (
       !(await confirmAction(
-        activeSource === "system"
-          ? "放弃这次系统声音录制吗？未封存的音频会被删除，无法恢复。"
-          : "放弃这次录音吗？未封存的音频会被删除，无法恢复。",
+        dualActive
+          ? "放弃这次双路录音吗？两路未封存的音频都会被删除，无法恢复。"
+          : activeSource === "system"
+            ? "放弃这次系统声音录制吗？未封存的音频会被删除，无法恢复。"
+            : "放弃这次录音吗？未封存的音频会被删除，无法恢复。",
       ))
     ) {
       return;
@@ -367,6 +398,8 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
         await cancelRecording();
         setMicState(null);
       }
+      setSysState(null);
+      setDualActive(false);
       pollGeneration.current += 1;
       setNotice("已放弃本次录音。");
       onImported();
@@ -418,7 +451,9 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
   const lead =
     captureSource === "system"
       ? "录制这台 Mac 正在播放的声音（例如线上会议里对方的话），不打开麦克风，音频只保存在本机。"
-      : "只使用本机麦克风，音频默认只保存在这台 Mac 上。";
+      : captureSource === "both"
+        ? "同时录麦克风与系统声音，合并成一个立体声文件（左=麦克风，右=系统声），开始前会再次向你确认。"
+        : "只使用本机麦克风，音频默认只保存在这台 Mac 上。";
 
   return (
     <section className="recording-entry" aria-label="本地记录">
@@ -436,7 +471,9 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
                 ? "已暂停"
                 : activeSource === "system"
                   ? "正在记录系统声音"
-                  : "正在记录"}
+                  : dualActive
+                    ? "正在记录（双路）"
+                    : "正在记录"}
             </strong>
             <time>{formatDuration(state?.elapsedMs ?? 0, true)}</time>
           </div>
@@ -452,17 +489,19 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
                 : sysPermission === "unsupported")
             }
           >
-            {busy ? "准备中…" : captureSource === "system" ? "开始录系统声音" : "开始记录"}
+            {busy
+              ? "准备中…"
+              : captureSource === "system"
+                ? "开始录系统声音"
+                : captureSource === "both"
+                  ? "开始双路录音"
+                  : "开始记录"}
           </button>
         )}
       </div>
 
       {!active && (
-        <div
-          className="segmented-control two"
-          role="tablist"
-          aria-label="录音来源"
-        >
+        <div className="segmented-control" role="tablist" aria-label="录音来源">
           <button
             type="button"
             role="tab"
@@ -480,6 +519,15 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
             onClick={() => setCaptureSource("system")}
           >
             系统声音
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={captureSource === "both"}
+            className={captureSource === "both" ? "selected" : ""}
+            onClick={() => setCaptureSource("both")}
+          >
+            双路
           </button>
         </div>
       )}

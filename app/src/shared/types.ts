@@ -76,8 +76,8 @@ export type SystemAudioPermission =
   | "granted"
   | "unsupported";
 
-/** 录音来源：麦克风、系统内放声。 */
-export type CaptureSource = "microphone" | "system";
+/** 录音来源：麦克风、系统内放声、双路（麦克风+系统声合并为立体声）。 */
+export type CaptureSource = "microphone" | "system" | "both";
 
 /** 实时文字的一句（会话绝对时间轴，毫秒）。 */
 export interface LiveSegment {
