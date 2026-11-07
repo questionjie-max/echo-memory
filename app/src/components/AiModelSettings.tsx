@@ -173,10 +173,10 @@ export default function AiModelSettings(props: AiModelSettingsProps) {
                 { value: "embedded", label: "内嵌引擎", hint: "默认，零依赖，不需要装任何外部程序" },
                 {
                   value: "whisperx",
-                  label: engine?.whisperxAvailable ? "whisperX" : "whisperX（未检测到）",
+                  label: engine?.whisperxAvailable ? "whisperX（实验）" : "whisperX（实验，未检测到）",
                   hint: engine?.whisperxAvailable
-                    ? "说话人分离：自动区分谁在说话"
-                    : "需要先安装，见下方安装说明",
+                    ? "实验特性 · 说话人分离：自动区分谁在说话。whisperX 与 pyannote 全部在你这台 Mac 上运行，音频不出本机；首次转写需联网下载转写与分离模型"
+                    : "实验特性 · 需要先安装，见下方安装说明",
                 },
               ]}
             />
@@ -202,7 +202,7 @@ export default function AiModelSettings(props: AiModelSettingsProps) {
 
         {channel === "local" && whisperxDetailVisible && (
           <Collapsible
-            title="配置说话人分离（3 步）"
+            title="配置说话人分离（实验特性，3 步）"
             open={whisperxDetailVisible}
             onToggle={setWhisperxGuide}
           >

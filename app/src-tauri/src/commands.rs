@@ -4662,4 +4662,35 @@ mod tests {
         assert_eq!(calls.get(), 1);
         let _ = std::fs::remove_dir_all(library.root());
     }
+
+    #[test]
+    fn transcription_engine_switch_is_controllable_and_defaults_to_embedded() {
+        // 块6：实验开关的契约——默认 embedded（关）、set/get 往返一致。
+        // 非法值的拒绝在命令层，走 repository 直读时以默认值兜底。
+        let library = scratch_library("engine_switch");
+        let repository = library.repository();
+        assert_eq!(
+            repository
+                .setting_value("transcription_engine")
+                .unwrap()
+                .as_deref(),
+            None,
+            "未设置时命令层回退 embedded（默认关）"
+        );
+        repository
+            .set_setting_value("transcription_engine", "whisperx")
+            .unwrap();
+        assert_eq!(
+            repository.setting_value("transcription_engine").unwrap().as_deref(),
+            Some("whisperx")
+        );
+        repository
+            .set_setting_value("transcription_engine", "embedded")
+            .unwrap();
+        assert_eq!(
+            repository.setting_value("transcription_engine").unwrap().as_deref(),
+            Some("embedded")
+        );
+        let _ = std::fs::remove_dir_all(library.root());
+    }
 }
