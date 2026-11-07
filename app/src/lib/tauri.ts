@@ -429,7 +429,12 @@ export function createExportTicket(): Promise<string> {
   return invoke<string>("create_export_ticket");
 }
 
-export function exportRecord(recordId: string, destinationPath: string, format: "md" | "txt", ticket: string): Promise<string> {
+export function exportRecord(
+  recordId: string,
+  destinationPath: string,
+  format: "md" | "txt" | "srt",
+  ticket: string,
+): Promise<string> {
   return invoke<string>("export_record", { recordId, destinationPath, format, ticket });
 }
 

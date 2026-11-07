@@ -110,10 +110,26 @@ fn render_record(library: &ManagedLibrary, record_id: &str, format: &str) -> App
     let analysis = repository
         .latest_analysis(record_id)?
         .and_then(|stored| serde_json::from_str::<AnalysisDraft>(&stored.content_json).ok());
-    Ok(if format == "md" {
-        render_markdown(&record, &segments, analysis.as_ref())
+    // 块9：纪要与导出同源（同一份 content_json），保证「所见即所导」——
+    // 面板在生成失败/重新生成时仍显示旧文档，导出同样带上它；
+    // 只有空文档不渲染。SRT 只需逐字稿，跳过分析/纪要查询。
+    Ok(if format == "srt" {
+        render_srt(&segments)
     } else {
-        render_text(&record, &segments, analysis.as_ref())
+        let analysis = repository
+            .latest_analysis(record_id)?
+            .and_then(|stored| serde_json::from_str::<AnalysisDraft>(&stored.content_json).ok());
+        let minutes = repository
+            .get_minutes(record_id)?
+            .filter(|row| row.content_json != "{}")
+            .and_then(|row| {
+                serde_json::from_str::<crate::minutes::MinutesDocument>(&row.content_json).ok()
+            });
+        if format == "md" {
+            render_markdown(&record, &segments, analysis.as_ref(), minutes.as_ref())
+        } else {
+            render_text(&record, &segments, analysis.as_ref(), minutes.as_ref())
+        }
     })
 }
 
@@ -121,6 +137,7 @@ fn render_markdown(
     record: &RecordBrief,
     segments: &[TranscriptSegment],
     analysis: Option<&AnalysisDraft>,
+    minutes: Option<&crate::minutes::MinutesDocument>,
 ) -> String {
     let mut output = format!(
         "# {}\n\n- 日期：{}\n- 知识库：{}\n- 时长：{}\n\n",
@@ -129,6 +146,9 @@ fn render_markdown(
         record.project_name.as_deref().unwrap_or("未归档"),
         format_time(record.audio_duration_ms)
     );
+    if let Some(minutes) = minutes {
+        append_minutes_markdown(&mut output, minutes);
+    }
     if let Some(analysis) = analysis {
         output.push_str("## 摘要\n\n");
         output.push_str(&analysis.summary);
@@ -159,8 +179,9 @@ fn render_text(
     record: &RecordBrief,
     segments: &[TranscriptSegment],
     analysis: Option<&AnalysisDraft>,
+    minutes: Option<&crate::minutes::MinutesDocument>,
 ) -> String {
-    let markdown = render_markdown(record, segments, analysis);
+    let markdown = render_markdown(record, segments, analysis, minutes);
     markdown
         .lines()
         .map(|line| {
@@ -171,6 +192,112 @@ fn render_text(
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// 纪要段（块9）：与纪要面板同一数据源，结论/待办逐条带时间戳。
+fn append_minutes_markdown(output: &mut String, document: &crate::minutes::MinutesDocument) {
+    if document.topics.is_empty()
+        && document.conclusions.is_empty()
+        && document.action_items.is_empty()
+        && document.glossary.is_empty()
+    {
+        return;
+    }
+    output.push_str("## 会议纪要\n\n");
+    if !document.topics.is_empty() {
+        output.push_str("### 议题\n\n");
+        for topic in &document.topics {
+            output.push_str(&format!(
+                "- **{}**（{}）：{}\n",
+                topic.title.trim(),
+                topic
+                    .start_ms
+                    .map(format_time)
+                    .unwrap_or_else(|| "—".to_owned()),
+                topic.summary.trim()
+            ));
+        }
+        output.push('\n');
+    }
+    for (title, items) in [
+        ("结论", &document.conclusions),
+        ("待办", &document.action_items),
+    ] {
+        if items.is_empty() {
+            continue;
+        }
+        output.push_str(&format!("### {title}\n\n"));
+        for item in items {
+            output.push_str(&format!(
+                "- {}（{}）\n",
+                item.text.trim(),
+                format_time(item.evidence.start_ms)
+            ));
+            if !item.evidence.quote_text.trim().is_empty() {
+                output.push_str(&format!(
+                    "  - 出处：「{}」（{}）\n",
+                    item.evidence.quote_text.trim(),
+                    format_time(item.evidence.start_ms)
+                ));
+            }
+            if let Some(owner) = item.owner.as_deref().filter(|owner| !owner.trim().is_empty()) {
+                output.push_str(&format!("  - 负责人：{owner}\n"));
+            }
+        }
+        output.push('\n');
+    }
+    if !document.glossary.is_empty() {
+        output.push_str("### 术语表\n\n");
+        for entry in &document.glossary {
+            if entry.variants.is_empty() {
+                output.push_str(&format!("- {}\n", entry.term));
+            } else {
+                output.push_str(&format!(
+                    "- {}（变体：{}）\n",
+                    entry.term,
+                    entry.variants.join("、")
+                ));
+            }
+        }
+        output.push('\n');
+    }
+}
+
+/// SRT 字幕（块9）：segment 粒度，时间轴与逐字稿一致，说话人作前缀。
+pub fn render_srt(segments: &[TranscriptSegment]) -> String {
+    let mut output = String::new();
+    for (index, segment) in segments.iter().enumerate() {
+        let speaker = segment
+            .speaker_label
+            .as_deref()
+            .filter(|label| !label.trim().is_empty())
+            .map(|label| format!("[{label}] "))
+            .unwrap_or_default();
+        let text = segment
+            .edited_text
+            .as_deref()
+            .or(segment.normalized_text.as_deref())
+            .unwrap_or(&segment.original_text);
+        output.push_str(&format!(
+            "{}\n{} --> {}\n{}{}\n\n",
+            index + 1,
+            format_srt_time(segment.start_ms),
+            format_srt_time(segment.end_ms),
+            speaker,
+            text.trim()
+        ));
+    }
+    output
+}
+
+/// SRT 时间格式：HH:MM:SS,mmm（毫秒用逗号分隔）。
+pub fn format_srt_time(ms: i64) -> String {
+    let total_ms = ms.max(0);
+    let hours = total_ms / 3_600_000;
+    let minutes = (total_ms % 3_600_000) / 60_000;
+    let seconds = (total_ms % 60_000) / 1_000;
+    let millis = total_ms % 1_000;
+    format!("{hours:02}:{minutes:02}:{seconds:02},{millis:03}")
 }
 
 fn append_markdown_items(output: &mut String, title: &str, items: &[AnalysisItemDraft]) {
@@ -281,10 +408,10 @@ fn atomic_write(destination: &Path, content: &[u8]) -> AppResult<()> {
 }
 
 fn validate_format(format: &str) -> AppResult<()> {
-    if matches!(format, "md" | "txt") {
+    if matches!(format, "md" | "txt" | "srt") {
         Ok(())
     } else {
-        Err(AppError::Invalid("仅支持 Markdown 或 TXT 导出".to_owned()))
+        Err(AppError::Invalid("仅支持 Markdown、TXT 或 SRT 导出".to_owned()))
     }
 }
 
@@ -316,6 +443,162 @@ fn format_time(milliseconds: i64) -> String {
 mod tests {
     use super::*;
     use crate::types::TranscriptSegmentInput;
+
+    #[test]
+    fn srt_time_format_and_segment_rendering() {
+        assert_eq!(format_srt_time(0), "00:00:00,000");
+        assert_eq!(format_srt_time(62_500), "00:01:02,500");
+        assert_eq!(format_srt_time(3_723_000), "01:02:03,000");
+        assert_eq!(format_srt_time(-5), "00:00:00,000", "负值夹紧为零");
+        let segments = vec![
+            TranscriptSegment {
+                id: "s1".into(),
+                record_id: "r".into(),
+                sequence: 0,
+                speaker_label: Some("客户".into()),
+                start_ms: 62_000,
+                end_ms: 65_000,
+                original_text: "希望资料只保存在本机".into(),
+                normalized_text: None,
+                normalization_version: None,
+                edited_text: None,
+            },
+            TranscriptSegment {
+                id: "s2".into(),
+                record_id: "r".into(),
+                sequence: 1,
+                speaker_label: None,
+                start_ms: 0,
+                end_ms: 1_000,
+                original_text: "好的".into(),
+                normalized_text: None,
+                normalization_version: None,
+                edited_text: None,
+            },
+        ];
+        let srt = render_srt(&segments);
+        assert!(srt.starts_with("1\n00:01:02,000 --> 00:01:05,000\n[客户] 希望资料只保存在本机\n\n"));
+        assert!(srt.contains("2\n00:00:00,000 --> 00:00:01,000\n好的"), "无说话人时不加前缀");
+        // 序号连续、时间轴与逐字稿一致（乱序输入按原序导出）。
+        assert_eq!(srt.matches("-->").count(), 2);
+    }
+
+    #[test]
+    fn markdown_export_includes_minutes_with_matching_timestamps() {
+        let root = std::env::temp_dir().join(format!("echo-export-minutes-{}", Uuid::new_v4()));
+        let library = ManagedLibrary::open(&root).unwrap();
+        let repository = library.repository();
+        let record = repository
+            .create_record(
+                "复盘会",
+                None,
+                Path::new("audio/review.m4a"),
+                "minutes-hash",
+                12_000,
+            )
+            .unwrap();
+        repository
+            .save_transcript(
+                &record.id,
+                "whisper.cpp",
+                "small",
+                &[TranscriptSegmentInput {
+                    start_ms: 0,
+                    end_ms: 6_000,
+                    speaker_label: Some("说话人 1".into()),
+                    original_text: "我们把第三季度的产品复盘安排在下周三下午两点".into(),
+                }],
+            )
+            .unwrap();
+        repository.ensure_minutes_pending(&record.id).unwrap();
+        let document = crate::minutes::MinutesDocument {
+            topics: vec![crate::minutes::MinutesTopic {
+                id: "t1".into(),
+                title: "复盘安排".into(),
+                summary: "定在下周三".into(),
+                start_ms: Some(0),
+                end_ms: Some(6_000),
+            }],
+            conclusions: vec![crate::minutes::MinutesItem {
+                id: "c1".into(),
+                kind: crate::minutes::MinutesItemKind::Conclusion,
+                text: "复盘时间确定".into(),
+                owner: Some("老张".into()),
+                evidence: crate::minutes::MinutesEvidence {
+                    start_ms: 0,
+                    end_ms: 6_000,
+                    quote_text: "我们把第三季度的产品复盘安排在下周三下午两点".into(),
+                },
+            }],
+            action_items: vec![],
+            glossary: vec![crate::minutes::GlossaryEntry {
+                term: "灰度".into(),
+                variants: vec!["灰度发布".into()],
+            }],
+            dropped_unverifiable: 0,
+        };
+        repository
+            .save_minutes_document(&record.id, "fake", "fake", &document)
+            .unwrap();
+
+        let markdown = render_record(&library, &record.id, "md").unwrap();
+        assert!(markdown.contains("## 会议纪要"));
+        assert!(markdown.contains("- **复盘安排**（0:00）：定在下周三"));
+        assert!(markdown.contains("- 复盘时间确定（0:00）"));
+        assert!(markdown.contains("「我们把第三季度的产品复盘安排在下周三下午两点」"), "结论出处与逐字稿一致");
+        assert!(markdown.contains("负责人：老张"));
+        assert!(markdown.contains("- 灰度（变体：灰度发布）"));
+
+        // SRT 导出：文件可写、内容与逐字稿一致。
+        let destination = root.join("out.srt");
+        let path = export_record(&library, &record.id, &destination, "srt").unwrap();
+        assert!(path.is_file());
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("00:00:00,000 --> 00:00:06,000"));
+        assert!(content.contains("[说话人 1] 我们把第三季度的产品复盘安排在下周三下午两点"));
+        assert!(!content.contains("会议纪要"), "SRT 只含逐字稿，不含纪要段");
+
+        // failed 态：面板仍显示旧文档，导出同样带上（所见即所导）。
+        repository.fail_minutes(&record.id, "模拟失败").unwrap();
+        let markdown_after_fail = render_record(&library, &record.id, "md").unwrap();
+        assert!(markdown_after_fail.contains("## 会议纪要"), "failed 保留旧文档时导出与面板一致");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn minutes_markdown_covers_action_items_and_topic_fallback() {
+        // 待办渲染（含负责人与出处）与议题无时间戳的 "—" 兜底。
+        let document = crate::minutes::MinutesDocument {
+            topics: vec![crate::minutes::MinutesTopic {
+                id: "t".into(),
+                title: "无时间议题".into(),
+                summary: String::new(),
+                start_ms: None,
+                end_ms: None,
+            }],
+            conclusions: vec![],
+            action_items: vec![crate::minutes::MinutesItem {
+                id: "a".into(),
+                kind: crate::minutes::MinutesItemKind::Action,
+                text: "发纪要".into(),
+                owner: Some("小李".into()),
+                evidence: crate::minutes::MinutesEvidence {
+                    start_ms: 65_000,
+                    end_ms: 66_000,
+                    quote_text: "纪要我来发".into(),
+                },
+            }],
+            glossary: vec![],
+            dropped_unverifiable: 0,
+        };
+        let mut output = String::new();
+        append_minutes_markdown(&mut output, &document);
+        assert!(output.contains("- **无时间议题**（—）"), "无时间戳议题用 — 兜底");
+        assert!(output.contains("### 待办"));
+        assert!(output.contains("- 发纪要（1:05）"));
+        assert!(output.contains("出处：「纪要我来发」"));
+        assert!(output.contains("负责人：小李"));
+    }
 
     #[test]
     fn file_names_are_sanitized() {

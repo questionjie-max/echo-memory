@@ -426,14 +426,19 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
     }
   }
 
-  async function exportOne(format: "md" | "txt") {
+  async function exportOne(format: "md" | "txt" | "srt") {
     if (detailMenu.current) detailMenu.current.open = false;
     // 先领票据再弹对话框：后端凭票放行导出，挡掉绕过对话框的任意路径写入。
     const ticket = await createExportTicket();
     const destination = await saveDialog({
       title: `导出${currentRecord.title}`,
       defaultPath: `${currentRecord.title}.${format}`,
-      filters: [{ name: format === "md" ? "Markdown" : "文本", extensions: [format] }],
+      filters: [
+        {
+          name: format === "md" ? "Markdown" : format === "srt" ? "SubRip 字幕" : "文本",
+          extensions: [format],
+        },
+      ],
     });
     if (!destination) return;
     setBusy(true);
@@ -606,6 +611,7 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
               {!isDocument && <button type="button" disabled={busy || isProcessing(currentRecord.status)} onClick={() => { if (detailMenu.current) detailMenu.current.open = false; setRetranscribeOpen(true); }}>增强重新转写…</button>}
               <button type="button" disabled={busy || !currentRecord.hasTranscript} onClick={() => void exportOne("md")}>导出 Markdown</button>
               <button type="button" disabled={busy || !currentRecord.hasTranscript} onClick={() => void exportOne("txt")}>导出 TXT</button>
+              <button type="button" disabled={busy || !currentRecord.hasTranscript} onClick={() => void exportOne("srt")}>导出 SRT 字幕</button>
               <button type="button" disabled={busy || !currentRecord.hasAnalysis} onClick={() => void exportToOutput("analysis")}>导出分析到产出文件夹</button>
               <button type="button" disabled={busy || !currentRecord.hasTranscript} onClick={() => void exportToOutput("transcript")}>导出逐字稿到产出文件夹</button>
             </div>
