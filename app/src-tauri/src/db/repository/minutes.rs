@@ -259,7 +259,7 @@ impl LibraryRepository {
     /// 归档记录的条目一并排除：与 search_records 的 archived_at 过滤对齐，
     /// 归档动作同时把对应记忆从 Agent 视野收回。
     pub fn list_confirmed_minutes_items(&self, limit: usize) -> AppResult<Vec<MinutesItemRow>> {
-        let mut connection = self.connect()?;
+        let connection = self.connect()?;
         let mut statement = connection
             .prepare(
                 "SELECT minutes_items.id, minutes_items.minutes_id, minutes_items.record_id, minutes_items.kind, minutes_items.text, minutes_items.owner_text, minutes_items.evidence_json, minutes_items.status, minutes_items.updated_at

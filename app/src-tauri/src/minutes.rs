@@ -33,15 +33,6 @@ impl MinutesStatus {
             _ => Self::Pending,
         }
     }
-
-    fn as_db(&self) -> &'static str {
-        match self {
-            Self::Pending => "pending",
-            Self::Generating => "generating",
-            Self::Completed => "completed",
-            Self::Failed => "failed",
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -429,7 +429,7 @@ impl DualRecordingController {
     }
 
     pub fn cancel(&self, state: &AppState) -> AppResult<()> {
-        let active = self.require_active()?;
+        let _active_gate = self.require_active()?;
         let mic_result = state.recording.cancel(&state.library);
         let system_result = state.system_audio.cancel(&state.library);
         *self.active.lock().unwrap_or_else(|error| error.into_inner()) = None;

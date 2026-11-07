@@ -107,9 +107,6 @@ fn render_record(library: &ManagedLibrary, record_id: &str, format: &str) -> App
     let repository = library.repository();
     let record = repository.get_record(record_id)?;
     let segments = repository.list_transcript_segments(record_id)?;
-    let analysis = repository
-        .latest_analysis(record_id)?
-        .and_then(|stored| serde_json::from_str::<AnalysisDraft>(&stored.content_json).ok());
     // 块9：纪要与导出同源（同一份 content_json），保证「所见即所导」——
     // 面板在生成失败/重新生成时仍显示旧文档，导出同样带上它；
     // 只有空文档不渲染。SRT 只需逐字稿，跳过分析/纪要查询。
