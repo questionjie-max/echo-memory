@@ -727,6 +727,11 @@ pub fn run_minutes_generation(library: &ManagedLibrary, record_id: &str) -> AppR
                 &outcome.model,
                 &outcome.document,
             )?;
+            // 块7 联动：纪要术语表沉淀进热词库（转写 initial_prompt 与 AI 校对
+            // 都会带上）与变体映射（错写搜索能命中）。失败不影响纪要本身。
+            if let Err(error) = repository.sync_minutes_glossary(&outcome.document.glossary) {
+                eprintln!("[minutes] 术语表联动沉淀失败：{error}");
+            }
             Ok(outcome.document)
         }
         Err(error) => {
