@@ -848,7 +848,7 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
           }
         }}
         onImported={() => {
-          setNotice("AI 对话已导入，分析正在后台进行。");
+          setNotice("AI 对话已导入，索引正在后台建立，立即可搜索。");
           setChatImportChanged(true);
           void refresh();
         }}

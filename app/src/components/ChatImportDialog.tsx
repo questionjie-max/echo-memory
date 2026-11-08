@@ -116,11 +116,11 @@ export default function ChatImportDialog({
     setError("");
     try {
       const result = await scanLocalAgents();
-      const sessions = new Set(result.sessions.filter((session) => !session.oversized).map((session) => session.path));
-      const memory = new Set(result.memoryFiles.map((file) => file.path));
       setScanResult(result);
-      setSelectedSessions(sessions);
-      setSelectedMemory(memoryChecked ? memory : new Set());
+      // 块3/F3：扫描结果默认不选（原为默认全选）。Agent 会话可能含代码、
+      // 密钥等敏感内容，必须由用户逐个显式勾选才导入；组级「全选」保留批量能力。
+      setSelectedSessions(new Set());
+      setSelectedMemory(new Set());
       setScanPhase("results");
     } catch (reason) {
       setScanPhase("select-agents");
@@ -344,7 +344,7 @@ export default function ChatImportDialog({
           {scanPhase === "results" && scanResult && (
             <>
               <p className="document-import-lead">
-                找到 {scanResult.sessions.length} 个会话、{scanResult.memoryFiles.length} 个记忆文件。勾选要导入的内容。
+                找到 {scanResult.sessions.length} 个会话、{scanResult.memoryFiles.length} 个记忆文件。默认不选，请逐个勾选要导入的内容。
               </p>
               <div className="chat-import-scan-results">
                 {Object.entries(AGENT_LABELS).map(([agent, label]) => {
@@ -432,7 +432,7 @@ export default function ChatImportDialog({
                 </div>
                 <div>
                   <span className="document-import-step-number">3</span>
-                  <p><strong>后台分析</strong><span>导入完成后在后台提炼观点，可在认知演化中确认。</span></p>
+                  <p><strong>后台索引</strong><span>导入完成后在后台建立检索索引，对话立即可搜索、可被问答引用；对话是档案，不做逐条分析。</span></p>
                 </div>
               </section>
 
@@ -472,7 +472,7 @@ export default function ChatImportDialog({
               <span aria-hidden="true"><CheckIcon size={12} /></span>
               <p>
                 <strong>成功导入 {importedCount} 项</strong>
-                <span>{skipped.length > 0 ? `${skipped.length} 项被跳过，明细见下方。` : "索引和分析正在后台进行。"}</span>
+                <span>{skipped.length > 0 ? `${skipped.length} 项被跳过，明细见下方。` : "索引正在后台建立，导入后立即可搜索。"}</span>
               </p>
             </div>
           )}
@@ -508,7 +508,7 @@ export default function ChatImportDialog({
                 disabled={selectedPaths.length === 0 || busy}
                 onClick={() => void runImport()}
               >
-                {busy ? "处理中…" : `导入并分析${selectedPaths.length > 0 ? `（${selectedPaths.length} 个文件）` : ""}`}
+                {busy ? "处理中…" : `导入${selectedPaths.length > 0 ? `（${selectedPaths.length} 个文件）` : ""}`}
               </button>
             </>
           )}
