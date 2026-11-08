@@ -203,7 +203,7 @@ export default function ProjectPanel({ selectedScope, refreshKey, onSelect }: Pr
             <span aria-hidden="true" />
           </label>
         </div>
-        <p>{mcp?.authorizedScope ?? "全部知识库（只读）"}</p>
+        <p>{mcp?.authorizedScope ?? "全部记录的标题、逐字稿与文档原文（只读）；记忆条目仅限已确认内容"}</p>
         {mcp?.executablePath && (
           <details className="mcp-path">
             <summary>MCP 组件路径</summary>

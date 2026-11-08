@@ -55,7 +55,7 @@ impl LibraryRepository {
             .collect::<Result<Vec<_>, rusqlite::Error>>()?;
         Ok(McpStatus {
             enabled: self.mcp_enabled()?,
-            authorized_scope: "全部知识库（只读）".to_owned(),
+            authorized_scope: "全部记录的标题、逐字稿与文档原文（只读）；记忆条目仅限已确认内容".to_owned(),
             executable_available: false,
             executable_path: None,
             recent_calls,
@@ -113,4 +113,34 @@ pub struct ConfirmedMinutesMemoryEntry {
     pub end_ms: i64,
     pub quote_text: String,
     pub confirmed_at: String,
+}
+
+#[cfg(test)]
+mod scope_copy_tests {
+    use super::*;
+
+    /// 块3/F1 契约测试：MCP 授权口径文案必须如实讲两层——
+    /// 原文层（记录标题/逐字稿/文档原文，只读、本就可读）与
+    /// 记忆条目层（仅 confirmed）。缺任何一半都会误导用户。
+    #[test]
+    fn authorized_scope_copy_states_both_layers() {
+        let root = std::env::temp_dir().join(format!("echo-mcp-scope-{}", uuid::Uuid::new_v4()));
+        let library = crate::library::ManagedLibrary::open(root).unwrap();
+        let status = library.repository().mcp_status().unwrap();
+        assert!(
+            status.authorized_scope.contains("（只读）"),
+            "口径文案应声明只读：{}",
+            status.authorized_scope
+        );
+        assert!(
+            status.authorized_scope.contains("逐字稿") || status.authorized_scope.contains("原文"),
+            "口径文案应讲明原文层对 MCP 可读：{}",
+            status.authorized_scope
+        );
+        assert!(
+            status.authorized_scope.contains("已确认"),
+            "口径文案应讲明记忆条目仅限已确认：{}",
+            status.authorized_scope
+        );
+    }
 }
