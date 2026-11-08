@@ -957,6 +957,27 @@ pub fn export_record(
     .map_err(|error| error.to_frontend())
 }
 
+/// 块7：导出包——单条记录全量交付（逐字稿 md+srt + 纪要 + manifest），目的地为用户
+/// 通过文件夹选择器选定的目录。与既有目录导出同一道一次性票据门。
+#[tauri::command]
+pub fn export_record_package(
+    state: State<AppState>,
+    record_id: String,
+    destination_path: String,
+    ticket: String,
+) -> Result<String, String> {
+    if !crate::state::consume_export_ticket(&ticket) {
+        return Err("导出未经验证，请重新通过导出对话框操作".to_owned());
+    }
+    crate::export::export_record_package(
+        &state.library,
+        &record_id,
+        &PathBuf::from(destination_path),
+    )
+    .map(|path| path.to_string_lossy().to_string())
+    .map_err(|error| error.to_frontend())
+}
+
 #[tauri::command]
 pub fn export_knowledge_base(
     state: State<AppState>,

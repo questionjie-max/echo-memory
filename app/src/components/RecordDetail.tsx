@@ -1,5 +1,5 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { save as saveDialog, open as openDirectory } from "@tauri-apps/plugin-dialog";
 import { PauseIcon, PlayIcon, SkipBackIcon, SkipForwardIcon } from "./icons";
 import MinutesPanel from "./MinutesPanel";
 import { useEffect, useRef, useState } from "react";
@@ -40,6 +40,7 @@ import {
   updateRecordTitle,
   updateTranscriptSegment,
   setRecordImportConfirmed,
+  exportRecordPackage,
 } from "../lib/tauri";
 import { listen } from "@tauri-apps/api/event";
 import { formatMinutesSeconds as formatTime, isProcessingStatus as isProcessing } from "../lib/format";
@@ -453,6 +454,28 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
     }
   }
 
+  // 块7：导出包——逐字稿(md+srt) + 纪要 + manifest 的全量交付，落到用户选定的目录。
+  async function exportPackage() {
+    if (detailMenu.current) detailMenu.current.open = false;
+    const ticket = await createExportTicket();
+    const destination = await openDirectory({
+      directory: true,
+      multiple: false,
+      title: `选择「${currentRecord.title}」导出包的位置`,
+    });
+    if (typeof destination !== "string") return;
+    setBusy(true);
+    setError("");
+    try {
+      const path = await exportRecordPackage(currentRecord.id, destination, ticket);
+      setExportNotice(`已导出包：${path}`);
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
 
   async function exportToOutput(kind: "analysis" | "transcript") {
     if (detailMenu.current) detailMenu.current.open = false;
@@ -654,6 +677,7 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
               <button type="button" disabled={busy || !currentRecord.hasTranscript} onClick={() => void exportOne("md")}>导出 Markdown</button>
               <button type="button" disabled={busy || !currentRecord.hasTranscript} onClick={() => void exportOne("txt")}>导出 TXT</button>
               <button type="button" disabled={busy || !currentRecord.hasTranscript} onClick={() => void exportOne("srt")}>导出 SRT 字幕</button>
+              <button type="button" disabled={busy || !currentRecord.hasTranscript} onClick={() => void exportPackage()}>导出包（逐字稿+纪要+清单）…</button>
               <button type="button" disabled={busy || !currentRecord.hasAnalysis} onClick={() => void exportToOutput("analysis")}>导出分析到产出文件夹</button>
               <button type="button" disabled={busy || !currentRecord.hasTranscript} onClick={() => void exportToOutput("transcript")}>导出逐字稿到产出文件夹</button>
             </div>

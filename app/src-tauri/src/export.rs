@@ -436,6 +436,113 @@ fn format_time(milliseconds: i64) -> String {
     format!("{}:{:02}", seconds / 60, seconds % 60)
 }
 
+/// 块7：单条记录「导出包」——一个文件夹装下这次记录的全量交付：
+/// 逐字稿（md + srt）、纪要（与面板同一份 content_json 渲染）、manifest（元数据 +
+/// 纪要确认状态分布 + 所用模型 + 导出时间）。
+///
+/// 口径说明：
+/// - 纪要与面板同源：同一份 minutes.content_json 渲染（块9 起的「所见即所导」延续）；
+/// - 未确认条目在导出中不改变语义：照常渲染（既有导出口径），manifest 里如实报告
+///   provisional/confirmed 分布，绝不悄悄变成「已确认」；
+/// - 知识库 auto-export（dock.rs 分析完成自动落盘）是另一条单文件 md 流，
+///   与导出包互不耦合、不同口径带上——此注释即排除声明（测试锁定见 export_package_test）；
+/// - 文件夹而非 zip：zip 依赖在本仓库只用于读 docx，没有现成的 zip 导出代码路径，
+///   文件夹零新增依赖面且可直接打开（任务书允许的保守选择）。
+pub fn export_record_package(
+    library: &ManagedLibrary,
+    record_id: &str,
+    destination: &Path,
+) -> AppResult<PathBuf> {
+    let repository = library.repository();
+    let record = repository.get_record(record_id)?;
+    let segments = repository.list_transcript_segments(record_id)?;
+    if segments.is_empty() {
+        return Err(AppError::Invalid(
+            "该记录还没有逐字稿，无法导出包".to_owned(),
+        ));
+    }
+    let minutes_row = repository.get_minutes(record_id)?;
+    let minutes_document: Option<crate::minutes::MinutesDocument> = minutes_row
+        .as_ref()
+        .filter(|row| row.content_json != "{}")
+        .and_then(|row| serde_json::from_str(&row.content_json).ok());
+    let item_rows = repository.list_minutes_items(record_id)?;
+    let confirmed_count = item_rows
+        .iter()
+        .filter(|item| item.status == "confirmed")
+        .count();
+    let provisional_count = item_rows.len() - confirmed_count;
+    let alignment_offset_ms = repository.alignment_offset_for_record(record_id)?;
+
+    // 逐字稿 md：与全文导出同一段渲染（说话人 + 时间块）。
+    let mut transcript_md = format!("# {} · 逐字稿\n\n", record.title);
+    for block in build_blocks(&segments) {
+        transcript_md.push_str(&format!(
+            "**{} · {}**  \n{}\n\n",
+            format_time(block.start_ms),
+            block.speaker_label.as_deref().unwrap_or("说话人未知"),
+            block.text
+        ));
+    }
+
+    // 纪要 md：与面板同一份 content_json 渲染（复用块9 的渲染器）。
+    let minutes_md = minutes_document
+        .as_ref()
+        .map(|document| {
+            let mut output = format!("# {} · 会议纪要\n\n", record.title);
+            append_minutes_markdown(&mut output, document);
+            output
+        })
+        .unwrap_or_else(|| "# 会议纪要\n\n该记录还没有生成纪要。\n".to_owned());
+
+    let manifest = serde_json::json!({
+        "record": {
+            "id": record.id,
+            "title": record.title,
+            "sourceType": record.source_type,
+            "importedAt": record.imported_at,
+            "durationMs": record.audio_duration_ms,
+            "audioHash": record.audio_hash,
+            "projectId": record.project_id,
+            "projectName": record.project_name,
+            "archivedAt": record.archived_at,
+            "importConfirmedAt": record.import_confirmed_at,
+        },
+        "alignmentOffsetMs": alignment_offset_ms,
+        "minutes": {
+            "status": minutes_row.as_ref().map(|row| row.status.as_str()),
+            "provider": minutes_row.as_ref().and_then(|row| row.provider.clone()),
+            "model": minutes_row.as_ref().and_then(|row| row.model.clone()),
+            "droppedUnverifiable": minutes_document.as_ref().map(|document| document.dropped_unverifiable),
+            "itemStatuses": { "confirmed": confirmed_count, "provisional": provisional_count },
+        },
+        "files": ["逐字稿.md", "逐字稿.srt", "纪要.md"],
+        "exportedAt": chrono::Utc::now().to_rfc3339(),
+    });
+
+    fs::create_dir_all(destination)?;
+    let folder = available_export_folder(destination, &format!("导出包-{}", record.title));
+    let temporary = destination.join(format!(".echo-memory-package-{}", Uuid::new_v4()));
+    fs::create_dir(&temporary)?;
+    let write = || -> AppResult<()> {
+        fs::write(temporary.join("逐字稿.md"), transcript_md)?;
+        fs::write(temporary.join("逐字稿.srt"), render_srt(&segments))?;
+        fs::write(temporary.join("纪要.md"), minutes_md)?;
+        fs::write(
+            temporary.join("manifest.json"),
+            serde_json::to_string_pretty(&manifest)
+                .map_err(|error| AppError::Invalid(format!("manifest 序列化失败：{error}")))?,
+        )?;
+        Ok(())
+    };
+    if let Err(error) = write() {
+        let _ = fs::remove_dir_all(&temporary);
+        return Err(error);
+    }
+    fs::rename(&temporary, &folder)?;
+    Ok(folder)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -123,6 +123,11 @@ export function setRecordImportConfirmed(recordId: string, confirmed: boolean): 
   return invoke<RecordBrief>("set_record_import_confirmed", { recordId, confirmed });
 }
 
+/** 块7：导出包——单条记录全量交付（逐字稿 md+srt + 纪要 + manifest）。 */
+export function exportRecordPackage(recordId: string, destinationPath: string, ticket: string): Promise<string> {
+  return invoke<string>("export_record_package", { recordId, destinationPath, ticket });
+}
+
 export function getRecord(id: string): Promise<RecordBrief> {
   return invoke<RecordBrief>("get_record", { id });
 }
