@@ -34,6 +34,11 @@ Then configure an MCP client with the built executable:
 | `get_project_context` | Return recent records, decisions, and action items for a project. |
 | `list_action_items` | List local action items, optionally filtered by project and status. |
 | `get_my_context` | Return the user's L3 profile summary (if generated) and up to 20 recently confirmed memory items, so an agent can pick up the user's standing context in one call. |
+| `list_confirmed_minutes` | List the user's explicitly confirmed minutes conclusions/action items within an optional time range / knowledge base, newest record first, each with provenance (record title, evidence time window, verbatim quote, confirmed time). |
+
+## Import confirmation gate
+
+Imported documents and AI-chat records start in a provisional state: `get_record`, `get_transcript`, `search_records`, `get_project_context`, and `list_action_items` return nothing for them — including analysis-derived decisions and action items — until the user confirms the record in the app ("确认入记忆"). Withdrawing the confirmation hides the content again. Recordings are not affected by this gate; archived records are excluded from search and context listings.
 
 ## Evidence and boundaries
 

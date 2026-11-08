@@ -122,7 +122,8 @@ fn call_tool(library: &ManagedLibrary, params: &Value, id: Value) -> Value {
             let status = args.get("status").and_then(Value::as_str);
             repo.log_mcp_access(name, None, project_id)
                 .map_err(|e| e.to_string())?;
-            repo.list_action_items(project_id, status)
+            // 块8 终审修1：门在 lib（mcp_list_action_items）——未确认导入的派生待办不可见。
+            repo.mcp_list_action_items(project_id, status)
                 .map(|items| json!(items))
                 .map_err(|e| e.to_string())
         }

@@ -445,7 +445,8 @@ fn format_time(milliseconds: i64) -> String {
 /// - 未确认条目在导出中不改变语义：照常渲染（既有导出口径），manifest 里如实报告
 ///   provisional/confirmed 分布，绝不悄悄变成「已确认」；
 /// - 知识库 auto-export（dock.rs 分析完成自动落盘）是另一条单文件 md 流，
-///   与导出包互不耦合、不同口径带上——此注释即排除声明（测试锁定见 export_package_test）；
+///   与导出包互不耦合、不同口径带上——导出包只由用户显式触发（本注释即排除声明；
+///   auto-export 侧无导出包调用点，dock.rs 仅单文件 md 流）。
 /// - 文件夹而非 zip：zip 依赖在本仓库只用于读 docx，没有现成的 zip 导出代码路径，
 ///   文件夹零新增依赖面且可直接打开（任务书允许的保守选择）。
 pub fn export_record_package(

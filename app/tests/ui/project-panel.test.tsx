@@ -19,7 +19,7 @@ function projectFixture(id: string, name: string, status: Project["status"] = "a
 function mcpFixture(): McpStatus {
   return {
     enabled: false,
-    authorizedScope: "全部记录的标题、逐字稿与文档原文（只读）；记忆条目仅限已确认内容",
+    authorizedScope: "全部记录的标题、逐字稿与文档原文（只读；未确认的导入内容除外）；记忆条目仅限已确认内容",
     executableAvailable: true,
     executablePath: "/app/bin/echo-memory-mcp",
     recentCalls: [],
@@ -97,7 +97,7 @@ describe("知识库侧栏", () => {
   it("MCP 授权口径文案如实讲明原文层与确认门槛", async () => {
     renderPanel();
     expect(
-      await screen.findByText("全部记录的标题、逐字稿与文档原文（只读）；记忆条目仅限已确认内容"),
+      await screen.findByText("全部记录的标题、逐字稿与文档原文（只读；未确认的导入内容除外）；记忆条目仅限已确认内容"),
     ).toBeTruthy();
   });
 });

@@ -126,6 +126,52 @@ fn unconfirmed_imports_are_invisible_across_mcp_exits() {
     );
     assert!(decisions.is_empty() && action_items.is_empty());
 
+    // 独立工具出口（终审 P0 补测）：未确认导入的分析派生待办不得从
+    // list_action_items 漏出。给 chat 记录补一份带待办的分析。
+    let (version, chat_segs) = repo
+        .save_transcript(&chat.id, "import", "v1", &[seg(0, "派生待办的来源段落。")])
+        .unwrap();
+    repo.save_analysis(
+        &chat.id,
+        &version.id,
+        "test-model",
+        &echo_memory_lib::analysis::AnalysisDraft {
+            summary: "含机密的分析LEAKSUM".into(),
+            key_points: vec![],
+            decisions: vec![],
+            action_items: vec![echo_memory_lib::analysis::AnalysisItemDraft {
+                owner: None,
+                text: "机密待办LEAKTODO".into(),
+                citation_segment_ids: vec![chat_segs[0].id.clone()],
+                quote_text: "派生待办的来源段落。".into(),
+                start_ms: Some(0),
+                end_ms: Some(1_000),
+            }],
+            open_questions: vec![],
+            custom_sections: vec![],
+            chapters: vec![],
+            highlights: vec![],
+            quality_warning: None,
+            quality_severity: None,
+        },
+    )
+    .unwrap();
+    let leaked = repo.mcp_list_action_items(None, None).unwrap();
+    assert!(
+        !leaked
+            .iter()
+            .any(|item| item.record_id == chat.id && item.title.contains("LEAKTODO")),
+        "未确认导入的派生待办泄漏到独立工具 list_action_items：{leaked:?}"
+    );
+    assert!(
+        !repo
+            .mcp_search("LEAKTODO", None, 10)
+            .unwrap()
+            .iter()
+            .any(|item| item.record_id == chat.id),
+        "分析待办文本不应能被搜索命中（未确认）"
+    );
+
     // 录音不受影响（原文可读）。
     let (record, transcript) = repo.mcp_get_record(&recording.id).unwrap();
     assert_eq!(record.id, recording.id);
@@ -137,15 +183,23 @@ fn unconfirmed_imports_are_invisible_across_mcp_exits() {
     let (record, transcript) = repo.mcp_get_record(&chat.id).unwrap();
     assert_eq!(record.id, chat.id);
     assert!(
-        transcript[0].original_text.contains("GATE1"),
-        "确认后应能读到原文（含逐字稿溯源坐标）"
+        transcript[0].original_text.contains("派生待办"),
+        "确认后应能读到原文（含逐字稿溯源坐标；最新版本）"
     );
     assert!(
-        repo.mcp_search("GATE1", None, 10)
+        repo.mcp_search("派生待办", None, 10)
             .unwrap()
             .iter()
             .any(|item| item.record_id == chat.id),
-        "确认后应可被搜索命中"
+        "确认后应可被搜索命中（含其分析派生内容）"
+    );
+    // 独立工具出口同步放行（终审修1 的正向断言）。
+    let released = repo.mcp_list_action_items(None, None).unwrap();
+    assert!(
+        released
+            .iter()
+            .any(|item| item.record_id == chat.id && item.title.contains("LEAKTODO")),
+        "确认后派生待办应可见：{released:?}"
     );
 
     // —— 第三轮：撤回后再次不可见（与纪要条目同语义，双向可逆）——
@@ -154,11 +208,19 @@ fn unconfirmed_imports_are_invisible_across_mcp_exits() {
     assert!(repo.mcp_get_record(&chat.id).is_err());
     assert!(
         !repo
-            .mcp_search("GATE1", None, 10)
+            .mcp_search("派生待办", None, 10)
             .unwrap()
             .iter()
             .any(|item| item.record_id == chat.id),
         "撤回后不应被搜索命中"
+    );
+    assert!(
+        !repo
+            .mcp_list_action_items(None, None)
+            .unwrap()
+            .iter()
+            .any(|item| item.record_id == chat.id),
+        "撤回后派生待办应再次不可见"
     );
 
     // —— 第四轮：重新确认后归档，搜索与项目上下文排除归档（原文层 get_record 属 v1.0 既有口径）——
@@ -268,6 +330,14 @@ fn list_confirmed_minutes_respects_range_and_gates() {
         .unwrap();
     assert_eq!(ancient.len(), 1);
     assert_eq!(ancient[0].item_id, "m-live");
+
+    // 终审修3：date-only 的 until 是「含当日」——今天创建的记录必须被包含。
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let todays = repo
+        .list_confirmed_minutes_in_range(None, Some(&today), None, 20)
+        .unwrap();
+    assert_eq!(todays.len(), 1, "date-only until 必须含当日：{todays:?}");
+    assert_eq!(todays[0].item_id, "m-live");
 
     // 知识库过滤：其他项目的条目不串台。
     let other_project = repo.create_project("另一个库").unwrap();

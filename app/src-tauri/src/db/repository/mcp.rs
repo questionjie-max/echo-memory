@@ -29,6 +29,24 @@ impl LibraryRepository {
         Ok(value == "true")
     }
 
+    /// 终审修3：时间边界的「含当日」语义。裸日期（YYYY-MM-DD）按字典序会把
+    /// 整天排除（RFC3339 datetime 串 > 纯日期串），归一化为当日首/末再比较。
+    fn normalize_time_bound(bound: &str, end_of_day: bool) -> String {
+        let trimmed = bound.trim();
+        let date_only = trimmed.len() == 10
+            && trimmed.as_bytes().get(4) == Some(&b'-')
+            && !trimmed.contains('T')
+            && !trimmed.contains(':')
+            && !trimmed.contains(' ');
+        if date_only && end_of_day {
+            format!("{trimmed}T23:59:59.999999999Z")
+        } else if date_only {
+            format!("{trimmed}T00:00:00.000Z")
+        } else {
+            trimmed.to_owned()
+        }
+    }
+
     /// 块5：按时间范围取已确认纪要条目（新 MCP 工具 list_confirmed_minutes 的数据层）。
     /// 只返回 confirmed 且记录未归档的条目（与 get_my_context 同一门），每条带溯源坐标
     /// （记录标题、证据时间窗、逐字引文、确认时间）。时间范围按记录的 imported_at 过滤。
@@ -39,6 +57,8 @@ impl LibraryRepository {
         project_id: Option<&str>,
         limit: usize,
     ) -> AppResult<Vec<ConfirmedMinutesMemoryEntry>> {
+        let since = since.map(|bound| Self::normalize_time_bound(bound, false));
+        let until = until.map(|bound| Self::normalize_time_bound(bound, true));
         let connection = self.connect()?;
         let mut statement = connection
             .prepare(
@@ -85,6 +105,21 @@ impl LibraryRepository {
             .map_err(|error| AppError::Invalid(format!("读取已确认纪要失败：{error}")))?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|error| AppError::Invalid(format!("读取已确认纪要失败：{error}")))
+    }
+
+    /// 块8 终审修1（P0）：独立工具 list_action_items 同样过导入确认门——
+    /// 未确认导入的分析派生待办（含其 title 文本）不得从该出口漏出。
+    pub fn mcp_list_action_items(
+        &self,
+        project_id: Option<&str>,
+        status: Option<&str>,
+    ) -> AppResult<Vec<crate::types::ActionItem>> {
+        let unconfirmed = self.unconfirmed_import_ids()?;
+        Ok(self
+            .list_action_items(project_id, status)?
+            .into_iter()
+            .filter(|item| !unconfirmed.contains(&item.record_id))
+            .collect())
     }
 
     /// 块4 导入确认门：未确认的 document/chat 记录对 MCP 完全不可见。
@@ -202,7 +237,7 @@ impl LibraryRepository {
             .collect::<Result<Vec<_>, rusqlite::Error>>()?;
         Ok(McpStatus {
             enabled: self.mcp_enabled()?,
-            authorized_scope: "全部记录的标题、逐字稿与文档原文（只读）；记忆条目仅限已确认内容".to_owned(),
+            authorized_scope: "全部记录的标题、逐字稿与文档原文（只读；未确认的导入内容除外）；记忆条目仅限已确认内容".to_owned(),
             executable_available: false,
             executable_path: None,
             recent_calls,
@@ -271,17 +306,23 @@ pub struct ConfirmedMinutesMemoryEntry {
 mod scope_copy_tests {
     use super::*;
 
-    /// 块3/F1 契约测试：MCP 授权口径文案必须如实讲两层——
-    /// 原文层（记录标题/逐字稿/文档原文，只读、本就可读）与
-    /// 记忆条目层（仅 confirmed）。缺任何一半都会误导用户。
+    /// 块3/F1 契约测试：MCP 授权口径文案必须如实讲三层——
+    /// 原文层（记录标题/逐字稿/文档原文，只读、本就可读）、
+    /// 导入确认门（未确认的导入内容除外，块4）、
+    /// 记忆条目层（仅 confirmed）。缺任何一层都会误导用户。
     #[test]
     fn authorized_scope_copy_states_both_layers() {
         let root = std::env::temp_dir().join(format!("echo-mcp-scope-{}", uuid::Uuid::new_v4()));
         let library = crate::library::ManagedLibrary::open(root).unwrap();
         let status = library.repository().mcp_status().unwrap();
         assert!(
-            status.authorized_scope.contains("（只读）"),
+            status.authorized_scope.contains("只读"),
             "口径文案应声明只读：{}",
+            status.authorized_scope
+        );
+        assert!(
+            status.authorized_scope.contains("未确认"),
+            "口径文案应讲明未确认导入被排除（块4 导入确认门）：{}",
             status.authorized_scope
         );
         assert!(
