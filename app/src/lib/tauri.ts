@@ -118,6 +118,11 @@ export function setRecordArchived(recordId: string, archived: boolean): Promise<
   return invoke<RecordBrief>("set_record_archived", { recordId, archived });
 }
 
+/** 块4：导入内容确认门——确认后内容才对 MCP 可见，撤回立即收回。 */
+export function setRecordImportConfirmed(recordId: string, confirmed: boolean): Promise<RecordBrief> {
+  return invoke<RecordBrief>("set_record_import_confirmed", { recordId, confirmed });
+}
+
 export function getRecord(id: string): Promise<RecordBrief> {
   return invoke<RecordBrief>("get_record", { id });
 }

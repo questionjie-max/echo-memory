@@ -865,6 +865,8 @@ function isPending(record: RecordBrief) {
 
 function statusLabel(record: RecordBrief) {
   if (isProcessing(record.status) || record.status === "failed") return STATUS_LABEL[record.status];
+  // 块4 导入确认门：未确认的导入内容对 AI 助手（MCP）不可见，用户需要一眼看到这个状态。
+  if (isImportGatePending(record)) return "待确认入记忆";
   if (record.sourceType === "chat") return "对话档案";
   if (!record.hasAnalysis && record.lastAnalysisError) return "分析失败";
   if (record.analysisStatus === "stale") return "分析需要更新";
@@ -875,9 +877,18 @@ function statusLabel(record: RecordBrief) {
   return "已完成";
 }
 
+/** 块4：只有 document/chat 走导入确认门；音频记录无确认语义。 */
+function isImportGatePending(record: RecordBrief) {
+  return (
+    (record.sourceType === "document" || record.sourceType === "chat") &&
+    !record.importConfirmedAt
+  );
+}
+
 function statusTone(record: RecordBrief) {
   if (record.status === "failed") return "error";
   if (isProcessing(record.status)) return "progress";
+  if (isImportGatePending(record)) return "attention";
   // 对话档案是类目词而非待办状态：不用错误/待办色，与「已完成」同色。
   if (record.sourceType === "chat") return "done";
   if (!record.hasAnalysis && record.lastAnalysisError) return "error";

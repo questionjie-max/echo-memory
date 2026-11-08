@@ -88,6 +88,7 @@ pub fn run() {
             commands::list_records,
             commands::list_archived_records,
             commands::set_record_archived,
+            commands::set_record_import_confirmed,
             commands::search_records,
             commands::get_knowledge_overview,
             commands::get_knowledge_index_status,

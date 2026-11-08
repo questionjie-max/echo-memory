@@ -22,7 +22,8 @@ const RECORD_SELECT: &str = "SELECT records.id, records.title, records.project_i
         SELECT json_extract(content_json, '$.quality_warning') IS NOT NULL \
         FROM analyses WHERE analyses.record_id = records.id \
         ORDER BY created_at DESC LIMIT 1 \
-    ), 0) \
+    ), 0), \
+    records.import_confirmed_at \
     FROM records LEFT JOIN projects ON projects.id = records.project_id";
 
 impl LibraryRepository {
@@ -62,6 +63,7 @@ impl LibraryRepository {
             progress_current: 0,
             progress_total: 0,
             archived_at: None,
+            import_confirmed_at: None,
         };
         self.connect()?.execute(
             "INSERT INTO records \
@@ -148,6 +150,7 @@ impl LibraryRepository {
             progress_current: 0,
             progress_total: 0,
             archived_at: None,
+            import_confirmed_at: None,
         };
         let job = ProcessingJob {
             id: Uuid::new_v4().to_string(),
@@ -476,6 +479,47 @@ impl LibraryRepository {
         self.get_record(id)
     }
 
+    /// 块4：导入内容确认门——document/chat 记录的「确认入记忆 / 撤回」。
+    /// 与纪要条目同语义：随时双向可逆；确认才对 MCP 可见。
+    /// 录音类记录没有确认语义（原文层 v1.0 起对 MCP 可读），调用此方法于事无补但也无害。
+    pub fn set_import_confirmed(&self, id: &str, confirmed: bool) -> AppResult<RecordBrief> {
+        let now = Utc::now().to_rfc3339();
+        let confirmed_at: Option<&str> = confirmed.then_some(now.as_str());
+        let affected = self.connect()?.execute(
+            "UPDATE records SET import_confirmed_at = ?2, updated_at = ?3 WHERE id = ?1",
+            params![id, confirmed_at, now],
+        )?;
+        if affected == 0 {
+            return Err(AppError::NotFound(format!("record {id}")));
+        }
+        self.get_record(id)
+    }
+
+    /// 块4：该记录是否为「未确认的导入内容」（document/chat 且未确认）。
+    /// MCP 原文层据此拦截；app 自身视图不受影响（用户能看到自己的暂定内容）。
+    pub fn is_unconfirmed_import(&self, id: &str) -> AppResult<bool> {
+        let count: i64 = self.connect()?.query_row(
+            "SELECT COUNT(*) FROM records WHERE id = ?1 \
+             AND source_type IN ('document', 'chat') AND import_confirmed_at IS NULL",
+            params![id],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
+    /// 块4：全部未确认导入记录的 id（MCP 侧过滤 search/list 用）。
+    pub fn list_unconfirmed_import_ids(&self) -> AppResult<Vec<String>> {
+        let connection = self.connect()?;
+        let mut statement = connection.prepare(
+            "SELECT id FROM records \
+             WHERE source_type IN ('document', 'chat') AND import_confirmed_at IS NULL",
+        )?;
+        let ids = statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, rusqlite::Error>>()?;
+        Ok(ids)
+    }
+
     pub fn update_record_project(
         &self,
         id: &str,
@@ -619,6 +663,7 @@ impl LibraryRepository {
             progress_total: row.get(14)?,
             source_type: row.get(15)?,
             archived_at: row.get(16)?,
+            import_confirmed_at: row.get(18)?,
         })
     }
 }

@@ -322,7 +322,7 @@ export default function ChatImportDialog({
                 <span aria-hidden="true"><ShieldCheckIcon size={18} /></span>
                 <p>
                   <strong>隐私说明</strong>
-                  <span>只读取上述白名单位置，绝不全盘扫描；扫到的每个文件在导入前都可见、可取消；全程本机完成，不上传任何内容。</span>
+                  <span>只读取上述白名单位置，绝不全盘扫描；扫到的每个文件在导入前都可见、可取消；全程本机完成，不上传任何内容。导入后先以暂定态入库，你的 AI 助手（MCP）看不到它；在详情页「确认入记忆」后才会可见，可随时撤回。</span>
                 </p>
               </aside>
               <div className="chat-import-scan-actions">

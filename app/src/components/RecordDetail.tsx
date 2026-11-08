@@ -39,6 +39,7 @@ import {
   updateRecordKnowledgeBase,
   updateRecordTitle,
   updateTranscriptSegment,
+  setRecordImportConfirmed,
 } from "../lib/tauri";
 import { listen } from "@tauri-apps/api/event";
 import { formatMinutesSeconds as formatTime, isProcessingStatus as isProcessing } from "../lib/format";
@@ -558,8 +559,49 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
 
   const activeProjects = projects.filter((project) => project.status === "active" || project.id === currentRecord.projectId);
 
+  // 块4 导入确认门：未确认的导入内容对 AI 助手（MCP）不可见。
+  const importGatePending =
+    (currentRecord.sourceType === "document" || currentRecord.sourceType === "chat") &&
+    !currentRecord.importConfirmedAt;
+
+  async function toggleImportConfirmed() {
+    setBusy(true);
+    setError("");
+    try {
+      const updated = await setRecordImportConfirmed(currentRecord.id, !currentRecord.importConfirmedAt);
+      setCurrentRecord(updated);
+      onChanged(updated);
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <section className="detail-pane" aria-label={isDocument ? "文档详情" : "录音详情"}>
+      {importGatePending && (
+        <div className="import-gate-banner" role="status">
+          <p>
+            这份导入内容还没确认入记忆：在确认之前，你的 AI 助手（MCP）看不到它。
+          </p>
+          <div>
+            <button type="button" className="primary-button" disabled={busy} onClick={() => void toggleImportConfirmed()}>
+              确认入记忆
+            </button>
+          </div>
+        </div>
+      )}
+      {!importGatePending && (currentRecord.sourceType === "document" || currentRecord.sourceType === "chat") && currentRecord.importConfirmedAt && (
+        <div className="import-gate-banner confirmed" role="status">
+          <p>已确认入记忆，AI 助手（MCP）可以读到这份内容的原文。</p>
+          <div>
+            <button type="button" className="secondary-button" disabled={busy} onClick={() => void toggleImportConfirmed()}>
+              撤回
+            </button>
+          </div>
+        </div>
+      )}
       <header className="detail-header">
         <div className="detail-title">
           <span className={`status-dot status-${statusTone(currentRecord)}`} aria-hidden="true" />

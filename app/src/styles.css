@@ -260,6 +260,10 @@ input::placeholder, textarea::placeholder { color: var(--em-ink-4); }
    「说话人」就落到了那个 minmax(0,1fr) 行上，逐字稿一超高该行被压成 0 像素，
    内容溢出后正好压在「相关记录」上面。 */
 .detail-pane { display: flex; flex-direction: column; background: var(--em-pane); overflow: hidden; }
+/* 块4 导入确认门横幅：确认前对 MCP 不可见的状态要显眼但不惊吓（非错误色）。 */
+.import-gate-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 20px; border-bottom: 1px solid var(--em-line); background: var(--em-soft-fill-2); }
+.import-gate-banner p { margin: 0; font-size: 13px; color: var(--em-ink-2); }
+.import-gate-banner button { flex-shrink: 0; }
 .detail-empty { display: grid; place-items: center; background: var(--em-pane); color: var(--em-ink-4); text-align: center; }
 .detail-empty h2 { color: var(--em-ink-2); font-size: 16px; margin: 0; }
 .detail-empty p { font-size: 13px; margin: 5px 0 0; }

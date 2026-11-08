@@ -162,6 +162,18 @@ mod tests {
             )
             .unwrap();
         assert_eq!(archived_column, 1, "records 必须包含 archived_at 归档字段");
+
+        let import_confirmed_column: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('records') WHERE name = 'import_confirmed_at'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            import_confirmed_column, 1,
+            "records 必须包含 import_confirmed_at 导入确认门字段"
+        );
     }
 
     /// 发布包里的迁移文件必须随 resources 一起分发：只靠编译机的源码路径，

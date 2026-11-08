@@ -264,7 +264,7 @@ export default function DocumentImportDialog({
             <span aria-hidden="true"><ShieldCheckIcon size={18} /></span>
             <p>
               <strong>隐私说明</strong>
-              <span>文件在本机读取和保存。若当前分析配置使用外部 AI，提取出的文字会按你的现有设置发送；原始文档不会直接上传。</span>
+              <span>文件在本机读取和保存。若当前分析配置使用外部 AI，提取出的文字会按你的现有设置发送；原始文档不会直接上传。导入后先以暂定态入库，你的 AI 助手（MCP）看不到它；在详情页「确认入记忆」后才会可见，可随时撤回。</span>
             </p>
           </aside>
 

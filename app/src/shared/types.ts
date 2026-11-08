@@ -197,6 +197,8 @@ export interface RecordBrief {
   progressCurrent: number;
   progressTotal: number;
   archivedAt: string | null;
+  /** 块4 导入确认门：document/chat 的确认时间；null=未确认（对 MCP 不可见）。录音类无此语义（null 但不显示未确认）。 */
+  importConfirmedAt: string | null;
 }
 
 export interface TranscriptSegment {

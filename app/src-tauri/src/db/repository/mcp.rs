@@ -29,6 +29,95 @@ impl LibraryRepository {
         Ok(value == "true")
     }
 
+    /// 块4 导入确认门：未确认的 document/chat 记录对 MCP 完全不可见。
+    /// 门语义集中在 lib（可测试），二进制只做 JSON-RPC 壳。
+    fn ensure_import_confirmed(&self, record_id: &str) -> AppResult<()> {
+        if self.is_unconfirmed_import(record_id)? {
+            return Err(crate::error::AppError::Invalid(
+                "该记录是尚未确认的导入内容，对 AI 助手不可见；请在回声记忆里确认入记忆后再试。".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn unconfirmed_import_ids(&self) -> AppResult<std::collections::HashSet<String>> {
+        Ok(self
+            .list_unconfirmed_import_ids()?
+            .into_iter()
+            .collect())
+    }
+
+    /// MCP search_records：应用内搜索的同一召回，叠加导入确认门过滤。
+    pub fn mcp_search(&self, query: &str, project_id: Option<&str>, limit: usize) -> AppResult<Vec<crate::types::SearchResult>> {
+        let unconfirmed = self.unconfirmed_import_ids()?;
+        Ok(self
+            .search(query, project_id, false, limit)?
+            .into_iter()
+            .filter(|item| !unconfirmed.contains(&item.record_id))
+            .collect())
+    }
+
+    /// MCP get_record：元数据 + 最新逐字稿前 100 段；未确认导入拒绝。
+    pub fn mcp_get_record(
+        &self,
+        record_id: &str,
+    ) -> AppResult<(crate::types::RecordBrief, Vec<crate::types::TranscriptSegment>)> {
+        self.ensure_import_confirmed(record_id)?;
+        let record = self.get_record(record_id)?;
+        let transcript = self.list_transcript_segments(record_id)?;
+        Ok((record, transcript.into_iter().take(100).collect()))
+    }
+
+    /// MCP get_transcript：时间窗过滤的逐字稿段；未确认导入拒绝。
+    pub fn mcp_get_transcript(
+        &self,
+        record_id: &str,
+        start_ms: i64,
+        end_ms: i64,
+    ) -> AppResult<Vec<crate::types::TranscriptSegment>> {
+        self.ensure_import_confirmed(record_id)?;
+        Ok(self
+            .list_transcript_segments(record_id)?
+            .into_iter()
+            .filter(|segment| segment.end_ms >= start_ms && segment.start_ms <= end_ms)
+            .take(100)
+            .collect())
+    }
+
+    /// MCP get_project_context：项目内记录列表 + 决策 + 待办，全部过滤未确认导入。
+    pub fn mcp_project_context(
+        &self,
+        project_id: &str,
+    ) -> AppResult<(
+        Vec<crate::types::RecordBrief>,
+        Vec<serde_json::Value>,
+        Vec<crate::types::ActionItem>,
+    )> {
+        let unconfirmed = self.unconfirmed_import_ids()?;
+        let records = self
+            .list_records(Some(project_id), false)?
+            .into_iter()
+            .filter(|record| !unconfirmed.contains(&record.id))
+            .take(20)
+            .collect();
+        let decisions = self
+            .list_decisions(Some(project_id), 20)?
+            .into_iter()
+            .filter(|item| {
+                item.get("recordId")
+                    .and_then(serde_json::Value::as_str)
+                    .map(|id| !unconfirmed.contains(id))
+                    .unwrap_or(true)
+            })
+            .collect();
+        let action_items = self
+            .list_action_items(Some(project_id), None)?
+            .into_iter()
+            .filter(|item| !unconfirmed.contains(&item.record_id))
+            .collect();
+        Ok((records, decisions, action_items))
+    }
+
     pub fn set_mcp_enabled(&self, enabled: bool) -> AppResult<McpStatus> {
         self.connect()?.execute(
             "INSERT INTO app_settings (key, value, updated_at) VALUES ('mcp_enabled', ?1, ?2) \

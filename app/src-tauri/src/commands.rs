@@ -745,6 +745,21 @@ pub fn set_record_archived(
     Ok(updated)
 }
 
+/// 块4：导入内容确认门——document/chat 记录「确认入记忆 / 撤回」。
+/// 确认后内容才对 MCP 可见；撤回立即收回（与纪要条目同语义，双向可逆）。
+#[tauri::command]
+pub fn set_record_import_confirmed(
+    state: State<AppState>,
+    record_id: String,
+    confirmed: bool,
+) -> Result<RecordBrief, String> {
+    state
+        .library
+        .repository()
+        .set_import_confirmed(&record_id, confirmed)
+        .map_err(|e| e.to_frontend())
+}
+
 #[tauri::command]
 pub fn search_records(
     state: State<AppState>,

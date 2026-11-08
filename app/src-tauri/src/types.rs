@@ -37,6 +37,9 @@ pub struct RecordBrief {
     pub progress_current: i64,
     pub progress_total: i64,
     pub archived_at: Option<String>,
+    /// 块4 导入确认门：document/chat 记录的用户确认时间；NULL=未确认（对 MCP 不可见）。
+    /// 录音类记录没有确认语义，SQL 侧按 source_type 区分（录音恒可读原文层）。
+    pub import_confirmed_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
