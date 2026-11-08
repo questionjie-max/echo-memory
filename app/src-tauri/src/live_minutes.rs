@@ -26,6 +26,13 @@ pub const INCREMENTAL_MIN_NEW_SEGMENTS: usize = 2;
 pub const CHECK_TICK: Duration = Duration::from_secs(5);
 /// 增量事件名（前端监听）。
 pub const LIVE_MINUTES_EVENT: &str = "live-minutes";
+/// 模型通道不可用的一次性事件名（前端监听）。块3/F4：不再静默退化——
+/// 实时纪要没在工作这件事，用户必须能从界面知道。
+pub const LIVE_MINUTES_UNAVAILABLE_EVENT: &str = "live-minutes-unavailable";
+/// 不可用提示文案（契约测试锁定关键词，前端原样展示）。
+pub fn unavailable_message() -> &'static str {
+    "实时纪要需要本机 Ollama 或已配置的外部文本理解通道，当前没有可用通道；录音与实时文字不受影响。"
+}
 /// 单次增量提示词正文预算（字符）：与事后分块同量级，防上下文溢出。
 /// 两次成功运行之间新增内容超过预算时按新增量放宽（账实相符优先）；
 /// 连续失败时丢弃 previous_json 重开，防「文档涨超输出上限 → 截断 → 解析
@@ -196,9 +203,9 @@ fn build_incremental_prompt(segments: &[TranscriptSegment], previous: Option<&st
     prompt
 }
 
-/// 增量引擎共享实时文字线程的停止信号；模型不可用时静默退化
-/// （本机 LLM 通道缺席时本场无增量纪要，实时文字与录音照常——
-/// 已知静默退化，不另发事件以免与实时文字的 unavailable 重复打扰）。
+/// 增量引擎共享实时文字线程的停止信号；模型不可用时发一次性提示事件
+/// （块3/F4：从静默退化改为如实告知——用户必须能知道实时纪要没在工作；
+/// 每会话只发一次，避免与实时文字的 unavailable 重复打扰）。
 pub fn spawn_incremental(
     app: tauri::AppHandle,
     library: ManagedLibrary,
@@ -229,10 +236,16 @@ fn run_incremental_loop(
     source: &'static str,
     stop: Arc<AtomicBool>,
 ) {
-    // 模型/通道不可用 → 增量纪要静默退化，实时文字照常。
+    // 模型/通道不可用 → 发一次提示事件后退场（块3/F4）；实时文字照常。
     let generator = match MinutesGenerator::detect(&library) {
         Ok(generator) => generator,
-        Err(_) => return,
+        Err(_) => {
+            let _ = app.emit(
+                LIVE_MINUTES_UNAVAILABLE_EVENT,
+                serde_json::json!({"sessionId": session_id, "message": unavailable_message()}),
+            );
+            return;
+        }
     };
     let mut state = IncrementalState {
         // 首轮同样受 45s 节流：启动即计时，口径统一为「≥45s 且 ≥2 句」。
@@ -318,6 +331,17 @@ fn run_incremental_loop(
 mod tests {
     use super::*;
     use crate::live_transcript::LiveSegment;
+
+    /// 块3/F4 契约测试：不可用提示必须讲清「缺什么、影响什么、不影响什么」。
+    #[test]
+    fn unavailable_notice_names_channel_and_scope() {
+        let message = unavailable_message();
+        assert!(message.contains("Ollama"), "应点名通道：{message}");
+        assert!(
+            message.contains("录音与实时文字不受影响"),
+            "应讲明不受影响的部分：{message}"
+        );
+    }
 
     fn live_segment(start_ms: i64, end_ms: i64, text: &str) -> LiveSegment {
         LiveSegment {

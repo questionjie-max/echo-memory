@@ -138,6 +138,11 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
   const [liveView, setLiveView] = useState<LiveTranscriptView>(emptyLiveView());
   const [liveMessage, setLiveMessage] = useState("");
   const [liveMinutes, setLiveMinutes] = useState<LiveMinutesEventPayload | null>(null);
+  // 块3/F4：本会话实时纪要通道不可用（后端每会话发一次，文案随事件带出）。
+  const [liveMinutesUnavailable, setLiveMinutesUnavailable] = useState<{
+    sessionId: string;
+    message: string;
+  } | null>(null);
   // 双路模式由前端发起（backend 侧 stop/pause/cancel 按双路态自动分发）。
   const [dualActive, setDualActive] = useState(false);
 
@@ -162,6 +167,7 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
       setLiveView(emptyLiveView());
       setLiveMessage("");
       setLiveMinutes(null);
+      setLiveMinutesUnavailable(null);
     }
   }, [state?.sessionId]);
 
@@ -171,6 +177,7 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
       setLiveMessage("");
       // 停止后增量纪要整体丢弃：权威来源是停止后的事后纪要（无冲突残留）。
       setLiveMinutes(null);
+      setLiveMinutesUnavailable(null);
       setDualActive(false);
     }
   }, [active]);
@@ -205,6 +212,14 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
         const payload = event.payload;
         if (payload.sessionId !== liveSessionRef.current) return;
         setLiveMinutes(payload);
+      }),
+    );
+    track(
+      listen<{ sessionId: string; message: string }>("live-minutes-unavailable", (event) => {
+        const payload = event.payload;
+        if (payload.sessionId !== liveSessionRef.current) return;
+        // 后端每会话只发一次；事件到达即表示本会话不会再有 live-minutes 数据。
+        setLiveMinutesUnavailable(payload);
       }),
     );
     return () => {
@@ -561,6 +576,11 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
             </div>
             {liveMessage && <p className="live-transcript-status" role="status">{liveMessage}</p>}
           </div>
+          {liveMinutesUnavailable && liveMinutesUnavailable.sessionId === state?.sessionId && !liveMinutes && (
+            <div className="live-minutes" aria-label="实时纪要不可用">
+              <p className="live-transcript-status" role="status">{liveMinutesUnavailable.message}</p>
+            </div>
+          )}
           {liveMinutes && (
             <div className="live-minutes" aria-label="实时纪要">
               <div className="live-minutes-heading">
