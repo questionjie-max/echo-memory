@@ -5,6 +5,7 @@
 #![cfg(feature = "mcp-bin")]
 
 use echo_memory_lib::library::ManagedLibrary;
+use echo_memory_lib::minutes::{MinutesDocument, MinutesEvidence, MinutesItem, MinutesItemKind, MinutesItemStatus};
 use echo_memory_lib::types::TranscriptSegmentInput;
 use std::path::Path;
 
@@ -14,6 +15,45 @@ fn seg(start: i64, text: &str) -> TranscriptSegmentInput {
         end_ms: start + 1_000,
         speaker_label: Some("用户".into()),
         original_text: text.into(),
+    }
+}
+
+/// 造一条纪要条目（直接走仓储，绕过模型）；confirm=false 时保持暂定态。
+fn add_minutes(
+    repo: &echo_memory_lib::db::repository::LibraryRepository,
+    record_id: &str,
+    item_id: &str,
+    text: &str,
+    quote: &str,
+    confirm: bool,
+) {
+    repo.ensure_minutes_pending(record_id).unwrap();
+    repo.save_minutes_document(
+        record_id,
+        "ollama",
+        "qwen2.5:7b",
+        &MinutesDocument {
+            topics: vec![],
+            conclusions: vec![MinutesItem {
+                id: item_id.into(),
+                kind: MinutesItemKind::Conclusion,
+                text: text.into(),
+                owner: None,
+                evidence: MinutesEvidence {
+                    start_ms: 1_000,
+                    end_ms: 5_000,
+                    quote_text: quote.into(),
+                },
+            }],
+            action_items: vec![],
+            glossary: vec![],
+            dropped_unverifiable: 0,
+        },
+    )
+    .unwrap();
+    if confirm {
+        repo.set_minutes_item_status(item_id, MinutesItemStatus::Confirmed)
+            .unwrap();
     }
 }
 
@@ -169,5 +209,85 @@ fn migration_backfills_existing_imports_as_confirmed() {
     );
     assert!(repo.is_unconfirmed_import(&doc.id).unwrap());
     assert!(!repo.list_unconfirmed_import_ids().unwrap().is_empty());
+    std::fs::remove_dir_all(&root).ok();
+}
+
+/// 块5 验收：list_confirmed_minutes（按时间范围取已确认纪要）的可见性与范围语义。
+/// 三类数据（已确认/暂定/归档上的已确认）逐出口断言；时间范围以记录时间为准。
+#[test]
+fn list_confirmed_minutes_respects_range_and_gates() {
+    let root = std::env::temp_dir().join(format!("echo-m5-{}", uuid::Uuid::new_v4()));
+    let library = ManagedLibrary::open(&root).unwrap();
+    let repo = library.repository();
+    let project = repo.create_project("块五项目").unwrap();
+
+    let live = repo
+        .create_record("在库录音", Some(&project.id), Path::new("audio/a.wav"), "h-a", 60_000)
+        .unwrap();
+    repo.save_transcript(&live.id, "whisper.cpp", "base", &[seg(1_000, "会议确认了发布日期定档。")])
+        .unwrap();
+    add_minutes(&repo, &live.id, "m-live", "发布日期定档结论", "会议确认了发布日期定档。", true);
+
+    // 暂定条目（不确认）——任何出口都不该出现。
+    let pending = repo
+        .create_record("暂定录音", Some(&project.id), Path::new("audio/b.wav"), "h-b", 60_000)
+        .unwrap();
+    repo.save_transcript(&pending.id, "whisper.cpp", "base", &[seg(1_000, "暂定条目不该出现。")])
+        .unwrap();
+    add_minutes(&repo, &pending.id, "m-pending", "暂定纪要M5P", "暂定条目不该出现。", false);
+
+    // 归档记录上的已确认条目——不该出现。
+    let archived = repo
+        .create_record("归档录音", Some(&project.id), Path::new("audio/c.wav"), "h-c", 60_000)
+        .unwrap();
+    repo.save_transcript(&archived.id, "whisper.cpp", "base", &[seg(1_000, "归档条目不该出现。")])
+        .unwrap();
+    add_minutes(&repo, &archived.id, "m-arch", "归档纪要M5A", "归档条目不该出现。", true);
+    repo.set_record_archived(&archived.id, true).unwrap();
+
+    repo.set_mcp_enabled(true).unwrap();
+
+    // 全量（无范围）：只有 live 的已确认条目；暂定与归档条目缺席即断言成立。
+    let all = repo.list_confirmed_minutes_in_range(None, None, None, 20).unwrap();
+    assert_eq!(all.len(), 1, "只应有 1 条已确认未归档条目：{all:?}");
+    assert_eq!(all[0].item_id, "m-live");
+    assert_eq!(all[0].record_title, "在库录音");
+    assert_eq!(all[0].quote_text, "会议确认了发布日期定档。");
+    assert!(all[0].start_ms == 1_000 && all[0].end_ms == 5_000, "溯源时间窗必须带上");
+    assert!(!all[0].confirmed_at.is_empty());
+
+    // 时间下界在未来：空。
+    let none = repo
+        .list_confirmed_minutes_in_range(Some("2099-01-01"), None, None, 20)
+        .unwrap();
+    assert!(none.is_empty(), "未来下界不应返回条目");
+
+    // 时间下界在远古：返回全部（边界语义：since/until 是包含式过滤）。
+    let ancient = repo
+        .list_confirmed_minutes_in_range(Some("2000-01-01"), None, None, 20)
+        .unwrap();
+    assert_eq!(ancient.len(), 1);
+    assert_eq!(ancient[0].item_id, "m-live");
+
+    // 知识库过滤：其他项目的条目不串台。
+    let other_project = repo.create_project("另一个库").unwrap();
+    let other = repo
+        .create_record("别库录音", Some(&other_project.id), Path::new("audio/d.wav"), "h-d", 60_000)
+        .unwrap();
+    repo.save_transcript(&other.id, "whisper.cpp", "base", &[seg(1_000, "另一个库的结论。")])
+        .unwrap();
+    add_minutes(&repo, &other.id, "m-other", "别库纪要M5O", "另一个库的结论。", true);
+    let scoped = repo
+        .list_confirmed_minutes_in_range(None, None, Some(&project.id), 20)
+        .unwrap();
+    assert_eq!(scoped.len(), 1);
+    assert_eq!(scoped[0].item_id, "m-live");
+    let unscoped = repo.list_confirmed_minutes_in_range(None, None, None, 20).unwrap();
+    assert_eq!(unscoped.len(), 2);
+
+    // limit 生效。
+    let limited = repo.list_confirmed_minutes_in_range(None, None, None, 1).unwrap();
+    assert_eq!(limited.len(), 1);
+
     std::fs::remove_dir_all(&root).ok();
 }

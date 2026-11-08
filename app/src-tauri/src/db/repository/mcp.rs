@@ -1,5 +1,5 @@
 use super::LibraryRepository;
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::minutes::MinutesEvidence;
 use crate::types::{McpAccessLog, McpStatus};
 use chrono::Utc;
@@ -27,6 +27,64 @@ impl LibraryRepository {
             |row| row.get(0),
         )?;
         Ok(value == "true")
+    }
+
+    /// 块5：按时间范围取已确认纪要条目（新 MCP 工具 list_confirmed_minutes 的数据层）。
+    /// 只返回 confirmed 且记录未归档的条目（与 get_my_context 同一门），每条带溯源坐标
+    /// （记录标题、证据时间窗、逐字引文、确认时间）。时间范围按记录的 imported_at 过滤。
+    pub fn list_confirmed_minutes_in_range(
+        &self,
+        since: Option<&str>,
+        until: Option<&str>,
+        project_id: Option<&str>,
+        limit: usize,
+    ) -> AppResult<Vec<ConfirmedMinutesMemoryEntry>> {
+        let connection = self.connect()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT minutes_items.id, minutes_items.record_id, minutes_items.kind, minutes_items.text, \
+                 minutes_items.owner_text, minutes_items.evidence_json, minutes_items.updated_at, \
+                 records.title, records.imported_at, projects.name \
+                 FROM minutes_items \
+                 JOIN records ON records.id = minutes_items.record_id \
+                 LEFT JOIN projects ON projects.id = records.project_id \
+                 WHERE minutes_items.status = 'confirmed' AND records.archived_at IS NULL \
+                 AND (?1 IS NULL OR records.imported_at >= ?1) \
+                 AND (?2 IS NULL OR records.imported_at <= ?2) \
+                 AND (?3 IS NULL OR records.project_id = ?3) \
+                 ORDER BY records.imported_at DESC LIMIT ?4",
+            )
+            .map_err(|error| AppError::Invalid(format!("读取已确认纪要失败：{error}")))?;
+        let rows = statement
+            .query_map(
+                params![since, until, project_id, limit as i64],
+                |row| {
+                    let evidence: MinutesEvidence =
+                        serde_json::from_str(&row.get::<_, String>(5)?)
+                            .map_err(|_| rusqlite::Error::InvalidColumnType(
+                                5,
+                                "evidence_json".into(),
+                                rusqlite::types::Type::Text,
+                            ))?;
+                    Ok(ConfirmedMinutesMemoryEntry {
+                        item_id: row.get(0)?,
+                        kind: row.get(2)?,
+                        text: row.get(3)?,
+                        owner: row.get(4)?,
+                        record_id: row.get(1)?,
+                        record_title: row.get(7)?,
+                        start_ms: evidence.start_ms,
+                        end_ms: evidence.end_ms,
+                        quote_text: evidence.quote_text,
+                        confirmed_at: row.get(6)?,
+                        record_imported_at: row.get(8)?,
+                        project_name: row.get(9)?,
+                    })
+                },
+            )
+            .map_err(|error| AppError::Invalid(format!("读取已确认纪要失败：{error}")))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| AppError::Invalid(format!("读取已确认纪要失败：{error}")))
     }
 
     /// 块4 导入确认门：未确认的 document/chat 记录对 MCP 完全不可见。
@@ -182,6 +240,8 @@ impl LibraryRepository {
                 end_ms: evidence.end_ms,
                 quote_text: evidence.quote_text,
                 confirmed_at: row.updated_at,
+                record_imported_at: None,
+                project_name: None,
             });
         }
         Ok(entries)
@@ -202,6 +262,9 @@ pub struct ConfirmedMinutesMemoryEntry {
     pub end_ms: i64,
     pub quote_text: String,
     pub confirmed_at: String,
+    /// 块5：记录的发生/导入时间与所属知识库（时间范围检索的过滤基准与展示字段）。
+    pub record_imported_at: Option<String>,
+    pub project_name: Option<String>,
 }
 
 #[cfg(test)]
