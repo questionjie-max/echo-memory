@@ -4,27 +4,55 @@
  * 它是自足的：开始、暂停、继续、停止、放弃全部发生在这张卡片内部，
  * 不另行拉起全局控制条——状态变化只在框内发生，避免"点一下上面多出一条"的割裂感。
  * 录音时的计时与电平也在这里刷新。
+ *
+ * v1.1 起支持两种来源：本机麦克风（原有链路）与系统内放声（ScreenCaptureKit）。
+ * 系统内录的隐私底线在界面层落地：开始前必须走一遍显性告知与确认（确认框里写清
+ * 会录到谁的声音、声音存哪里、入记忆前还要确认），权限被拒时只报错、绝不静默
+ * 继续或改走麦克风。
  */
 import { useEffect, useRef, useState } from "react";
+import { isTauri } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import type {
+  CaptureSource,
+  LiveMinutesEventPayload,
+  LiveStatusPayload,
+  LiveTickPayload,
   MicrophonePermission,
   RecoverableRecording,
   RecordingState,
+  SystemAudioPermission,
 } from "../shared/types";
 import {
+  applyLiveTick,
+  emptyLiveView,
+  formatSegmentTime,
+  type LiveTranscriptView,
+} from "../lib/liveTranscript";
+import {
   cancelRecording,
+  cancelSystemRecording,
   discardRecoverableRecording,
   getRecordingState,
+  getSystemRecordingState,
   listRecoverableRecordings,
   microphonePermission,
   pauseRecording,
+  pauseSystemRecording,
   recoverRecording,
   recordingLevels,
   requestMicrophonePermission,
+  requestSystemAudioPermission,
   resumeRecording,
+  resumeSystemRecording,
   startRecording,
+  startSystemRecording,
   stopRecording,
+  stopSystemRecording,
+  systemAudioPermission,
+  systemRecordingLevels,
   transcribeRecord,
+  isDualRecording,
 } from "../lib/tauri";
 import { formatBytes, formatMinutesSeconds as formatDuration } from "../lib/format";
 import { confirmAction } from "../lib/dialogs";
@@ -54,6 +82,38 @@ function permissionHint(permission: MicrophonePermission): string {
   }
 }
 
+function systemPermissionHint(permission: SystemAudioPermission): string {
+  switch (permission) {
+    case "denied":
+      return "系统声音权限已拒绝。请在「系统设置 → 隐私与安全性 → 屏幕与系统声音录制」中允许回声记忆并重启应用；麦克风录音不受影响。";
+    case "unsupported":
+      return "当前 macOS 不支持系统声采集（需要 macOS 12.3 及以上），可以继续用麦克风录音。";
+    case "granted":
+      return "系统声音录制结束后自动进入转写队列。";
+    default:
+      return "首次使用会请求「屏幕与系统声音录制」权限。";
+  }
+}
+
+/**
+ * 系统内录的显性告知（隐私红线）：开始前用户必须确认过这段话才能开始。
+ * 说清三件事——录到谁的声音、存在哪里、入记忆前还要确认。
+ */
+const SYSTEM_CAPTURE_NOTICE = [
+  "开始录制系统声音前请确认：",
+  "系统内录会录到这台 Mac 正在播放的所有声音——包括线上会议里对方说的话、视频、音乐和提示音。麦克风不会被打开。",
+  "音频只保存在这台 Mac 上，转写与分析全部本机完成；只有你之后亲自确认的内容才会进入记忆库。",
+  "如果录的是会议，请确认你已告知参会者或有权录制。",
+].join("\n\n");
+
+/** 双路录音的显性告知：同时录麦克风与系统声（合并为立体声两个声道）。 */
+const DUAL_CAPTURE_NOTICE = [
+  "开始双路录音前请确认：",
+  "双路录音会同时录制麦克风（你这边的声音）和这台 Mac 正在播放的所有声音（包括线上会议里对方说的话），合并成一个立体声文件保存。",
+  "音频只保存在这台 Mac 上，转写与分析全部本机完成；只有你之后亲自确认的内容才会进入记忆库。",
+  "如果录的是会议，请确认你已告知参会者或有权录制。",
+].join("\n\n");
+
 /** 电平条宽度：把 -60dB~0dB 映射到 0%~100%，与系统表头量程一致。 */
 function levelWidth(db: number | null | undefined): string {
   if (db === null || db === undefined || !Number.isFinite(db)) return "0%";
@@ -61,17 +121,97 @@ function levelWidth(db: number | null | undefined): string {
   return `${normalized}%`;
 }
 
+function isActiveState(state: RecordingState | null): boolean {
+  return state?.status === "recording" || state?.status === "paused";
+}
+
 export default function RecordingEntry({ projectId, onImported, refreshKey }: Props) {
-  const [state, setState] = useState<RecordingState | null>(null);
-  const [permission, setPermission] = useState<MicrophonePermission>("undetermined");
+  const [micState, setMicState] = useState<RecordingState | null>(null);
+  const [sysState, setSysState] = useState<RecordingState | null>(null);
+  const [micPermission, setMicPermission] = useState<MicrophonePermission>("undetermined");
+  const [sysPermission, setSysPermission] = useState<SystemAudioPermission>("undetermined");
   const [recoverable, setRecoverable] = useState<RecoverableRecording[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [captureSource, setCaptureSource] = useState<CaptureSource>("microphone");
+  const [liveView, setLiveView] = useState<LiveTranscriptView>(emptyLiveView());
+  const [liveMessage, setLiveMessage] = useState("");
+  const [liveMinutes, setLiveMinutes] = useState<LiveMinutesEventPayload | null>(null);
+  // 双路模式由前端发起（backend 侧 stop/pause/cancel 按双路态自动分发）。
+  const [dualActive, setDualActive] = useState(false);
 
-  const active = state?.status === "recording" || state?.status === "paused";
+  const micActive = isActiveState(micState);
+  const sysActive = isActiveState(sysState);
+  const active = micActive || sysActive;
+  // 界面上同一时刻只展示一条进行中的采集；哪条活着就控制哪条。
+  // 双路态必须走麦克风系命令（后端按双路态自动分发到两路）——否则切视图
+  // 重挂载后会把系统声单路停掉，拆散双路编排（块8 审核 P0）。
+  const activeSource: CaptureSource = dualActive ? "microphone" : sysActive ? "system" : "microphone";
+  const state = sysActive && !dualActive ? sysState : micState;
+
   // 轮询代际：停止/放弃后，在途的电平快照不得把界面拉回「正在记录」。
   const pollGeneration = useRef(0);
+  // 实时文字：事件订阅一次，会话切换时清空视图；旧会话的迟到 tick 一律丢弃。
+  const liveSessionRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const sessionId = state?.sessionId ?? null;
+    if (liveSessionRef.current !== sessionId) {
+      liveSessionRef.current = sessionId;
+      setLiveView(emptyLiveView());
+      setLiveMessage("");
+      setLiveMinutes(null);
+    }
+  }, [state?.sessionId]);
+
+  useEffect(() => {
+    if (!active) {
+      setLiveView(emptyLiveView());
+      setLiveMessage("");
+      // 停止后增量纪要整体丢弃：权威来源是停止后的事后纪要（无冲突残留）。
+      setLiveMinutes(null);
+      setDualActive(false);
+    }
+  }, [active]);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    let cancelled = false;
+    const disposers: Array<() => void> = [];
+    const track = (promise: Promise<() => void>) => {
+      void promise.then((dispose) => {
+        if (cancelled) dispose();
+        else disposers.push(dispose);
+      });
+    };
+    track(
+      listen<LiveTickPayload | LiveStatusPayload>("live-transcript", (event) => {
+        const payload = event.payload;
+        if ("available" in payload) {
+          // 状态事件也按会话过滤：旧会话线程退出前的失败消息不串台到新会话。
+          if (payload.sessionId !== liveSessionRef.current) return;
+          setLiveMessage(payload.available ? "" : payload.message);
+          return;
+        }
+        if (payload.sessionId !== liveSessionRef.current) return;
+        // 收到新的一拍说明实时链路活着：清掉上一拍的瞬时失败提示。
+        setLiveMessage("");
+        setLiveView((view) => applyLiveTick(view, payload));
+      }),
+    );
+    track(
+      listen<LiveMinutesEventPayload>("live-minutes", (event) => {
+        const payload = event.payload;
+        if (payload.sessionId !== liveSessionRef.current) return;
+        setLiveMinutes(payload);
+      }),
+    );
+    return () => {
+      cancelled = true;
+      disposers.forEach((dispose) => dispose());
+    };
+  }, []);
 
   async function refreshRecoverable() {
     try {
@@ -84,16 +224,29 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
   }
 
   async function refreshState() {
-    try {
-      const [current, currentPermission] = await Promise.all([
-        getRecordingState(),
-        microphonePermission(),
-      ]);
-      if (current) setState(current);
-      if (currentPermission) setPermission(currentPermission);
-    } catch {
-      // 状态读取失败不阻塞入口渲染；开始录音时后端会给出明确错误。
-    }
+    // 每个状态各自兜底：任一读取失败（含旧后端没有系统声命令）都不能拖垮
+    // 其它状态的渲染，更不能阻塞入口。
+    const read = async <T,>(call: () => Promise<T>): Promise<T | null> => {
+      try {
+        return await Promise.resolve(call());
+      } catch {
+        return null;
+      }
+    };
+    const [current, currentMic, currentSys, currentSysPermission, dual] = await Promise.all([
+      read(getRecordingState),
+      read(microphonePermission),
+      read(getSystemRecordingState),
+      read(systemAudioPermission),
+      read(isDualRecording),
+    ]);
+    if (current) setMicState(isActiveState(current) ? current : null);
+    if (currentMic) setMicPermission(currentMic);
+    if (currentSys) setSysState(isActiveState(currentSys) ? currentSys : null);
+    if (currentSysPermission) setSysPermission(currentSysPermission);
+    // 双路态以后端真值为准（组件重挂载后本地 flag 会丢）；
+    // busy 窗口内（begin 尚未返回）不降级本地乐观值，防止 activeSource 翻转。
+    setDualActive((previous) => (dual === true ? true : previous && busy));
     await refreshRecoverable();
   }
 
@@ -106,31 +259,64 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
     if (!active) return;
     const generation = pollGeneration.current;
     const timer = window.setInterval(() => {
-      void recordingLevels()
+      const poll = activeSource === "system" ? systemRecordingLevels() : recordingLevels();
+      void poll
         .then((next) => {
-          // 停止/放弃后丢弃在途快照，避免界面被拉回「正在记录」。
-          if (generation === pollGeneration.current) setState(next);
+          if (generation !== pollGeneration.current) return;
+          if (activeSource === "system") setSysState(next);
+          else setMicState(next);
         })
         .catch(() => undefined);
     }, 500);
     return () => window.clearInterval(timer);
-  }, [active]);
+  }, [active, activeSource]);
+
+  async function beginMicrophone() {
+    let currentPermission = micPermission;
+    if (currentPermission !== "granted") {
+      currentPermission = await requestMicrophonePermission();
+      setMicPermission(currentPermission);
+    }
+    if (currentPermission !== "granted") {
+      throw new Error(permissionHint(currentPermission));
+    }
+    setMicState(await startRecording(projectId));
+  }
+
+  async function beginSystem() {
+    let currentPermission = sysPermission;
+    if (currentPermission !== "granted") {
+      currentPermission = await requestSystemAudioPermission();
+      setSysPermission(currentPermission);
+    }
+    if (currentPermission !== "granted") {
+      // 明确报错并停在这里；麦克风录音能力不受影响，用户可切回麦克风来源。
+      throw new Error(systemPermissionHint(currentPermission));
+    }
+    // 隐私红线：没有确认过显性告知，就不开始录系统声。
+    // confirmed=true 是后端的硬性参数：没走确认框后端直接拒绝。
+    if (!(await confirmAction(SYSTEM_CAPTURE_NOTICE))) return;
+    setSysState(await startSystemRecording(projectId, true));
+  }
 
   async function begin() {
     setBusy(true);
     setError("");
     setNotice("");
     try {
-      let currentPermission = permission;
-      if (currentPermission !== "granted") {
-        currentPermission = await requestMicrophonePermission();
-        setPermission(currentPermission);
+      if (captureSource === "system") {
+        await beginSystem();
+      } else if (captureSource === "both") {
+        // 双路的隐私红线：与系统声同款显性确认，确认后才带 confirmed=true。
+        if (!(await confirmAction(DUAL_CAPTURE_NOTICE))) return;
+        setDualActive(true);
+        setMicState(await startRecording(projectId, "both", true));
+      } else {
+        setDualActive(false);
+        await beginMicrophone();
       }
-      if (currentPermission !== "granted") {
-        throw new Error(permissionHint(currentPermission));
-      }
-      setState(await startRecording(projectId));
     } catch (reason) {
+      setDualActive(false);
       setError(displayError(reason));
     } finally {
       setBusy(false);
@@ -141,7 +327,15 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
     setBusy(true);
     setError("");
     try {
-      setState(state?.status === "paused" ? await resumeRecording() : await pauseRecording());
+      if (activeSource === "system") {
+        setSysState(
+          sysState?.status === "paused" ? await resumeSystemRecording() : await pauseSystemRecording(),
+        );
+      } else {
+        setMicState(
+          micState?.status === "paused" ? await resumeRecording() : await pauseRecording(),
+        );
+      }
     } catch (reason) {
       setError(displayError(reason));
     } finally {
@@ -153,9 +347,15 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
     setBusy(true);
     setError("");
     try {
-      const result = await stopRecording();
+      const result =
+        activeSource === "system" ? await stopSystemRecording() : await stopRecording();
       pollGeneration.current += 1;
-      setState(null);
+      if (activeSource === "system") setSysState(null);
+      else setMicState(null);
+      // 双路成功后系统声状态一并清掉：重挂载场景 refreshState 可能已把
+      // sysState 置 active，不清会让 UI 停在幽灵「正在记录（双路）」。
+      setSysState(null);
+      setDualActive(false);
       setNotice(`已保存“${result.title}”，正在准备本机转写。`);
       onImported();
       try {
@@ -176,14 +376,31 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
   }
 
   async function cancel() {
-    if (!(await confirmAction("放弃这次录音吗？未封存的音频会被删除，无法恢复。"))) return;
+    if (
+      !(await confirmAction(
+        dualActive
+          ? "放弃这次双路录音吗？两路未封存的音频都会被删除，无法恢复。"
+          : activeSource === "system"
+            ? "放弃这次系统声音录制吗？未封存的音频会被删除，无法恢复。"
+            : "放弃这次录音吗？未封存的音频会被删除，无法恢复。",
+      ))
+    ) {
+      return;
+    }
     setBusy(true);
     setError("");
     setNotice("");
     try {
-      await cancelRecording();
+      if (activeSource === "system") {
+        await cancelSystemRecording();
+        setSysState(null);
+      } else {
+        await cancelRecording();
+        setMicState(null);
+      }
+      setSysState(null);
+      setDualActive(false);
       pollGeneration.current += 1;
-      setState(null);
       setNotice("已放弃本次录音。");
       onImported();
     } catch (reason) {
@@ -231,18 +448,33 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
     }
   }
 
+  const lead =
+    captureSource === "system"
+      ? "录制这台 Mac 正在播放的声音（例如线上会议里对方的话），不打开麦克风，音频只保存在本机。"
+      : captureSource === "both"
+        ? "同时录麦克风与系统声音，合并成一个立体声文件（左=麦克风，右=系统声），开始前会再次向你确认。"
+        : "只使用本机麦克风，音频默认只保存在这台 Mac 上。";
+
   return (
     <section className="recording-entry" aria-label="本地记录">
       <div className="recording-entry-header">
         <div>
           <p className="recording-entry-eyebrow">本地记录</p>
           <h3>电脑设备直录</h3>
-          <p className="recording-entry-lead">只使用本机麦克风，音频默认只保存在这台 Mac 上。</p>
+          <p className="recording-entry-lead">{lead}</p>
         </div>
         {active ? (
           <div className="recording-entry-state" role="status" aria-live="polite">
             <span className="recording-live-dot" aria-hidden="true" />
-            <strong>{state?.status === "paused" ? "已暂停" : "正在记录"}</strong>
+            <strong>
+              {state?.status === "paused"
+                ? "已暂停"
+                : activeSource === "system"
+                  ? "正在记录系统声音"
+                  : dualActive
+                    ? "正在记录（双路）"
+                    : "正在记录"}
+            </strong>
             <time>{formatDuration(state?.elapsedMs ?? 0, true)}</time>
           </div>
         ) : (
@@ -250,18 +482,126 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
             type="button"
             className="primary-button recording-entry-start"
             onClick={() => void begin()}
-            disabled={busy || permission === "unsupported"}
+            disabled={
+              busy ||
+              (captureSource === "microphone"
+                ? micPermission === "unsupported"
+                : sysPermission === "unsupported")
+            }
           >
-            {busy ? "准备中…" : "开始记录"}
+            {busy
+              ? "准备中…"
+              : captureSource === "system"
+                ? "开始录系统声音"
+                : captureSource === "both"
+                  ? "开始双路录音"
+                  : "开始记录"}
           </button>
         )}
       </div>
+
+      {!active && (
+        <div className="segmented-control" role="tablist" aria-label="录音来源">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={captureSource === "microphone"}
+            className={captureSource === "microphone" ? "selected" : ""}
+            onClick={() => setCaptureSource("microphone")}
+          >
+            麦克风
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={captureSource === "system"}
+            className={captureSource === "system" ? "selected" : ""}
+            onClick={() => setCaptureSource("system")}
+          >
+            系统声音
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={captureSource === "both"}
+            className={captureSource === "both" ? "selected" : ""}
+            onClick={() => setCaptureSource("both")}
+          >
+            双路
+          </button>
+        </div>
+      )}
 
       {active && (
         <>
           <div className="recording-meter" aria-label="输入电平">
             <span style={{ width: levelWidth(state?.peakLevelDb ?? state?.inputLevelDb) }} />
           </div>
+          <div className="live-transcript" aria-label="实时文字">
+            <div className="live-transcript-heading">
+              <strong>实时文字</strong>
+              <span>边录边出，停止后以全量转写为准</span>
+            </div>
+            <div className="live-transcript-lines">
+              {liveView.finals.length === 0 && liveView.provisional.length === 0 && (
+                <p className="live-transcript-empty">说话后这里会出现带时间戳的文字。</p>
+              )}
+              {liveView.finals.map((segment) => (
+                <p className="live-transcript-line" key={segment.startMs}>
+                  <time>{formatSegmentTime(segment.startMs)}</time>
+                  <span>{segment.text}</span>
+                </p>
+              ))}
+              {liveView.provisional.map((segment) => (
+                <p className="live-transcript-line provisional" key={`p-${segment.startMs}`}>
+                  <time>{formatSegmentTime(segment.startMs)}</time>
+                  <span>{segment.text}…</span>
+                </p>
+              ))}
+            </div>
+            {liveMessage && <p className="live-transcript-status" role="status">{liveMessage}</p>}
+          </div>
+          {liveMinutes && (
+            <div className="live-minutes" aria-label="实时纪要">
+              <div className="live-minutes-heading">
+                <strong>实时纪要（暂定，以事后为准）</strong>
+                <span>第 {liveMinutes.runIndex} 次生长</span>
+              </div>
+              <div className="live-minutes-body">
+                {liveMinutes.document.conclusions.length === 0 &&
+                liveMinutes.document.actionItems.length === 0 &&
+                liveMinutes.document.topics.length === 0 ? (
+                  <p className="live-transcript-empty">还在听，结论与待办会在这里逐步浮现。</p>
+                ) : (
+                  <>
+                    {liveMinutes.document.topics.slice(0, 3).map((topic) => (
+                      <p className="live-minutes-topic" key={topic.id}>
+                        <strong>{topic.title}</strong>
+                        {topic.summary && <span> — {topic.summary}</span>}
+                      </p>
+                    ))}
+                    <ul className="live-minutes-list">
+                      {liveMinutes.document.conclusions.map((item) => (
+                        <li key={item.id}>
+                          <time>{formatSegmentTime(item.evidence.startMs)}</time>
+                          <span>{item.text}</span>
+                        </li>
+                      ))}
+                      {liveMinutes.document.actionItems.map((item) => (
+                        <li key={item.id} className="todo">
+                          <time>{formatSegmentTime(item.evidence.startMs)}</time>
+                          <span>
+                            待办：{item.text}
+                            {item.owner ? `（${item.owner}）` : ""}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
           <div className="recording-entry-actions">
             <button type="button" className="secondary-button" onClick={() => void pauseOrResume()} disabled={busy}>
               {state?.status === "paused" ? "继续" : "暂停"}
@@ -276,7 +616,13 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
         </>
       )}
 
-      {!active && <p className="recording-entry-hint">{permissionHint(permission)}</p>}
+      {!active && (
+        <p className="recording-entry-hint">
+          {captureSource === "system"
+            ? systemPermissionHint(sysPermission)
+            : permissionHint(micPermission)}
+        </p>
+      )}
 
       {recoverable.length > 0 && (
         <div className="recording-recovery" role="region" aria-label="可恢复录音">
@@ -287,7 +633,10 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
           {recoverable.map((session) => (
             <div className="recording-recovery-row" key={session.sessionId}>
               <div>
-                <strong>{session.title}</strong>
+                <strong>
+                  {session.source === "system" ? "系统声音 · " : ""}
+                  {session.title}
+                </strong>
                 <span>{new Date(session.startedAt).toLocaleString()} · {formatBytes(session.writtenBytes)}</span>
               </div>
               <div className="recording-recovery-actions">

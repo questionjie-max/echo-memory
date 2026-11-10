@@ -9,6 +9,7 @@ pub mod degeneration;
 pub mod disk_space;
 pub mod dock;
 pub mod document;
+pub mod dual_recording;
 pub mod error;
 pub mod export;
 pub mod external_ai_gate;
@@ -16,11 +17,15 @@ pub mod external_asr;
 pub mod inbox;
 pub mod knowledge;
 pub mod library;
+pub mod live_minutes;
+pub mod live_transcript;
 pub mod memory;
 pub mod memory_index;
+pub mod minutes;
 pub mod record_commands;
 pub mod recording;
 pub mod state;
+pub mod system_audio;
 pub mod storage;
 pub mod transcript;
 pub mod types;
@@ -113,6 +118,19 @@ pub fn run() {
             recording::list_recoverable_recordings,
             recording::recover_recording,
             recording::discard_recoverable_recording,
+            system_audio::system_audio_permission,
+            system_audio::request_system_audio_permission,
+            system_audio::start_system_recording,
+            system_audio::pause_system_recording,
+            system_audio::resume_system_recording,
+            system_audio::system_recording_levels,
+            system_audio::stop_system_recording,
+            system_audio::cancel_system_recording,
+            system_audio::get_system_recording_state,
+            system_audio::is_dual_recording,
+            minutes::get_record_minutes,
+            minutes::generate_minutes,
+            minutes::set_minutes_item_status,
             commands::list_jobs,
             commands::import_audio,
             commands::import_document,

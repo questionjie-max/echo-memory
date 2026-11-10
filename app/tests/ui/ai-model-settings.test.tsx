@@ -411,12 +411,15 @@ describe("AI 模型：转写引擎", () => {
     await waitFor(() => expect(tauri.setTranscriptionEngine).toHaveBeenCalledWith("embedded"));
   });
 
-  it("已装 whisperX 时切过去立刻生效", async () => {
+  it("已装 whisperX 时切过去立刻生效，且标注实验特性", async () => {
     vi.mocked(tauri.getTranscriptionEngineStatus).mockResolvedValue(
       engineStatusFixture({ whisperxAvailable: true, whisperxPath: "/usr/local/bin/whisperx" }),
     );
     await renderPanel();
-    fireEvent.click(within(card("转写")).getByText("whisperX"));
+    // 块6：开关文案带「实验」标注（默认关 + 显性实验身份）。
+    // 引导区的实验标题在「未安装」用例里断言（已安装时引导不展开）。
+    expect(within(card("转写")).getByText("whisperX（实验）")).toBeTruthy();
+    fireEvent.click(within(card("转写")).getByText("whisperX（实验）"));
 
     await waitFor(() => expect(tauri.setTranscriptionEngine).toHaveBeenCalledWith("whisperx"));
   });

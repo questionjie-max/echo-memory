@@ -1,6 +1,7 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { PauseIcon, PlayIcon, SkipBackIcon, SkipForwardIcon } from "./icons";
+import MinutesPanel from "./MinutesPanel";
 import { useEffect, useRef, useState } from "react";
 import type { RecordNavigation } from "../App";
 import type {
@@ -50,7 +51,7 @@ interface Props {
   onChanged: (record?: RecordBrief) => void;
 }
 
-type DetailTab = "transcript" | "analysis";
+type DetailTab = "transcript" | "analysis" | "minutes";
 type AudioLoadState = "loading" | "ready" | "error";
 
 const TRANSCRIPTION_LANGUAGES = [
@@ -425,14 +426,19 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
     }
   }
 
-  async function exportOne(format: "md" | "txt") {
+  async function exportOne(format: "md" | "txt" | "srt") {
     if (detailMenu.current) detailMenu.current.open = false;
     // 先领票据再弹对话框：后端凭票放行导出，挡掉绕过对话框的任意路径写入。
     const ticket = await createExportTicket();
     const destination = await saveDialog({
       title: `导出${currentRecord.title}`,
       defaultPath: `${currentRecord.title}.${format}`,
-      filters: [{ name: format === "md" ? "Markdown" : "文本", extensions: [format] }],
+      filters: [
+        {
+          name: format === "md" ? "Markdown" : format === "srt" ? "SubRip 字幕" : "文本",
+          extensions: [format],
+        },
+      ],
     });
     if (!destination) return;
     setBusy(true);
@@ -605,6 +611,7 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
               {!isDocument && <button type="button" disabled={busy || isProcessing(currentRecord.status)} onClick={() => { if (detailMenu.current) detailMenu.current.open = false; setRetranscribeOpen(true); }}>增强重新转写…</button>}
               <button type="button" disabled={busy || !currentRecord.hasTranscript} onClick={() => void exportOne("md")}>导出 Markdown</button>
               <button type="button" disabled={busy || !currentRecord.hasTranscript} onClick={() => void exportOne("txt")}>导出 TXT</button>
+              <button type="button" disabled={busy || !currentRecord.hasTranscript} onClick={() => void exportOne("srt")}>导出 SRT 字幕</button>
               <button type="button" disabled={busy || !currentRecord.hasAnalysis} onClick={() => void exportToOutput("analysis")}>导出分析到产出文件夹</button>
               <button type="button" disabled={busy || !currentRecord.hasTranscript} onClick={() => void exportToOutput("transcript")}>导出逐字稿到产出文件夹</button>
             </div>
@@ -702,12 +709,17 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
       <div className="detail-tabs" role="tablist" aria-label={isDocument ? "文档内容" : "录音内容"}>
         <button type="button" role="tab" aria-selected={activeTab === "transcript"} className={activeTab === "transcript" ? "selected" : ""} onClick={() => setActiveTab("transcript")}>{isDocument ? "文档正文" : "逐字稿"}</button>
         <button type="button" role="tab" aria-selected={activeTab === "analysis"} className={activeTab === "analysis" ? "selected" : ""} onClick={() => setActiveTab("analysis")}>内容分析</button>
+        {!isDocument && (
+          <button type="button" role="tab" aria-selected={activeTab === "minutes"} className={activeTab === "minutes" ? "selected" : ""} onClick={() => setActiveTab("minutes")}>会议纪要</button>
+        )}
       </div>
 
       {error && <p className="detail-error">{error}</p>}
 
       <div className="detail-content" ref={detailContent}>
-        {activeTab === "transcript" ? (
+        {activeTab === "minutes" && !isDocument ? (
+          <MinutesPanel recordId={currentRecord.id} onSeek={(ms) => seek(ms)} />
+        ) : activeTab === "transcript" ? (
           segments.length === 0 ? (
             <div className="detail-placeholder">
               <p>{isDocument ? "文档正文为空或解析失败，请重新导入有效文档。" : isProcessing(currentRecord.status) ? "正在本机转写，可继续使用其他功能。" : currentRecord.status === "failed" ? "本地转写失败，音频仍已安全保存。" : "尚未生成逐字稿。"}</p>

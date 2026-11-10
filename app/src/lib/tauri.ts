@@ -53,6 +53,8 @@ import type {
   RecordingState,
   StoppedRecording,
   RecoverableRecording,
+  SystemAudioPermission,
+  MinutesView,
 } from "../shared/types";
 
 export function createProject(name: string): Promise<Project> {
@@ -277,8 +279,16 @@ export function requestMicrophonePermission(): Promise<MicrophonePermission> {
   return invoke<MicrophonePermission>("request_microphone_permission");
 }
 
-export function startRecording(projectId?: string | null): Promise<RecordingState> {
-  return invoke<RecordingState>("start_recording", { projectId: projectId ?? null });
+export function startRecording(
+  projectId?: string | null,
+  source?: "microphone" | "both",
+  confirmed?: boolean,
+): Promise<RecordingState> {
+  return invoke<RecordingState>("start_recording", {
+    projectId: projectId ?? null,
+    source: source ?? "microphone",
+    confirmed: confirmed ?? null,
+  });
 }
 
 export function pauseRecording(): Promise<RecordingState> {
@@ -315,6 +325,71 @@ export function recoverRecording(sessionId: string): Promise<StoppedRecording> {
 
 export function discardRecoverableRecording(sessionId: string): Promise<void> {
   return invoke<void>("discard_recoverable_recording", { sessionId });
+}
+
+/* ---------- 系统内放声采集（v1.1） ---------- */
+
+export function systemAudioPermission(): Promise<SystemAudioPermission> {
+  return invoke<SystemAudioPermission>("system_audio_permission");
+}
+
+export function requestSystemAudioPermission(): Promise<SystemAudioPermission> {
+  return invoke<SystemAudioPermission>("request_system_audio_permission");
+}
+
+export function startSystemRecording(
+  projectId: string | null | undefined,
+  confirmed: boolean,
+): Promise<RecordingState> {
+  return invoke<RecordingState>("start_system_recording", {
+    projectId: projectId ?? null,
+    confirmed,
+  });
+}
+
+export function pauseSystemRecording(): Promise<RecordingState> {
+  return invoke<RecordingState>("pause_system_recording");
+}
+
+export function resumeSystemRecording(): Promise<RecordingState> {
+  return invoke<RecordingState>("resume_system_recording");
+}
+
+export function systemRecordingLevels(): Promise<RecordingState> {
+  return invoke<RecordingState>("system_recording_levels");
+}
+
+export function stopSystemRecording(): Promise<StoppedRecording> {
+  return invoke<StoppedRecording>("stop_system_recording");
+}
+
+export function cancelSystemRecording(): Promise<void> {
+  return invoke<void>("cancel_system_recording");
+}
+
+export function getSystemRecordingState(): Promise<RecordingState> {
+  return invoke<RecordingState>("get_system_recording_state");
+}
+
+export function isDualRecording(): Promise<boolean> {
+  return invoke<boolean>("is_dual_recording");
+}
+
+/* ---------- 会议纪要（v1.1 块3/块4） ---------- */
+
+export function getRecordMinutes(recordId: string): Promise<MinutesView | null> {
+  return invoke<MinutesView | null>("get_record_minutes", { recordId });
+}
+
+export function generateMinutes(recordId: string): Promise<MinutesView> {
+  return invoke<MinutesView>("generate_minutes", { recordId });
+}
+
+export function setMinutesItemStatus(
+  itemId: string,
+  status: "provisional" | "confirmed",
+): Promise<"provisional" | "confirmed"> {
+  return invoke<"provisional" | "confirmed">("set_minutes_item_status", { itemId, status });
 }
 
 export function listTranscriptSegments(recordId: string): Promise<TranscriptSegment[]> {
@@ -354,7 +429,12 @@ export function createExportTicket(): Promise<string> {
   return invoke<string>("create_export_ticket");
 }
 
-export function exportRecord(recordId: string, destinationPath: string, format: "md" | "txt", ticket: string): Promise<string> {
+export function exportRecord(
+  recordId: string,
+  destinationPath: string,
+  format: "md" | "txt" | "srt",
+  ticket: string,
+): Promise<string> {
   return invoke<string>("export_record", { recordId, destinationPath, format, ticket });
 }
 

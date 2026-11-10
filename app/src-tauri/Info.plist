@@ -4,5 +4,7 @@
 <dict>
     <key>NSMicrophoneUsageDescription</key>
     <string>回声记忆需要访问麦克风，才能在你明确开始录音时保存本地谈话和个人口述。</string>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>回声记忆需要「屏幕与系统声音录制」权限，才能在你明确开始时录制这台 Mac 正在播放的声音（例如线上会议里对方的话）。只在你主动开始系统录音时使用，音频只保存在本机。</string>
 </dict>
 </plist>

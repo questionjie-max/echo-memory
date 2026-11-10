@@ -51,6 +51,7 @@ beforeEach(() => {
   vi.mocked(tauri.microphonePermission).mockResolvedValue("granted");
   vi.mocked(tauri.listRecoverableRecordings).mockResolvedValue([]);
   vi.mocked(tauri.recordingLevels).mockResolvedValue(activeState("recording"));
+  vi.mocked(tauri.isDualRecording).mockResolvedValue(false);
 });
 
 describe("本地记录模块", () => {
@@ -133,6 +134,7 @@ describe("本地记录模块", () => {
         durationMs: 90_000,
         writtenBytes: 12_345,
         lastError: "上次应用退出时录音未封存，请恢复或放弃",
+        source: "microphone",
       },
     ]);
     vi.mocked(tauri.recoverRecording).mockResolvedValue({
@@ -151,5 +153,61 @@ describe("本地记录模块", () => {
     await waitFor(() => expect(tauri.recoverRecording).toHaveBeenCalledWith("session-crashed"));
     expect(tauri.transcribeRecord).toHaveBeenCalledWith("record-recovered");
     expect(onImported).toHaveBeenCalled();
+  });
+
+  it("系统内录必须先过显性告知确认：未确认绝不开始（隐私红线）", async () => {
+    vi.mocked(tauri.systemAudioPermission).mockResolvedValue("granted");
+    vi.mocked(tauri.requestSystemAudioPermission).mockResolvedValue("granted");
+    vi.mocked(tauri.startSystemRecording).mockResolvedValue(activeState("recording"));
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<RecordingEntry projectId={null} onImported={() => undefined} />);
+
+    // 切到系统声音来源再点开始。
+    fireEvent.click(await screen.findByRole("tab", { name: "系统声音" }));
+    fireEvent.click(await screen.findByRole("button", { name: "开始录系统声音" }));
+
+    await waitFor(() => expect(confirmSpy).toHaveBeenCalled());
+    // 告知文案必须讲清：录到谁的声音、存在哪里、入记忆前还要确认。
+    expect(String(confirmSpy.mock.calls[0][0])).toContain("对方");
+    expect(String(confirmSpy.mock.calls[0][0])).toContain("确认");
+    // 未确认：绝不启动系统录音，也不得偷偷改走麦克风。
+    expect(tauri.startSystemRecording).not.toHaveBeenCalled();
+    expect(tauri.startRecording).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
+  });
+
+  it("双路录音中切视图重挂载后，停止仍走双路分发而不是单路停系统声（块8 审核 P0）", async () => {
+    // 模拟重挂载场景：两路都在录 + 后端报双路态。
+    vi.mocked(tauri.getRecordingState).mockResolvedValue(activeState("recording"));
+    vi.mocked(tauri.getSystemRecordingState).mockResolvedValue(activeState("recording"));
+    vi.mocked(tauri.isDualRecording).mockResolvedValue(true);
+    render(<RecordingEntry projectId={null} onImported={() => undefined} />);
+
+    // 双路标签可达（修复前是死代码）。
+    expect(await screen.findByText("正在记录（双路）")).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: "停止并保存" }));
+    await waitFor(() => expect(tauri.stopRecording).toHaveBeenCalled());
+    expect(tauri.stopSystemRecording).not.toHaveBeenCalled();
+  });
+
+  it("系统声权限被拒时明确报错、不启动，且麦克风照常可用（降级）", async () => {
+    vi.mocked(tauri.systemAudioPermission).mockResolvedValue("denied");
+    vi.mocked(tauri.requestSystemAudioPermission).mockResolvedValue("denied");
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<RecordingEntry projectId={null} onImported={() => undefined} />);
+
+    fireEvent.click(await screen.findByRole("tab", { name: "系统声音" }));
+    fireEvent.click(await screen.findByRole("button", { name: "开始录系统声音" }));
+
+    expect((await screen.findAllByText(/屏幕与系统声音录制/)).length).toBeGreaterThan(0);
+    expect(tauri.startSystemRecording).not.toHaveBeenCalled();
+
+    // 降级：切回麦克风来源，开始记录照常工作。
+    vi.mocked(tauri.startRecording).mockResolvedValue(activeState("recording"));
+    fireEvent.click(screen.getByRole("tab", { name: "麦克风" }));
+    fireEvent.click(await screen.findByRole("button", { name: "开始记录" }));
+    expect(await screen.findByText("正在记录")).toBeTruthy();
+    expect(tauri.startRecording).toHaveBeenCalled();
+    confirmSpy.mockRestore();
   });
 });

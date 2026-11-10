@@ -2135,6 +2135,14 @@ fn run_transcription_with_engine(
         }
         return Err(error);
     }
+    // v1.1 块3：内嵌 whisper.cpp 与 whisperX 两条路径在此汇合（外部 ASR 在
+    // run_external_transcription 里提前返回、有自己的同款钩子）。转写成功 →
+    // 纪要自动入队（后台线程），失败只记 minutes.failed 可重试，
+    // 绝不阻塞/影响录音与逐字稿本身。
+    crate::minutes::maybe_autogenerate_minutes(
+        library.root().to_path_buf(),
+        record_id.to_owned(),
+    );
     Ok(())
 }
 
@@ -2237,6 +2245,12 @@ fn run_external_transcription(
         }
         return Err(error);
     }
+    // v1.1 块3：转写成功 → 纪要自动入队（后台线程）。生成失败只记 minutes
+    // 的 failed 状态可重试，绝不阻塞/影响录音与逐字稿本身（录音先入库）。
+    crate::minutes::maybe_autogenerate_minutes(
+        library.root().to_path_buf(),
+        record_id.to_owned(),
+    );
     Ok(())
 }
 
@@ -4646,6 +4660,37 @@ mod tests {
         assert!(result.is_err());
         // 转写已经成功，失败属于分析阶段：不得重跑转写。
         assert_eq!(calls.get(), 1);
+        let _ = std::fs::remove_dir_all(library.root());
+    }
+
+    #[test]
+    fn transcription_engine_switch_is_controllable_and_defaults_to_embedded() {
+        // 块6：实验开关的契约——默认 embedded（关）、set/get 往返一致。
+        // 非法值的拒绝在命令层，走 repository 直读时以默认值兜底。
+        let library = scratch_library("engine_switch");
+        let repository = library.repository();
+        assert_eq!(
+            repository
+                .setting_value("transcription_engine")
+                .unwrap()
+                .as_deref(),
+            None,
+            "未设置时命令层回退 embedded（默认关）"
+        );
+        repository
+            .set_setting_value("transcription_engine", "whisperx")
+            .unwrap();
+        assert_eq!(
+            repository.setting_value("transcription_engine").unwrap().as_deref(),
+            Some("whisperx")
+        );
+        repository
+            .set_setting_value("transcription_engine", "embedded")
+            .unwrap();
+        assert_eq!(
+            repository.setting_value("transcription_engine").unwrap().as_deref(),
+            Some("embedded")
+        );
         let _ = std::fs::remove_dir_all(library.root());
     }
 }

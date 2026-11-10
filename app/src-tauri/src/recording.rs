@@ -4,6 +4,7 @@
 //! hash、正式记录和转写接入会在后续生命周期工作包中完成。当前模块刻意
 //! 不做网络请求、实时转写或系统音频捕获。
 
+use crate::db::repository::RecordingSessionRow;
 use crate::error::{AppError, AppResult};
 use crate::library::ManagedLibrary;
 use crate::state::AppState;
@@ -241,7 +242,7 @@ pub struct RecordingState {
 }
 
 impl RecordingState {
-    fn idle() -> Self {
+    pub(crate) fn idle() -> Self {
         Self {
             status: RecordingStatus::Idle,
             session_id: None,
@@ -282,6 +283,23 @@ pub struct RecoverableRecording {
     pub duration_ms: i64,
     pub written_bytes: i64,
     pub last_error: Option<String>,
+    /// 会话来源：microphone（麦克风）或 system（系统内放声）。
+    pub source: String,
+}
+
+/// 麦克风会话的落盘文件名；系统内放声会话用 system-capture.wav（见 system_audio.rs）。
+pub const MICROPHONE_CAPTURE_FILE_NAME: &str = "capture.wav";
+
+/// 会话按临时文件名判断来源，恢复/放弃据此分发到对应控制器。
+pub fn session_capture_source(session: &RecordingSessionRow) -> &'static str {
+    if session
+        .temp_path
+        .ends_with(crate::system_audio::SYSTEM_CAPTURE_FILE_NAME)
+    {
+        "system"
+    } else {
+        "microphone"
+    }
 }
 
 #[derive(Debug)]
@@ -294,6 +312,18 @@ struct ActiveRecording {
     paused_at: Option<Instant>,
     paused_total: Duration,
     last_checkpoint: Instant,
+}
+
+/// 封存完成、尚未入库的录音（块8 双路合并的中间产物）。
+#[derive(Debug, Clone)]
+pub struct CapturedRecording {
+    pub session_id: String,
+    pub project_id: Option<String>,
+    pub file_path: PathBuf,
+    pub title: String,
+    pub duration_ms: i64,
+    pub paused_ms: i64,
+    pub bytes: u64,
 }
 
 #[derive(Clone, Default)]
@@ -478,6 +508,14 @@ impl RecordingController {
     }
 
     pub fn stop(&self, library: &ManagedLibrary) -> AppResult<StoppedRecording> {
+        let captured = self.stop_capture_only(library)?;
+        // 单路录音：封存后立即入库（行为与拆分前完全一致）。
+        self.ingest_captured(library, captured)
+    }
+
+    /// 封存阶段（不入库）：停流、落 WAV、bytes 校验、会话置 finalizing。
+    /// 双路合并（块8）在两路都封存后统一走 ingest_captured。
+    pub fn stop_capture_only(&self, library: &ManagedLibrary) -> AppResult<CapturedRecording> {
         let finished = {
             let mut active = self
                 .active
@@ -516,20 +554,41 @@ impl RecordingController {
             );
             return Err(AppError::Import(message.to_owned()));
         }
+        let paused_ms = self.paused_millis(&finished);
+        Ok(CapturedRecording {
+            session_id: finished.session_id,
+            project_id: finished.project_id,
+            file_path: finished.file_path,
+            title: finished.title,
+            duration_ms,
+            paused_ms,
+            bytes,
+        })
+    }
+
+    /// 封存会话入库：导入音频、complete 会话、清理临时目录。
+    /// 双路合并（dual_recording）以合并文件构造 CapturedRecording 调用这里。
+    pub fn ingest_captured(
+        &self,
+        library: &ManagedLibrary,
+        captured: CapturedRecording,
+    ) -> AppResult<StoppedRecording> {
+        let bytes = captured.bytes;
+        let duration_ms = captured.duration_ms;
         let ingest = match library.import_audio_with_source_named(
-            &finished.file_path,
-            finished.project_id.as_deref(),
+            &captured.file_path,
+            captured.project_id.as_deref(),
             true,
             "recording",
-            Some(&finished.title),
+            Some(&captured.title),
         ) {
             Ok(result) => result,
             Err(error) => {
                 let _ = library.repository().update_recording_session_status(
-                    &finished.session_id,
+                    &captured.session_id,
                     "failed",
                     duration_ms,
-                    self.paused_millis(&finished),
+                    captured.paused_ms,
                     bytes.min(i64::MAX as u64) as i64,
                     Some(&error.to_string()),
                 );
@@ -538,12 +597,12 @@ impl RecordingController {
         };
         library
             .repository()
-            .complete_recording_session(&finished.session_id, &ingest.record_id)?;
-        if let Some(parent) = finished.file_path.parent() {
+            .complete_recording_session(&captured.session_id, &ingest.record_id)?;
+        if let Some(parent) = captured.file_path.parent() {
             let _ = fs::remove_dir_all(parent);
         }
         Ok(StoppedRecording {
-            session_id: finished.session_id,
+            session_id: captured.session_id,
             record_id: ingest.record_id,
             duration_ms: ingest.duration_ms,
             title: ingest.title,
@@ -591,6 +650,14 @@ impl RecordingController {
             .map(|sessions| {
                 sessions
                     .into_iter()
+                    // 只列麦克风会话：系统内放声会话由 SystemAudioController 负责，
+                    // 混在一起会让「恢复」用错路径校验（capture.wav vs system-capture.wav）。
+                    // 注意必须按完整文件名比而不能用 ends_with：system-capture.wav
+                    // 的字符串后缀同样是 capture.wav，用后缀会把系统会话误收进来。
+                    .filter(|session| {
+                        session.temp_path.ends_with(&format!("/{MICROPHONE_CAPTURE_FILE_NAME}"))
+                            || session.temp_path == MICROPHONE_CAPTURE_FILE_NAME
+                    })
                     .filter(|session| session.status == "recoverable" || session.status == "failed")
                     .map(|session| RecoverableRecording {
                         session_id: session.id,
@@ -600,6 +667,7 @@ impl RecordingController {
                         duration_ms: session.duration_ms,
                         written_bytes: session.written_bytes,
                         last_error: session.last_error,
+                        source: "microphone".to_owned(),
                     })
                     .collect()
             })
@@ -785,35 +853,125 @@ pub async fn request_microphone_permission(
 
 #[tauri::command]
 pub async fn start_recording(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    project_id: Option<String>,
+    // 块8：录音来源 "microphone"（默认）| "both"（双路）。系统声单路走
+    // start_system_recording 命令。
+    source: Option<String>,
+    // 双路的确认门：与系统声单路同款硬校验（隐私红线落 API 契约）。
+    confirmed: Option<bool>,
+) -> Result<RecordingState, String> {
+    if source.as_deref() == Some("both") {
+        if confirmed != Some(true) {
+            return Err("双路录音会同时录到 Mac 正在播放的所有声音（包括他人的声音），需要你显性同意后才能开始".to_owned());
+        }
+        return start_dual_recording(app, state, project_id).await;
+    }
+    // 跨源互斥（块5 挂账收口）：任一路在录或双路在录时拒绝新开始。
+    crate::dual_recording::DualRecordingController::ensure_no_capture_active(state.inner())
+        .map_err(|error| error.to_frontend())?;
+    let recording = state.recording.clone();
+    let library = state.library.clone();
+    let started =
+        tauri::async_runtime::spawn_blocking(move || recording.start(&library, project_id.as_deref()))
+            .await
+            .map_err(|_| "开始录音后台任务异常".to_owned())?
+            .map_err(|error| error.to_frontend())?;
+    // 录音已成立：启动实时文字线程（模型不可用只影响预览，不影响录音）。
+    let config = crate::live_transcript::config_from_library(&state.library);
+    if let Some(session_id) = started.session_id.clone() {
+        let wav_path = PathBuf::from(started.file_path.clone().unwrap_or_default());
+        let handle = crate::live_transcript::spawn(
+            app.clone(),
+            state.live_transcripts.clone(),
+            session_id.clone(),
+            "microphone",
+            wav_path,
+            config,
+        );
+        // 块5：实时增量纪要引擎，共享实时文字线程的停止信号。
+        crate::live_minutes::spawn_incremental(
+            app,
+            state.library.clone(),
+            state.live_transcripts.clone(),
+            session_id,
+            "microphone",
+            handle.shared_stop(),
+        );
+    }
+    Ok(started)
+}
+
+/// 双路开始：mic + system 同时起。确认门槛在 start_recording 命令层
+/// （source=="both" 时硬校验 confirmed）；启动后段任何失败都回滚两路。
+async fn start_dual_recording(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     project_id: Option<String>,
 ) -> Result<RecordingState, String> {
-    let recording = state.recording.clone();
-    let library = state.library.clone();
-    tauri::async_runtime::spawn_blocking(move || recording.start(&library, project_id.as_deref()))
-        .await
-        .map_err(|_| "开始录音后台任务异常".to_owned())?
-        .map_err(|error| error.to_frontend())
+    let state_clone = state.inner().clone();
+    let project = project_id.clone();
+    let started =
+        tauri::async_runtime::spawn_blocking(move || state_clone.dual.start(&state_clone, project.as_deref()))
+            .await
+            .map_err(|_| "开始双路录音后台任务异常".to_owned())?
+            .map_err(|error| error.to_frontend())?;
+    // 双路已成立：实时文字只挂主路（麦克风）；系统声路的实时预览记为
+    // 已知限制（合并前两路内容独立，预览合并属块9+ 优化项）。
+    let config = crate::live_transcript::config_from_library(&state.library);
+    if let Some(session_id) = started.session_id.clone() {
+        let wav_path = PathBuf::from(started.file_path.clone().unwrap_or_default());
+        let handle = crate::live_transcript::spawn(
+            app.clone(),
+            state.live_transcripts.clone(),
+            session_id.clone(),
+            "microphone",
+            wav_path,
+            config,
+        );
+        crate::live_minutes::spawn_incremental(
+            app,
+            state.library.clone(),
+            state.live_transcripts.clone(),
+            session_id,
+            "microphone",
+            handle.shared_stop(),
+        );
+    }
+    Ok(started)
 }
 
 #[tauri::command]
 pub async fn pause_recording(state: State<'_, AppState>) -> Result<RecordingState, String> {
-    let recording = state.recording.clone();
-    let library = state.library.clone();
-    tauri::async_runtime::spawn_blocking(move || recording.pause(&library))
-        .await
-        .map_err(|_| "暂停录音后台任务异常".to_owned())?
-        .map_err(|error| error.to_frontend())
+    let dual_active = state.dual.state().is_some();
+    let state_clone = state.inner().clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        if dual_active {
+            state_clone.dual.pause(&state_clone)
+        } else {
+            state_clone.recording.pause(&state_clone.library)
+        }
+    })
+    .await
+    .map_err(|_| "暂停录音后台任务异常".to_owned())?;
+    result.map_err(|error| error.to_frontend())
 }
 
 #[tauri::command]
 pub async fn resume_recording(state: State<'_, AppState>) -> Result<RecordingState, String> {
-    let recording = state.recording.clone();
-    let library = state.library.clone();
-    tauri::async_runtime::spawn_blocking(move || recording.resume(&library))
-        .await
-        .map_err(|_| "继续录音后台任务异常".to_owned())?
-        .map_err(|error| error.to_frontend())
+    let dual_active = state.dual.state().is_some();
+    let state_clone = state.inner().clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        if dual_active {
+            state_clone.dual.resume(&state_clone)
+        } else {
+            state_clone.recording.resume(&state_clone.library)
+        }
+    })
+    .await
+    .map_err(|_| "继续录音后台任务异常".to_owned())?;
+    result.map_err(|error| error.to_frontend())
 }
 
 #[tauri::command]
@@ -826,22 +984,52 @@ pub fn recording_levels(state: State<AppState>) -> Result<RecordingState, String
 
 #[tauri::command]
 pub async fn stop_recording(state: State<'_, AppState>) -> Result<StoppedRecording, String> {
-    let recording = state.recording.clone();
-    let library = state.library.clone();
-    tauri::async_runtime::spawn_blocking(move || recording.stop(&library))
-        .await
-        .map_err(|_| "停止录音后台任务异常".to_owned())?
-        .map_err(|error| error.to_frontend())
+    let dual_active = state.dual.state().is_some();
+    // 无论停止成败都必须停掉实时线程：停止失败（比如没录到有效音频）时，
+    // 泄漏的线程会带着 574MB 模型每秒空转到应用退出。
+    let mic_session_id = state.recording.state().session_id.clone();
+    let system_session_id = state.system_audio.state().session_id.clone();
+    let state_clone = state.inner().clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        if dual_active {
+            state_clone.dual.stop(&state_clone).map(|dual| dual.stopped)
+        } else {
+            state_clone.recording.stop(&state_clone.library)
+        }
+    })
+    .await
+    .map_err(|_| "停止录音后台任务异常".to_owned())?;
+    for session_id in [
+        mic_session_id.or_else(|| result.as_ref().ok().map(|s| s.session_id.clone())),
+        system_session_id,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        state.live_transcripts.stop_session(&session_id);
+    }
+    result.map_err(|error| error.to_frontend())
 }
 
 #[tauri::command]
 pub async fn cancel_recording(state: State<'_, AppState>) -> Result<(), String> {
-    let recording = state.recording.clone();
-    let library = state.library.clone();
-    tauri::async_runtime::spawn_blocking(move || recording.cancel(&library))
-        .await
-        .map_err(|_| "取消录音后台任务异常".to_owned())?
-        .map_err(|error| error.to_frontend())
+    let dual_active = state.dual.state().is_some();
+    let mic_session_id = state.recording.state().session_id.clone();
+    let system_session_id = state.system_audio.state().session_id.clone();
+    let state_clone = state.inner().clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        if dual_active {
+            state_clone.dual.cancel(&state_clone)
+        } else {
+            state_clone.recording.cancel(&state_clone.library)
+        }
+    })
+    .await
+    .map_err(|_| "取消录音后台任务异常".to_owned())?;
+    for session_id in [mic_session_id, system_session_id].into_iter().flatten() {
+        state.live_transcripts.stop_session(&session_id);
+    }
+    result.map_err(|error| error.to_frontend())
 }
 
 #[tauri::command]
@@ -853,10 +1041,23 @@ pub fn get_recording_state(state: State<AppState>) -> RecordingState {
 pub fn list_recoverable_recordings(
     state: State<AppState>,
 ) -> Result<Vec<RecoverableRecording>, String> {
-    state
+    let mut all = state
         .recording
         .recoverable_sessions(&state.library)
-        .map_err(|error| error.to_frontend())
+        .map_err(|error| error.to_frontend())?;
+    crate::system_audio::system_recoverable_into(&state.library, &mut all)
+        .map_err(|error| error.to_frontend())?;
+    all.sort_by(|left, right| right.started_at.cmp(&left.started_at));
+    Ok(all)
+}
+
+/// 查会话来源（麦克风 / 系统内放声），恢复与放弃据此分发到对应控制器。
+fn session_capture_source_of(
+    library: &ManagedLibrary,
+    session_id: &str,
+) -> AppResult<&'static str> {
+    let session: RecordingSessionRow = library.repository().get_recording_session(session_id)?;
+    Ok(session_capture_source(&session))
 }
 
 #[tauri::command]
@@ -864,12 +1065,37 @@ pub async fn recover_recording(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<StoppedRecording, String> {
-    let recording = state.recording.clone();
     let library = state.library.clone();
-    tauri::async_runtime::spawn_blocking(move || recording.recover_recording(&library, &session_id))
-        .await
-        .map_err(|_| "恢复录音后台任务异常".to_owned())?
-        .map_err(|error| error.to_frontend())
+    let source = tauri::async_runtime::spawn_blocking({
+        let library = library.clone();
+        let session_id = session_id.clone();
+        move || session_capture_source_of(&library, &session_id)
+    })
+    .await
+    .map_err(|_| "恢复录音后台任务异常".to_owned())?
+    .map_err(|error| error.to_frontend())?;
+    match source {
+        "system" => {
+            let controller = state.system_audio.clone();
+            let library = state.library.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                controller.recover_recording(&library, &session_id)
+            })
+            .await
+            .map_err(|_| "恢复录音后台任务异常".to_owned())?
+            .map_err(|error| error.to_frontend())
+        }
+        _ => {
+            let controller = state.recording.clone();
+            let library = state.library.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                controller.recover_recording(&library, &session_id)
+            })
+            .await
+            .map_err(|_| "恢复录音后台任务异常".to_owned())?
+            .map_err(|error| error.to_frontend())
+        }
+    }
 }
 
 #[tauri::command]
@@ -877,10 +1103,18 @@ pub fn discard_recoverable_recording(
     state: State<AppState>,
     session_id: String,
 ) -> Result<(), String> {
-    state
-        .recording
-        .discard_recoverable(&state.library, &session_id)
-        .map_err(|error| error.to_frontend())
+    let result = match session_capture_source_of(&state.library, &session_id) {
+        Ok("system") => {
+            state
+                .system_audio
+                .discard_recoverable(&state.library, &session_id)
+        }
+        Ok(_) => state
+            .recording
+            .discard_recoverable(&state.library, &session_id),
+        Err(error) => Err(error),
+    };
+    result.map_err(|error| error.to_frontend())
 }
 
 #[cfg(test)]
@@ -893,6 +1127,24 @@ mod tests {
         assert_eq!(state.status, RecordingStatus::Idle);
         assert!(state.session_id.is_none());
         assert!(state.file_path.is_none());
+    }
+
+    #[test]
+    fn system_sessions_are_not_mislisted_as_microphone() {
+        // 回归：「system-capture.wav」字符串后缀包含「capture.wav」，
+        // 过滤若用 ends_with 会把系统会话同时列进麦克风恢复列表（来源标错 + 重复行）。
+        let system_path = format!(
+            "recordings/inflight/{}/{}",
+            Uuid::new_v4(),
+            crate::system_audio::SYSTEM_CAPTURE_FILE_NAME
+        );
+        let mic_path = format!(
+            "recordings/inflight/{}/{}",
+            Uuid::new_v4(),
+            MICROPHONE_CAPTURE_FILE_NAME
+        );
+        assert!(!system_path.ends_with(&format!("/{MICROPHONE_CAPTURE_FILE_NAME}")));
+        assert!(mic_path.ends_with(&format!("/{MICROPHONE_CAPTURE_FILE_NAME}")));
     }
 
     #[test]

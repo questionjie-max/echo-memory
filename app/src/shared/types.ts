@@ -65,6 +65,107 @@ export interface RecoverableRecording {
   durationMs: number;
   writtenBytes: number;
   lastError: string | null;
+  /** 会话来源：microphone（麦克风）或 system（系统内放声）。 */
+  source: string;
+}
+
+/** 系统内放声采集权限状态（macOS 15 的「屏幕与系统声音录制」）。 */
+export type SystemAudioPermission =
+  | "undetermined"
+  | "denied"
+  | "granted"
+  | "unsupported";
+
+/** 录音来源：麦克风、系统内放声、双路（麦克风+系统声合并为立体声）。 */
+export type CaptureSource = "microphone" | "system" | "both";
+
+/** 实时文字的一句（会话绝对时间轴，毫秒）。 */
+export interface LiveSegment {
+  startMs: number;
+  endMs: number;
+  text: string;
+}
+
+/** 实时文字每拍推送：newFinal 新定稿（含被接续合并改写后重发的尾句），provisionalTail 压线句。 */
+export interface LiveTickPayload {
+  sessionId: string;
+  source: string;
+  newFinal: LiveSegment[];
+  provisionalTail: LiveSegment[];
+  committedMs: number;
+  capturedMs: number;
+  sentAtUnixMs: number;
+}
+
+/** 实时文字可用性状态（模型不可用等）。 */
+export interface LiveStatusPayload {
+  sessionId: string;
+  source: string;
+  available: boolean;
+  message: string;
+}
+
+/* ---------- 会议纪要（v1.1 块3/块4） ---------- */
+
+export type MinutesStatus = "pending" | "generating" | "completed" | "failed";
+
+export type MinutesItemStatus = "provisional" | "confirmed";
+
+export interface MinutesEvidence {
+  startMs: number;
+  endMs: number;
+  quoteText: string;
+}
+
+export interface MinutesItem {
+  id: string;
+  kind: "conclusion" | "action";
+  text: string;
+  owner: string | null;
+  evidence: MinutesEvidence;
+}
+
+export interface MinutesTopic {
+  id: string;
+  title: string;
+  summary: string;
+  startMs: number | null;
+  endMs: number | null;
+}
+
+export interface GlossaryEntry {
+  term: string;
+  variants: string[];
+}
+
+export interface MinutesDocument {
+  topics: MinutesTopic[];
+  conclusions: MinutesItem[];
+  actionItems: MinutesItem[];
+  glossary: GlossaryEntry[];
+  droppedUnverifiable: number;
+}
+
+export interface MinutesView {
+  recordId: string;
+  status: MinutesStatus;
+  document: MinutesDocument | null;
+  itemStatuses: [string, MinutesItemStatus][];
+  provider: string | null;
+  model: string | null;
+  error: string | null;
+  generatedAt: string | null;
+}
+
+/** 实时增量纪要事件（块5）：document 为完整覆盖，前端整体替换。 */
+export interface LiveMinutesEventPayload {
+  sessionId: string;
+  source: string;
+  document: MinutesDocument;
+  /** 本轮因无法溯源被丢弃的条目数（fail-closed 透明度）。 */
+  droppedUnverifiable: number;
+  generatedAtUnixMs: number;
+  runIndex: number;
 }
 
 export interface Project {

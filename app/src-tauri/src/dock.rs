@@ -496,7 +496,7 @@ pub fn export_analysis_to_output(
     export_record_kind(library, record_id, "analysis")
 }
 
-/// 按类型导出：analysis = 完整分析+逐字稿，transcript = 纯逐字稿。
+/// 按类型导出：analysis = 会议纪要 + 完整分析 + 逐字稿（v1.1 起含纪要），transcript = 纯逐字稿。
 pub fn export_record_kind(
     library: &ManagedLibrary,
     record_id: &str,
