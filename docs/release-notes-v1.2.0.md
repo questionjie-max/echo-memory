@@ -4,7 +4,7 @@
 
 ## Download
 
-- `回声记忆_1.2.0_aarch64.dmg` · macOS Apple Silicon
+- `Echo-Memory_1.2.0_aarch64.dmg`（回声记忆 1.2.0）· macOS Apple Silicon
 - SHA-256: `ccd8d17e1607a10bae13cb74903921f02442ef4dd5115d7dd938a19fdc891632`
 - Developer ID signed, Apple-notarized, stapled, and accepted by Gatekeeper.
 
