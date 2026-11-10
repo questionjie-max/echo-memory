@@ -145,7 +145,7 @@ export default function MinutesPanel({ recordId, onSeek }: Props) {
                 ? "纪要正在重新生成，生成完成后才能确认"
                 : confirmed
                   ? "从记忆库撤回这条内容"
-                  : "确认后这条内容才会进入记忆库，可被 MCP 读取"
+                  : "确认后这条内容才会进入记忆库，可被 MCP 读取；记录原文不受此门槛限制"
             }
             onClick={() => void toggleItem(item, status ?? "provisional")}
           >

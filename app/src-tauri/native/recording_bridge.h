@@ -30,7 +30,15 @@ int echo_recording_permission_status(void);
  * 返回 1 已授权、0 已拒绝、-1 平台不支持、-2 等待超时。 */
 int echo_recording_request_permission(void);
 
-int echo_recording_start(const char *path);
+/* 同步枚举可用的输入设备。uid/name 只在回调期间有效；is_default 为 1 表示系统默认输入。 */
+typedef void (*echo_recording_device_callback)(const char *uid,
+                                               const char *name,
+                                               int is_default,
+                                               void *context);
+int echo_recording_list_devices(echo_recording_device_callback callback, void *context);
+
+/* device_uid 为 NULL 或空串时使用系统默认输入设备。 */
+int echo_recording_start(const char *path, const char *device_uid);
 int echo_recording_pause(void);
 int echo_recording_resume(void);
 int echo_recording_stop(void);

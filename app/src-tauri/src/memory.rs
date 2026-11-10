@@ -987,6 +987,11 @@ fn source_records(
         if record.source_type == "chat" {
             continue;
         }
+        // 块4 导入确认门：未确认的导入内容不进记忆链（与 MCP 同一道门）。
+        // 确认动作（set_record_import_confirmed）会触发 schedule_memory_update 补进。
+        if record.source_type == "document" && record.import_confirmed_at.is_none() {
+            continue;
+        }
         if !within_range(&record.imported_at, range_start, range_end) {
             continue;
         }

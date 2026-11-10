@@ -230,6 +230,11 @@ input::placeholder, textarea::placeholder { color: var(--em-ink-4); }
 .recording-entry h3 { margin: 0; color: var(--em-ink); font-size: 13px; }
 .recording-entry-lead { margin: 4px 0 0; color: var(--em-ink-3); font-size: 11px; line-height: 1.45; }
 .recording-entry-start { flex: 0 0 auto; white-space: nowrap; }
+.recording-source-options { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
+.recording-source-field { display: grid; gap: 3px; min-width: 0; flex: 1 1 190px; }
+.recording-source-field > span { color: var(--em-ink-3); font-size: 10px; }
+.recording-source-field select { min-width: 0; width: 100%; padding: 6px 28px 6px 9px; border: 1px solid var(--em-input-border); border-radius: 7px; background-color: var(--em-input-bg); font-size: 11px; }
+.recording-source-refresh { flex: 0 0 auto; white-space: nowrap; }
 .recording-entry-state { display: inline-flex; align-items: center; gap: 7px; flex: 0 0 auto; }
 .recording-entry-state strong { color: var(--em-ink); font-size: 11px; font-weight: 650; }
 .recording-entry-state time { color: var(--em-ink-2); font-size: 13px; font-weight: 650; font-variant-numeric: tabular-nums; }
@@ -260,6 +265,10 @@ input::placeholder, textarea::placeholder { color: var(--em-ink-4); }
    「说话人」就落到了那个 minmax(0,1fr) 行上，逐字稿一超高该行被压成 0 像素，
    内容溢出后正好压在「相关记录」上面。 */
 .detail-pane { display: flex; flex-direction: column; background: var(--em-pane); overflow: hidden; }
+/* 块4 导入确认门横幅：确认前对 MCP 不可见的状态要显眼但不惊吓（非错误色）。 */
+.import-gate-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 20px; border-bottom: 1px solid var(--em-line); background: var(--em-soft-fill-2); }
+.import-gate-banner p { margin: 0; font-size: 13px; color: var(--em-ink-2); }
+.import-gate-banner button { flex-shrink: 0; }
 .detail-empty { display: grid; place-items: center; background: var(--em-pane); color: var(--em-ink-4); text-align: center; }
 .detail-empty h2 { color: var(--em-ink-2); font-size: 16px; margin: 0; }
 .detail-empty p { font-size: 13px; margin: 5px 0 0; }
@@ -1121,8 +1130,13 @@ input::placeholder, textarea::placeholder { color: var(--em-ink-4); }
 .action-done-group { margin-top: 12px; color: var(--em-ink-3); font-size: 11px; }
 .action-done-group summary { cursor: pointer; }
 
-.related-records-section { display: grid; gap: 8px; margin-top: 18px; }
-.related-records-section h3 { margin: 0; color: var(--em-ink); font-size: 13px; }
+.detail-more-section { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--em-hairline-soft); }
+.detail-more-section > summary { display: flex; align-items: center; gap: 8px; color: var(--em-ink); font-size: 12px; font-weight: 650; cursor: pointer; }
+.detail-more-count { padding: 1px 7px; border-radius: var(--em-r-pill); background: var(--em-soft-fill-2); color: var(--em-ink-3); font-size: 10px; font-weight: 500; }
+.detail-more-hint { margin: 8px 0 0; color: var(--em-ink-3); font-size: 10px; line-height: 1.5; }
+.related-records-section { display: grid; gap: 8px; }
+.related-records-section[open] { display: block; }
+.related-records-section[open] .related-records-list { margin-top: 8px; }
 .related-records-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
 .related-record-card { display: grid; gap: 3px; padding: 10px 12px; border: 1px solid var(--em-hairline-soft); border-radius: 9px; background: var(--em-panel); text-align: left; cursor: pointer; }
 .related-record-card strong { overflow: hidden; color: var(--em-ink); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
@@ -1192,8 +1206,8 @@ input::placeholder, textarea::placeholder { color: var(--em-ink-4); }
 .wizard-feedback-hint { margin: 0; color: var(--em-ink-3); font-size: 10px; }
 
 /* ---------------- v0.5.0：说话人 ---------------- */
-.speakers-section { display: grid; gap: 8px; margin-top: 18px; }
-.speakers-section h3 { margin: 0; color: var(--em-ink); font-size: 13px; }
+.speakers-section { display: block; }
+.speakers-section[open] > .speakers-list, .speakers-section[open] > .speakers-hint { margin-top: 8px; }
 .speakers-list { display: grid; gap: 7px; }
 .speaker-row { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border: 1px solid var(--em-hairline-soft); border-radius: 9px; background: var(--em-panel); }
 .speaker-row input { min-width: 90px; max-width: 160px; padding: 5px 8px; border: 1px solid var(--em-input-border); border-radius: 6px; font-size: 12px; background: var(--em-input-bg); }

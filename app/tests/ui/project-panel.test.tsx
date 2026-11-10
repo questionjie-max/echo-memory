@@ -19,7 +19,7 @@ function projectFixture(id: string, name: string, status: Project["status"] = "a
 function mcpFixture(): McpStatus {
   return {
     enabled: false,
-    authorizedScope: "全部知识库（只读）",
+    authorizedScope: "全部记录的标题、逐字稿与文档原文（只读；未确认的导入内容除外）；记忆条目仅限已确认内容",
     executableAvailable: true,
     executablePath: "/app/bin/echo-memory-mcp",
     recentCalls: [],
@@ -91,5 +91,13 @@ describe("知识库侧栏", () => {
     await waitFor(() => expect(tauri.createProject).toHaveBeenCalledWith("客户访谈"));
     await screen.findByRole("button", { name: "客户访谈" });
     expect(onSelect).toHaveBeenCalledWith("p1");
+  });
+
+  // 块3/F1 回归：侧栏 MCP 口径文案必须如实讲两层（原文层只读可读 + 条目层仅已确认）。
+  it("MCP 授权口径文案如实讲明原文层与确认门槛", async () => {
+    renderPanel();
+    expect(
+      await screen.findByText("全部记录的标题、逐字稿与文档原文（只读；未确认的导入内容除外）；记忆条目仅限已确认内容"),
+    ).toBeTruthy();
   });
 });

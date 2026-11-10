@@ -176,6 +176,22 @@ impl LibraryRepository {
         Ok(())
     }
 
+    /// 块7 导出包 manifest 用：查某条记录的双路对齐偏移（无则 None）。
+    pub fn alignment_offset_for_record(&self, record_id: &str) -> AppResult<Option<i64>> {
+        let connection = self.connect()?;
+        let mut statement = connection.prepare(
+            "SELECT alignment_offset_ms FROM recording_sessions \
+             WHERE record_id = ?1 AND alignment_offset_ms IS NOT NULL \
+             ORDER BY updated_at DESC LIMIT 1",
+        )?;
+        let mut rows = statement.query(params![record_id])?;
+        if let Some(row) = rows.next()? {
+            Ok(row.get(0)?)
+        } else {
+            Ok(None)
+        }
+    }
+
     /// 副会话收尾：canceled + 指向合并后的记录（0021 的 status CHECK 不含
     /// 新枚举，不动表结构；canceled + record_id 即「已并入」的对账语义）。
     pub fn finish_paired_session(

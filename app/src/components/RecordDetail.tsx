@@ -1,5 +1,5 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { save as saveDialog, open as openDirectory } from "@tauri-apps/plugin-dialog";
 import { PauseIcon, PlayIcon, SkipBackIcon, SkipForwardIcon } from "./icons";
 import MinutesPanel from "./MinutesPanel";
 import { useEffect, useRef, useState } from "react";
@@ -39,6 +39,8 @@ import {
   updateRecordKnowledgeBase,
   updateRecordTitle,
   updateTranscriptSegment,
+  setRecordImportConfirmed,
+  exportRecordPackage,
 } from "../lib/tauri";
 import { listen } from "@tauri-apps/api/event";
 import { formatMinutesSeconds as formatTime, isProcessingStatus as isProcessing } from "../lib/format";
@@ -452,6 +454,28 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
     }
   }
 
+  // 块7：导出包——逐字稿(md+srt) + 纪要 + manifest 的全量交付，落到用户选定的目录。
+  async function exportPackage() {
+    if (detailMenu.current) detailMenu.current.open = false;
+    const ticket = await createExportTicket();
+    const destination = await openDirectory({
+      directory: true,
+      multiple: false,
+      title: `选择「${currentRecord.title}」导出包的位置`,
+    });
+    if (typeof destination !== "string") return;
+    setBusy(true);
+    setError("");
+    try {
+      const path = await exportRecordPackage(currentRecord.id, destination, ticket);
+      setExportNotice(`已导出包：${path}`);
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
 
   async function exportToOutput(kind: "analysis" | "transcript") {
     if (detailMenu.current) detailMenu.current.open = false;
@@ -558,8 +582,49 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
 
   const activeProjects = projects.filter((project) => project.status === "active" || project.id === currentRecord.projectId);
 
+  // 块4 导入确认门：未确认的导入内容对 AI 助手（MCP）不可见。
+  const importGatePending =
+    (currentRecord.sourceType === "document" || currentRecord.sourceType === "chat") &&
+    !currentRecord.importConfirmedAt;
+
+  async function toggleImportConfirmed() {
+    setBusy(true);
+    setError("");
+    try {
+      const updated = await setRecordImportConfirmed(currentRecord.id, !currentRecord.importConfirmedAt);
+      setCurrentRecord(updated);
+      onChanged(updated);
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <section className="detail-pane" aria-label={isDocument ? "文档详情" : "录音详情"}>
+      {importGatePending && (
+        <div className="import-gate-banner" role="status">
+          <p>
+            这份导入内容还没确认入记忆：在确认之前，你的 AI 助手（MCP）看不到它。
+          </p>
+          <div>
+            <button type="button" className="primary-button" disabled={busy} onClick={() => void toggleImportConfirmed()}>
+              确认入记忆
+            </button>
+          </div>
+        </div>
+      )}
+      {!importGatePending && (currentRecord.sourceType === "document" || currentRecord.sourceType === "chat") && currentRecord.importConfirmedAt && (
+        <div className="import-gate-banner confirmed" role="status">
+          <p>已确认入记忆，AI 助手（MCP）可以读到这份内容的原文。</p>
+          <div>
+            <button type="button" className="secondary-button" disabled={busy} onClick={() => void toggleImportConfirmed()}>
+              撤回
+            </button>
+          </div>
+        </div>
+      )}
       <header className="detail-header">
         <div className="detail-title">
           <span className={`status-dot status-${statusTone(currentRecord)}`} aria-hidden="true" />
@@ -612,6 +677,7 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
               <button type="button" disabled={busy || !currentRecord.hasTranscript} onClick={() => void exportOne("md")}>导出 Markdown</button>
               <button type="button" disabled={busy || !currentRecord.hasTranscript} onClick={() => void exportOne("txt")}>导出 TXT</button>
               <button type="button" disabled={busy || !currentRecord.hasTranscript} onClick={() => void exportOne("srt")}>导出 SRT 字幕</button>
+              <button type="button" disabled={busy || !currentRecord.hasTranscript} onClick={() => void exportPackage()}>导出包（逐字稿+纪要+清单）…</button>
               <button type="button" disabled={busy || !currentRecord.hasAnalysis} onClick={() => void exportToOutput("analysis")}>导出分析到产出文件夹</button>
               <button type="button" disabled={busy || !currentRecord.hasTranscript} onClick={() => void exportToOutput("transcript")}>导出逐字稿到产出文件夹</button>
             </div>
@@ -803,51 +869,62 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
             )}
           </div>
         )}
-      </div>
-      {speakers.length > 0 && !isDocument && (
-        <section className="speakers-section" aria-label="说话人">
-          <h3>说话人</h3>
-          <div className="speakers-list">
-            {speakers.map((speaker) => (
-              <SpeakerRow
-                key={speaker.label}
-                recordId={currentRecord.id}
-                speaker={speaker}
-                onRenamed={() => void load()}
-              />
-            ))}
-          </div>
-          {speakers.every((speaker) => speaker.label === "未知") && (
-            <p className="speakers-hint">当前没有说话人标注。用 whisperX 引擎重新转写即可自动区分说话人（设置 → 本机 AI → 转写引擎）。</p>
-          )}
-        </section>
-      )}
 
-      {related.length > 0 && (
-        <section className="related-records-section" aria-label="相关记录">
-          <h3>相关记录</h3>
-          <div className="related-records-list">
-            {related.map((item) => (
-              <button
-                type="button"
-                key={item.recordId}
-                className="related-record-card"
-                onClick={() => void (async () => {
-                  try {
-                    const record = await getRecord(item.recordId);
-                    onChanged(record);
-                  } catch (reason) {
-                    setError(reason instanceof Error ? reason.message : String(reason));
-                  }
-                })()}
-              >
-                <strong>{item.title}</strong>
-                <span>{Math.round(item.similarity * 100)}% 相关</span>
-              </button>
-            ))}
-          </div>
-        </section>
-      )}
+        {speakers.length > 0 && !isDocument && (
+          <details className="detail-more-section speakers-section">
+            <summary>
+              <span>说话人</span>
+              <span className="detail-more-count">
+                {speakers.every((speaker) => speaker.label === "未知") ? "暂无标注" : `${speakers.length} 人`}
+              </span>
+            </summary>
+            {speakers.every((speaker) => speaker.label === "未知") ? (
+              <p className="speakers-hint">当前没有说话人标注。用 whisperX 引擎重新转写即可自动区分说话人（设置 → 本机 AI → 转写引擎）。</p>
+            ) : (
+              <div className="speakers-list">
+                {speakers.map((speaker) => (
+                  <SpeakerRow
+                    key={speaker.label}
+                    recordId={currentRecord.id}
+                    speaker={speaker}
+                    onRenamed={() => void load()}
+                  />
+                ))}
+              </div>
+            )}
+          </details>
+        )}
+
+        {related.length > 0 && (
+          <details className="detail-more-section related-records-section">
+            <summary>
+              <span>相关记录</span>
+              <span className="detail-more-count">{related.length} 条</span>
+            </summary>
+            <p className="detail-more-hint">按内容相似度推荐，点开可跳到对应记录。</p>
+            <div className="related-records-list">
+              {related.map((item) => (
+                <button
+                  type="button"
+                  key={item.recordId}
+                  className="related-record-card"
+                  onClick={() => void (async () => {
+                    try {
+                      const record = await getRecord(item.recordId);
+                      onChanged(record);
+                    } catch (reason) {
+                      setError(reason instanceof Error ? reason.message : String(reason));
+                    }
+                  })()}
+                >
+                  <strong>{item.title}</strong>
+                  <span>{Math.round(item.similarity * 100)}% 相关</span>
+                </button>
+              ))}
+            </div>
+          </details>
+        )}
+      </div>
 
       {!isDocument && retranscribeOpen && (
         <div className="dialog-scrim" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setRetranscribeOpen(false)}>

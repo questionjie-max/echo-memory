@@ -2,7 +2,7 @@
 
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 
-[中文文档](README.zh-CN.md) · [Download v1.0.0](https://github.com/questionjie-max/echo-memory/releases/latest) · [MCP reference](docs/mcp.md) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
+[中文文档](README.zh-CN.md) · [Download v1.2.0](https://github.com/questionjie-max/echo-memory/releases/latest) · [MCP reference](docs/mcp.md) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
 
 **Turn your recordings and AI conversations into memory your agents can actually reuse.**
 
@@ -10,7 +10,7 @@ The decisions you made in this week's meetings and the conclusions you reached i
 
 Echo Memory collects three kinds of sources into one local library on your Mac:
 
-- **Recordings** — one click records your Mac's microphone in-app (stop and it transcribes and analyzes automatically); meetings, interviews, and voice memos are also supported (USB recorders import automatically)
+- **Recordings** — one click records your Mac's microphone, a selected app's system audio, or both as one stereo track (stop and it transcribes and analyzes automatically); meetings, interviews, and voice memos are also supported (USB recorders import automatically)
 - **Documents** — Markdown, TXT, DOCX
 - **AI conversations** — local Claude Code / Codex sessions, ChatGPT / Claude export archives
 
@@ -20,17 +20,18 @@ Transcription and analysis run entirely on your machine (Whisper + Ollama — no
 
 ## What it is not
 
-It is not a meeting bot, not a 24-hour recorder, and not a team collaboration tool. It does not capture system output audio (the far side of an online meeting is not recorded), there is no live transcription during recording (transcription and analysis run after you stop), and there is no Windows/mobile app and no cloud sync — these are trade-offs, not debts. It is a capture-plus-precipitation layer: record with one click in the app, or bring your own material — it makes sure that material stays usable by you and your agents later.
+It is not a meeting bot, not an always-on recorder, and not a team collaboration tool. It records only after you explicitly start it; it can capture the microphone, system audio from a selected app, or both, but it does not join meetings, run in the background, or upload recordings to the cloud. Live preview text and provisional notes depend on local models; the full transcript and post-hoc minutes produced after stopping are authoritative. There is no Windows/mobile app and no cloud sync — these are trade-offs, not debts. It is a capture-plus-precipitation layer: record with one click in the app, or bring your own material — it makes sure that material stays usable by you and your agents later.
 
 ## Three steps to start
 
 1. Download the DMG and drag the app into your Applications folder;
-2. Click "开始记录" on the home screen to record a clip, or drag in an existing audio file;
+2. Click "开始记录" on the home screen, choose microphone or system audio, and record a clip — or drag in an existing audio file;
 3. Ask knowledge chat about a conclusion from last week and see whether it can click back to the exact words.
 
 ## FAQ
 
 - **Microphone permission denied?** Allow Echo Memory under "System Settings → Privacy & Security → Microphone".
+- **System audio unavailable?** Allow Echo Memory under "System Settings → Privacy & Security → Screen & System Audio Recording"; you can then record all system audio or only a selected app.
 - **No Ollama installed, analysis unavailable?** Clicking analysis opens the setup panel — local one-click prepare or cloud with an API key, either works.
 - **Can the cloud fully replace local?** Cloud covers analysis/understanding only; knowledge indexing still needs local Ollama.
 - **Is there a Windows version?** No Windows/mobile app, no cloud sync, no automatic meeting joining.
@@ -57,20 +58,22 @@ The goal is not to save more notes. It is to preserve a person's experiences and
 - **Per-record analysis instructions**: type a supplementary request such as "keep only action items, grouped by owner" in the record's analysis panel. It outranks the template and is enforced deterministically, while verbatim-citation and safety rules still apply to every item.
 - **Chapters and verbatim quotes**: long recordings get 2–6 clickable chapters that seek the player, plus 0–5 quotes that must match the transcript word for word or they are dropped.
 - **The workspace groups content into 录音 / 文档 / AI 对话**: each group header collapses, shows its count and supported formats, and carries that category's import entry — the entry and the content live in the same place.
+- **Recording sources are explicit**: choose an input microphone, record system audio from one running app or all apps, or combine the microphone and selected app in one dual-track recording.
+- **Imported content has a confirmation gate**: imported documents and AI conversations stay provisional for MCP until you confirm them; withdrawing confirmation hides them again. Confirmed minutes can be retrieved by time range, and a single record can be exported as transcript + SRT + minutes + manifest.
 - **Storage is visible and cleanable**: a storage panel shows what the library occupies per category, clears regenerable intermediate files in one click, and a banner warns on low disk. Original audio is never auto-deleted.
 - **Bounded self-recovery**: transient transcription failures retry twice with backoff, jobs interrupted by an app quit resume on next launch, and `AAC` audio imports correctly.
-- **Release hygiene**: the release script audits the built app before notarization (sourcemaps, dev leftovers, developer paths, dev endpoints), guarding against the class of leftover-artifact leaks shipped builds get caught on.
+- **Release hygiene**: the release script audits the built app before notarization (sourcemaps, dev leftovers, developer paths, dev endpoints, required microphone entitlement), guarding against the class of leftover-artifact leaks and permission failures shipped builds get caught on.
 
 ### Complete workflow
 
 - First-run onboarding: environment check, resumable local model downloads, and inbox setup; analysis models can be configured later in Settings without blocking first use.
-- In-app local recording: one-click microphone capture that saves, transcribes, and analyzes automatically when stopped; unsealed recordings from a crashed session can be recovered or discarded.
+- In-app local recording: choose a microphone, capture system audio from all apps or one selected app, or combine both in one dual-track recording; live preview runs when local models are available, and stopping saves, transcribes, and analyzes. Unsealed recordings from a crashed session can be recovered or discarded.
 - Audio inbox: watch folders and USB recorders; new audio imports, transcribes, and analyzes automatically.
 - Personal hotword vocabulary injected into transcription, with optional local LLM correction that never overwrites the original transcript.
 - Cross-record action items and open questions dashboard with completion tracking and evidence jumps.
 - Assistant dock: chat with local (or optional external) models from any view — summarize the current record, create writing, or brainstorm.
 - AI template wizard: describe your needs in conversation; a local model generates the analysis template.
-- Output folder: analyses, transcripts, and AI drafts are written as standard Markdown into a folder of your choice (e.g. an Obsidian vault).
+- Output folder: analyses, transcripts, and AI drafts are written as standard Markdown into a folder of your choice (e.g. any Markdown notes folder).
 - Speaker diarization: optionally run the whisperX engine to separate "Speaker 1, Speaker 2…"; the embedded engine stays the zero-dependency default.
 - Speaker renaming: turn "Speaker 1" into a real name in the record detail, optionally adding it to the hotword vocabulary; action items and decisions carry the attributed owner.
 - The workspace groups records into 录音 / 文档 / AI 对话 with collapsible headers that double as the import entries for each category.
@@ -143,7 +146,7 @@ Generated cross-record memory is versioned, linked to sources, and can be confir
 
 ## MCP: one memory layer for many agents
 
-The current MCP server is local stdio, disabled by default, and read-only. It can search records, retrieve bounded transcript ranges, list projects, return project context, list action items, and read your confirmed personal profile (`get_my_context`). It does not open a public port or modify the library.
+The current MCP server is local stdio, disabled by default, and read-only. It can search records, retrieve bounded transcript ranges, list projects, return project context, list action items, list confirmed minutes by time range, and read your confirmed personal profile (`get_my_context`). It does not open a public port or modify the library.
 
 See the [MCP reference](docs/mcp.md) for tools and development configuration.
 
@@ -158,7 +161,7 @@ See the [MCP reference](docs/mcp.md) for tools and development configuration.
 
 ## Current boundary and direction
 
-The current release focuses on a single-user, single-device workflow. In-app recording of your Mac's microphone is supported, but system output audio is not captured and transcription is not live during recording. Automatic meeting joining, mobile or Windows apps, cloud sync, team collaboration, public APIs, and MCP writes are not provided.
+The current release focuses on a single-user, single-device workflow. In-app recording supports the microphone, system audio from a selected app, or both as one dual-track recording. Live preview text and provisional live minutes are available when local models are configured; the full transcript and post-hoc minutes produced after stopping are authoritative. Automatic meeting joining, mobile or Windows apps, cloud sync, team collaboration, public APIs, and MCP writes are not provided.
 
 The longer-term direction is to expand from traceable conversation memory into a personal memory infrastructure that can connect events, people, projects, questions, knowledge, decisions, and outcomes across time. That direction still requires product, privacy, and user-trust validation.
 

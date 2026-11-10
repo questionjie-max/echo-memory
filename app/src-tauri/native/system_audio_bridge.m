@@ -69,6 +69,73 @@ int echo_system_audio_request_permission(void) {
     return CGPreflightScreenCaptureAccess() ? 1 : 0;
 }
 
+static int fetch_shareable_content(SCShareableContent **out_content) {
+    __block SCShareableContent *content = nil;
+    __block NSError *content_error = nil;
+    dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
+    [SCShareableContent getShareableContentExcludingDesktopWindows:NO
+                                               onScreenWindowsOnly:YES
+                                                 completionHandler:^(SCShareableContent *shareable, NSError *error) {
+        content = shareable;
+        content_error = error;
+        dispatch_semaphore_signal(semaphore);
+    }];
+    if (dispatch_semaphore_wait(semaphore, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(20 * NSEC_PER_SEC))) != 0) {
+        return ECHO_SYSTEM_AUDIO_AUDIO_ERROR;
+    }
+    if (content_error != nil || content == nil) {
+        return ECHO_SYSTEM_AUDIO_AUDIO_ERROR;
+    }
+    *out_content = content;
+    return ECHO_SYSTEM_AUDIO_OK;
+}
+
+int echo_system_audio_list_applications(echo_system_audio_application_callback callback,
+                                        void *context) {
+    if (callback == NULL) {
+        return ECHO_SYSTEM_AUDIO_INVALID_ARGUMENT;
+    }
+    if (@available(macOS 12.3, *)) {
+        if (system_audio_permission_status() != ECHO_SYSTEM_AUDIO_PERMISSION_GRANTED) {
+            return ECHO_SYSTEM_AUDIO_PERMISSION_DENIED;
+        }
+        SCShareableContent *content = nil;
+        int result = fetch_shareable_content(&content);
+        if (result != ECHO_SYSTEM_AUDIO_OK) {
+            return result;
+        }
+        NSString *own_bundle = [[NSBundle mainBundle] bundleIdentifier];
+        NSMutableDictionary<NSString *, NSNumber *> *process_ids = [NSMutableDictionary dictionary];
+        NSMutableDictionary<NSString *, NSString *> *names = [NSMutableDictionary dictionary];
+        for (SCRunningApplication *application in content.applications) {
+            NSString *bundle_id = application.bundleIdentifier;
+            NSString *name = application.applicationName;
+            if (bundle_id.length == 0 || name.length == 0) {
+                continue;
+            }
+            if (own_bundle.length > 0 && [bundle_id isEqualToString:own_bundle]) {
+                continue;
+            }
+            if (names[bundle_id] == nil) {
+                names[bundle_id] = name;
+                process_ids[bundle_id] = @(application.processID);
+            }
+        }
+        NSArray<NSString *> *sorted_bundles = [names.allKeys
+            sortedArrayUsingComparator:^NSComparisonResult(NSString *left, NSString *right) {
+                return [names[left] localizedCaseInsensitiveCompare:names[right]];
+            }];
+        for (NSString *bundle_id in sorted_bundles) {
+            callback(bundle_id.UTF8String,
+                     names[bundle_id].UTF8String,
+                     process_ids[bundle_id].intValue,
+                     context);
+        }
+        return ECHO_SYSTEM_AUDIO_OK;
+    }
+    return ECHO_SYSTEM_AUDIO_UNSUPPORTED;
+}
+
 /* ---- 采集 ---- */
 
 @interface EchoSystemAudioOutput : NSObject <SCStreamOutput, SCStreamDelegate>
@@ -212,7 +279,7 @@ int echo_system_audio_request_permission(void) {
 
 @end
 
-int echo_system_audio_start(void) {
+int echo_system_audio_start(const char *application_bundle_id) {
     if (@available(macOS 12.3, *)) {
         int permission = system_audio_permission_status();
         if (permission != ECHO_SYSTEM_AUDIO_PERMISSION_GRANTED) {
@@ -234,36 +301,51 @@ int echo_system_audio_start(void) {
             }
             system_audio_stream_failed = NO;
 
-            __block SCShareableContent *content = nil;
-            __block NSError *content_error = nil;
-            dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
-            [SCShareableContent getShareableContentExcludingDesktopWindows:NO
-                                                       onScreenWindowsOnly:YES
-                                                         completionHandler:^(SCShareableContent *shareable, NSError *error) {
-                content = shareable;
-                content_error = error;
-                dispatch_semaphore_signal(semaphore);
-            }];
-            if (dispatch_semaphore_wait(semaphore, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(20 * NSEC_PER_SEC))) != 0) {
-                return ECHO_SYSTEM_AUDIO_AUDIO_ERROR;
-            }
-            if (content_error != nil || content == nil || content.displays.count == 0) {
+            SCShareableContent *content = nil;
+            int content_result = fetch_shareable_content(&content);
+            if (content_result != ECHO_SYSTEM_AUDIO_OK || content.displays.count == 0) {
                 return ECHO_SYSTEM_AUDIO_AUDIO_ERROR;
             }
             SCDisplay *display = content.displays.firstObject;
 
-            // 排除自身进程：既从画面里去掉自己的窗口，也借 excludesCurrentProcessAudio
-            // 把本应用自己发出的声音从系统声里抠掉，避免自录自的回声。
-            NSMutableArray<SCRunningApplication *> *excluded = [NSMutableArray array];
-            NSString *own_bundle = [[NSBundle mainBundle] bundleIdentifier];
-            for (SCRunningApplication *application in content.applications) {
-                if (own_bundle.length > 0 && [application.bundleIdentifier isEqualToString:own_bundle]) {
-                    [excluded addObject:application];
-                }
+            NSString *selected_bundle = application_bundle_id == NULL
+                ? @""
+                : [NSString stringWithUTF8String:application_bundle_id];
+            if (selected_bundle == nil) {
+                return ECHO_SYSTEM_AUDIO_INVALID_ARGUMENT;
             }
-            SCContentFilter *filter = [[SCContentFilter alloc] initWithDisplay:display
-                                                        excludingApplications:excluded
-                                                             exceptingWindows:@[]];
+            SCContentFilter *filter = nil;
+            if (selected_bundle.length > 0) {
+                SCRunningApplication *selected = nil;
+                for (SCRunningApplication *application in content.applications) {
+                    if ([application.bundleIdentifier isEqualToString:selected_bundle]) {
+                        selected = application;
+                        break;
+                    }
+                }
+                if (selected == nil) {
+                    return ECHO_SYSTEM_AUDIO_INVALID_ARGUMENT;
+                }
+                filter = [[SCContentFilter alloc] initWithDisplay:display
+                                             includingApplications:@[selected]
+                                                  exceptingWindows:@[]];
+            } else {
+                // 排除自身进程：既从画面里去掉自己的窗口，也借 excludesCurrentProcessAudio
+                // 把本应用自己发出的声音从系统声里抠掉，避免自录自的回声。
+                NSMutableArray<SCRunningApplication *> *excluded = [NSMutableArray array];
+                NSString *own_bundle = [[NSBundle mainBundle] bundleIdentifier];
+                for (SCRunningApplication *application in content.applications) {
+                    if (own_bundle.length > 0 && [application.bundleIdentifier isEqualToString:own_bundle]) {
+                        [excluded addObject:application];
+                    }
+                }
+                filter = [[SCContentFilter alloc] initWithDisplay:display
+                                             excludingApplications:excluded
+                                                  exceptingWindows:@[]];
+            }
+            if (filter == nil) {
+                return ECHO_SYSTEM_AUDIO_AUDIO_ERROR;
+            }
 
             SCStreamConfiguration *configuration = [[SCStreamConfiguration alloc] init];
             configuration.capturesAudio = YES;
@@ -370,7 +452,16 @@ void echo_system_audio_set_sample_callback(echo_system_audio_sample_callback cal
 
 int echo_system_audio_permission_status(void) { return ECHO_SYSTEM_AUDIO_PERMISSION_UNSUPPORTED_STATUS; }
 int echo_system_audio_request_permission(void) { return -1; }
-int echo_system_audio_start(void) { return ECHO_SYSTEM_AUDIO_UNSUPPORTED; }
+int echo_system_audio_list_applications(echo_system_audio_application_callback callback,
+                                        void *context) {
+    (void)callback;
+    (void)context;
+    return ECHO_SYSTEM_AUDIO_UNSUPPORTED;
+}
+int echo_system_audio_start(const char *application_bundle_id) {
+    (void)application_bundle_id;
+    return ECHO_SYSTEM_AUDIO_UNSUPPORTED;
+}
 int echo_system_audio_stop(void) { return ECHO_SYSTEM_AUDIO_UNSUPPORTED; }
 int echo_system_audio_cancel(void) { return ECHO_SYSTEM_AUDIO_UNSUPPORTED; }
 int echo_system_audio_is_recording(void) { return 0; }

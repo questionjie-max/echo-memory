@@ -210,11 +210,23 @@ impl DualRecordingController {
         state: &AppState,
         project_id: Option<&str>,
     ) -> AppResult<crate::recording::RecordingState> {
+        self.start_with_sources(state, project_id, None, None)
+    }
+
+    pub fn start_with_sources(
+        &self,
+        state: &AppState,
+        project_id: Option<&str>,
+        input_device_id: Option<&str>,
+        application_bundle_id: Option<&str>,
+    ) -> AppResult<crate::recording::RecordingState> {
         Self::ensure_no_capture_active(state)?;
         // 主路（麦克风）先起：副路失败时主路整体回滚，绝不静默降级成单路。
         // 后段任何失败同样回滚两路——否则两路在录而 UI 认为启动失败，
         // 用户以为没在录音（隐私红线不允许静默采集）。
-        let mic = state.recording.start(&state.library, project_id)?;
+        let mic = state
+            .recording
+            .start_with_device(&state.library, project_id, input_device_id)?;
         let mic_session_id = match mic.session_id.clone() {
             Some(id) => id,
             None => {
@@ -222,7 +234,11 @@ impl DualRecordingController {
                 return Err(AppError::Invalid("麦克风会话启动异常".to_owned()));
             }
         };
-        let system = match state.system_audio.start(&state.library, project_id) {
+        let system = match state.system_audio.start_with_application(
+            &state.library,
+            project_id,
+            application_bundle_id,
+        ) {
             Ok(system) => system,
             Err(error) => {
                 let _ = state.recording.cancel(&state.library);

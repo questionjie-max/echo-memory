@@ -47,6 +47,7 @@ fn tools() -> Vec<Value> {
         ("get_project_context", "List recent records for a project.", json!({"project_id":{"type":"string"}})),
         ("list_action_items", "List local action items. Alpha currently returns no external writes.", json!({"project_id":{"type":"string"},"status":{"type":"string"}})),
         ("get_my_context", "Get the user's L3 profile summary, recently confirmed memory items, and minutes conclusions/action items the user explicitly confirmed (read-only personal context).", json!({})),
+        ("list_confirmed_minutes", "List the user's explicitly confirmed minutes conclusions/action items within a time range, newest record first. Read-only: provisional (unconfirmed) and archived content is never returned. Each item carries provenance: record title, evidence time window, verbatim quote, confirmed time.", json!({"since":{"type":"string","description":"Optional inclusive lower bound on record time, ISO-8601 date or datetime (e.g. 2026-11-01)"},"until":{"type":"string","description":"Optional inclusive upper bound on record time, ISO-8601"},"project_id":{"type":"string","description":"Optional knowledge-base filter"},"limit":{"type":"integer","description":"Optional, default 20, max 50"}})),
     ].into_iter().map(|(name, description, properties)| json!({"name":name,"description":description,"inputSchema":{"type":"object","properties":properties}})).collect()
 }
 
@@ -74,7 +75,8 @@ fn call_tool(library: &ManagedLibrary, params: &Value, id: Value) -> Value {
                 .min(10) as usize;
             repo.log_mcp_access(name, None, project_id)
                 .map_err(|e| e.to_string())?;
-            repo.search(query, project_id, false, limit)
+            // 块4 导入确认门在 lib 层（mcp_search）；二进制只做 JSON-RPC 壳。
+            repo.mcp_search(query, project_id, limit)
                 .map(|items| json!(items))
                 .map_err(|e| e.to_string())
         }
@@ -82,13 +84,8 @@ fn call_tool(library: &ManagedLibrary, params: &Value, id: Value) -> Value {
             let record_id = required(args, "record_id")?;
             repo.log_mcp_access(name, Some(record_id), None)
                 .map_err(|e| e.to_string())?;
-            let record = repo.get_record(record_id).map_err(|e| e.to_string())?;
-            let transcript = repo
-                .list_transcript_segments(record_id)
-                .map_err(|e| e.to_string())?;
-            Ok(
-                json!({"record":record,"transcript":transcript.into_iter().take(100).collect::<Vec<_>>()}),
-            )
+            let (record, transcript) = repo.mcp_get_record(record_id).map_err(|e| e.to_string())?;
+            Ok(json!({"record":record,"transcript":transcript}))
         }
         "get_transcript" => {
             let record_id = required(args, "record_id")?;
@@ -99,14 +96,8 @@ fn call_tool(library: &ManagedLibrary, params: &Value, id: Value) -> Value {
                 .unwrap_or(i64::MAX);
             repo.log_mcp_access(name, Some(record_id), None)
                 .map_err(|e| e.to_string())?;
-            repo.list_transcript_segments(record_id)
-                .map(|segments| {
-                    json!(segments
-                        .into_iter()
-                        .filter(|segment| segment.end_ms >= start && segment.start_ms <= end)
-                        .take(100)
-                        .collect::<Vec<_>>())
-                })
+            repo.mcp_get_transcript(record_id, start, end)
+                .map(|segments| json!(segments))
                 .map_err(|e| e.to_string())
         }
         "list_projects" => {
@@ -120,17 +111,10 @@ fn call_tool(library: &ManagedLibrary, params: &Value, id: Value) -> Value {
             let project_id = required(args, "project_id")?;
             repo.log_mcp_access(name, None, Some(project_id))
                 .map_err(|e| e.to_string())?;
-            let records = repo
-                .list_records(Some(project_id), false)
-                .map_err(|e| e.to_string())?;
-            let decisions = repo
-                .list_decisions(Some(project_id), 20)
-                .map_err(|e| e.to_string())?;
-            let action_items = repo
-                .list_action_items(Some(project_id), None)
-                .map_err(|e| e.to_string())?;
+            let (records, decisions, action_items) =
+                repo.mcp_project_context(project_id).map_err(|e| e.to_string())?;
             Ok(
-                json!({"records":records.into_iter().take(20).collect::<Vec<_>>(),"decisions":decisions,"action_items":action_items}),
+                json!({"records":records,"decisions":decisions,"action_items":action_items}),
             )
         }
         "list_action_items" => {
@@ -138,7 +122,8 @@ fn call_tool(library: &ManagedLibrary, params: &Value, id: Value) -> Value {
             let status = args.get("status").and_then(Value::as_str);
             repo.log_mcp_access(name, None, project_id)
                 .map_err(|e| e.to_string())?;
-            repo.list_action_items(project_id, status)
+            // 块8 终审修1：门在 lib（mcp_list_action_items）——未确认导入的派生待办不可见。
+            repo.mcp_list_action_items(project_id, status)
                 .map(|items| json!(items))
                 .map_err(|e| e.to_string())
         }
@@ -166,6 +151,22 @@ fn call_tool(library: &ManagedLibrary, params: &Value, id: Value) -> Value {
                 .confirmed_minutes_memory_entries(20)
                 .map_err(|e| e.to_string())?;
             Ok(json!({"profile": profile, "confirmedItems": confirmed, "minutesItems": minutes_items}))
+        }
+        // 块5：按时间范围取已确认纪要摘要。门语义在 lib（confirmed + 未归档 + 带溯源）。
+        "list_confirmed_minutes" => {
+            let since = args.get("since").and_then(Value::as_str);
+            let until = args.get("until").and_then(Value::as_str);
+            let project_id = args.get("project_id").and_then(Value::as_str);
+            let limit = args
+                .get("limit")
+                .and_then(Value::as_u64)
+                .unwrap_or(20)
+                .min(50) as usize;
+            repo.log_mcp_access(name, None, project_id)
+                .map_err(|e| e.to_string())?;
+            repo.list_confirmed_minutes_in_range(since, until, project_id, limit)
+                .map(|items| json!(items))
+                .map_err(|e| e.to_string())
         }
         _ => Err("unknown tool".to_owned()),
     })();

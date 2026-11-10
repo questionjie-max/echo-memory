@@ -627,7 +627,7 @@ export default function SettingsPanel({ open: visible, onClose, onOpenKnowledge 
             <Stack>
               <Card
                 title="产出文件夹"
-                description="所有生成内容以标准 Markdown + YAML frontmatter 写入这里。可以指向 Obsidian 等笔记工具的目录——回声记忆只负责写出，不感知任何外部工具。"
+                description="所有生成内容以标准 Markdown + YAML frontmatter 写入这里。可以指向任意 Markdown 笔记工具的目录——回声记忆只负责写出，不感知任何外部工具。"
                 status={<StatusPill ok={Boolean(output.folder)} okText="自定义" badText="默认位置" />}
               >
                 <Field label="当前目录">
@@ -734,7 +734,7 @@ export default function SettingsPanel({ open: visible, onClose, onOpenKnowledge 
                 </div>
                 {storageNotice && <p className="em-empty">{storageNotice}</p>}
               </Card>
-              <Card title="为什么不自动删除录音" description="得到大脑等云端产品的原件只是云端副本的本地缓存，7 天过期删掉没有损失；回声记忆的音频是本地资产，删掉就永久失去回听与重新分析能力。因此这里只做「可见 + 可控 + 低空间提醒」，把删除的决定权留给你。">
+              <Card title="为什么不自动删除录音" description="一些云端产品会把录音保存在云端，本地文件只是可再生成的缓存，清理后仍可从云端取回。回声记忆的录音是本地资产，删除后无法恢复，也会失去回听与重新分析的能力。因此这里只提供空间提醒和可控清理，把删除的决定权留给你。">
                 <Field label="资料库位置" hint="所有音频、逐字稿、分析与数据库都在这个目录里；备份它等于备份全部数据。">
                   <div className="em-field-row">
                     <input className="em-input" readOnly value={storage.libraryPath} />

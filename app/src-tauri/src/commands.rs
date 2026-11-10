@@ -745,6 +745,28 @@ pub fn set_record_archived(
     Ok(updated)
 }
 
+/// 块4：导入内容确认门——document/chat 记录「确认入记忆 / 撤回」。
+/// 确认后内容才对 MCP 可见；撤回立即收回（与纪要条目同语义，双向可逆）。
+/// 确认（而非撤回）时触发记忆链调度：分析结论此刻才允许进演化/记忆（终审修2）。
+#[tauri::command]
+pub fn set_record_import_confirmed(
+    app: AppHandle,
+    state: State<AppState>,
+    record_id: String,
+    confirmed: bool,
+) -> Result<RecordBrief, String> {
+    let updated = state
+        .library
+        .repository()
+        .set_import_confirmed(&record_id, confirmed)
+        .map_err(|e| e.to_frontend())?;
+    if confirmed {
+        spawn_index_metadata_refresh(app, state.library.root().to_path_buf());
+        schedule_memory_update(state.inner().clone());
+    }
+    Ok(updated)
+}
+
 #[tauri::command]
 pub fn search_records(
     state: State<AppState>,
@@ -937,6 +959,27 @@ pub fn export_record(
         &record_id,
         &PathBuf::from(destination_path),
         &format,
+    )
+    .map(|path| path.to_string_lossy().to_string())
+    .map_err(|error| error.to_frontend())
+}
+
+/// 块7：导出包——单条记录全量交付（逐字稿 md+srt + 纪要 + manifest），目的地为用户
+/// 通过文件夹选择器选定的目录。与既有目录导出同一道一次性票据门。
+#[tauri::command]
+pub fn export_record_package(
+    state: State<AppState>,
+    record_id: String,
+    destination_path: String,
+    ticket: String,
+) -> Result<String, String> {
+    if !crate::state::consume_export_ticket(&ticket) {
+        return Err("导出未经验证，请重新通过导出对话框操作".to_owned());
+    }
+    crate::export::export_record_package(
+        &state.library,
+        &record_id,
+        &PathBuf::from(destination_path),
     )
     .map(|path| path.to_string_lossy().to_string())
     .map_err(|error| error.to_frontend())
@@ -4151,7 +4194,7 @@ mod tests {
         // Key 存在性读进程级环境变量，并发测试下不可假设——放进 env guard
         // 串行域内，让 Key 恒定存在，用同意的有无驱动「半配置」判定。
         use crate::external_ai_gate::AsrApiKeyEnvGuard;
-        let _key = AsrApiKeyEnvGuard::set("local-mock-0001");
+        let _key = AsrApiKeyEnvGuard::set("test-asr-token");
         let library = scratch_library("asr-half-configured");
         let repository = library.repository();
         let half = || crate::external_ai_gate::external_asr_channel_half_configured(&library).unwrap();
@@ -4217,7 +4260,7 @@ mod tests {
     fn external_mode_with_ready_asr_channel_routes_to_third_party() {
         use crate::external_ai_gate::AsrApiKeyEnvGuard;
 
-        let _key = AsrApiKeyEnvGuard::set("local-mock-0001");
+        let _key = AsrApiKeyEnvGuard::set("test-asr-token");
         let library = scratch_library("external-transcription-ready");
         let repository = library.repository();
         let (record, job) = repository
@@ -4267,7 +4310,7 @@ mod tests {
     fn external_import_with_ready_asr_is_not_blocked_by_analysis_channel() {
         use crate::external_ai_gate::AsrApiKeyEnvGuard;
 
-        let _key = AsrApiKeyEnvGuard::set("local-mock-0001");
+        let _key = AsrApiKeyEnvGuard::set("test-asr-token");
         let library = scratch_library("external-import-asr-ready");
         let repository = library.repository();
         let (record, job) = repository

@@ -1178,7 +1178,10 @@ fn mcp_is_disabled_by_default_and_tracks_recent_calls() {
         .unwrap();
     let status = repository.mcp_status().unwrap();
     assert_eq!(status.recent_calls[0].tool_name, "search_records");
-    assert_eq!(status.authorized_scope, "全部知识库（只读）");
+    // 块3/F1+终审：口径文案锁三层语义（原文层只读可读 + 未确认导入排除 + 条目层仅已确认）。
+    assert!(status.authorized_scope.contains("只读"));
+    assert!(status.authorized_scope.contains("未确认"));
+    assert!(status.authorized_scope.contains("已确认"));
 }
 
 #[test]

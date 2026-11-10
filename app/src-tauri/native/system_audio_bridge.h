@@ -39,7 +39,16 @@ int echo_system_audio_permission_status(void);
  * 返回 1 已授权、0 已拒绝、-1 平台不支持、-2 等待超时。 */
 int echo_system_audio_request_permission(void);
 
-int echo_system_audio_start(void);
+/* 同步枚举可按应用过滤的系统声音来源。bundle_id 只在回调期间有效。 */
+typedef void (*echo_system_audio_application_callback)(const char *bundle_id,
+                                                       const char *name,
+                                                       int process_id,
+                                                       void *context);
+int echo_system_audio_list_applications(echo_system_audio_application_callback callback,
+                                        void *context);
+
+/* application_bundle_id 为 NULL 或空串时录制整台 Mac 的系统声音。 */
+int echo_system_audio_start(const char *application_bundle_id);
 int echo_system_audio_stop(void);
 int echo_system_audio_cancel(void);
 int echo_system_audio_is_recording(void);

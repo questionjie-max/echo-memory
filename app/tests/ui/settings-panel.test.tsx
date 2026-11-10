@@ -83,4 +83,16 @@ describe("SettingsPanel 数据加载（0.4.2 回归防护）", () => {
       }
     }
   });
+
+  // 块3/F5 回归：重新运行引导向导必须真的触发「关闭设置 → 重查状态 → 弹向导」链路。
+  it("重新运行引导向导：调用 resetOnboarding 并关闭设置", async () => {
+    vi.mocked(tauri.resetOnboarding).mockResolvedValue(undefined);
+    const onClose = vi.fn();
+    render(<SettingsPanel open onClose={onClose} />);
+    await screen.findByText("AI 模型", { selector: "button" });
+    fireEvent.click(screen.getByText("关于", { selector: "button" }));
+    fireEvent.click(screen.getByRole("button", { name: "重新运行引导向导" }));
+    await waitFor(() => expect(tauri.resetOnboarding).toHaveBeenCalled());
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
 });

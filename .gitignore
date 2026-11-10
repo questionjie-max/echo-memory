@@ -63,3 +63,6 @@ content/
 
 # 本地基准输出可能包含真实逐字稿、路径和分析内容，绝不公开
 benchmarks/results/
+
+# 根级误装依赖/工具缓存（npm 应只在 app/ 下运行）
+node_modules/

@@ -53,6 +53,8 @@ import type {
   RecordingState,
   StoppedRecording,
   RecoverableRecording,
+  RecordingInputDevice,
+  SystemAudioApplication,
   SystemAudioPermission,
   MinutesView,
 } from "../shared/types";
@@ -116,6 +118,16 @@ export function listArchivedRecords(projectId?: string | null, unfiledOnly = fal
 
 export function setRecordArchived(recordId: string, archived: boolean): Promise<RecordBrief> {
   return invoke<RecordBrief>("set_record_archived", { recordId, archived });
+}
+
+/** 块4：导入内容确认门——确认后内容才对 MCP 可见，撤回立即收回。 */
+export function setRecordImportConfirmed(recordId: string, confirmed: boolean): Promise<RecordBrief> {
+  return invoke<RecordBrief>("set_record_import_confirmed", { recordId, confirmed });
+}
+
+/** 块7：导出包——单条记录全量交付（逐字稿 md+srt + 纪要 + manifest）。 */
+export function exportRecordPackage(recordId: string, destinationPath: string, ticket: string): Promise<string> {
+  return invoke<string>("export_record_package", { recordId, destinationPath, ticket });
 }
 
 export function getRecord(id: string): Promise<RecordBrief> {
@@ -283,12 +295,20 @@ export function startRecording(
   projectId?: string | null,
   source?: "microphone" | "both",
   confirmed?: boolean,
+  inputDeviceId?: string | null,
+  applicationBundleId?: string | null,
 ): Promise<RecordingState> {
   return invoke<RecordingState>("start_recording", {
     projectId: projectId ?? null,
     source: source ?? "microphone",
     confirmed: confirmed ?? null,
+    inputDeviceId: inputDeviceId || null,
+    applicationBundleId: applicationBundleId || null,
   });
+}
+
+export function listMicrophoneDevices(): Promise<RecordingInputDevice[]> {
+  return invoke<RecordingInputDevice[]>("list_microphone_devices");
 }
 
 export function pauseRecording(): Promise<RecordingState> {
@@ -340,11 +360,17 @@ export function requestSystemAudioPermission(): Promise<SystemAudioPermission> {
 export function startSystemRecording(
   projectId: string | null | undefined,
   confirmed: boolean,
+  applicationBundleId?: string | null,
 ): Promise<RecordingState> {
   return invoke<RecordingState>("start_system_recording", {
     projectId: projectId ?? null,
     confirmed,
+    applicationBundleId: applicationBundleId || null,
   });
+}
+
+export function listSystemAudioApplications(): Promise<SystemAudioApplication[]> {
+  return invoke<SystemAudioApplication[]>("list_system_audio_applications");
 }
 
 export function pauseSystemRecording(): Promise<RecordingState> {

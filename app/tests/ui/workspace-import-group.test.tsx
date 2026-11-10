@@ -67,8 +67,8 @@ const mixedRecords = [
   record("r1", "季度产品评审会议"),
   record("r2", "客户访谈：房产系统二期"),
   record("d1", "需求说明与验收口径", { sourceType: "document" }),
-  record("c1", "AI 对话 2026-10-14 17:20", { sourceType: "chat", hasAnalysis: false, analysisStatus: null }),
-  record("c2", "AI 对话 2026-10-13 18:03", { sourceType: "chat", hasAnalysis: false, analysisStatus: null }),
+  record("c1", "AI 对话 2026-10-14 17:20", { sourceType: "chat", hasAnalysis: false, analysisStatus: null, importConfirmedAt: "2026-10-14T10:00:00.000Z" }),
+  record("c2", "AI 对话 2026-10-13 18:03", { sourceType: "chat", hasAnalysis: false, analysisStatus: null, importConfirmedAt: "2026-10-14T10:00:00.000Z" }),
 ];
 
 beforeEach(() => {

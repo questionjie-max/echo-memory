@@ -1,5 +1,5 @@
 use super::LibraryRepository;
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::minutes::MinutesEvidence;
 use crate::types::{McpAccessLog, McpStatus};
 use chrono::Utc;
@@ -29,6 +29,188 @@ impl LibraryRepository {
         Ok(value == "true")
     }
 
+    /// 终审修3：时间边界的「含当日」语义。裸日期（YYYY-MM-DD）按字典序会把
+    /// 整天排除（RFC3339 datetime 串 > 纯日期串），归一化为当日首/末再比较。
+    fn normalize_time_bound(bound: &str, end_of_day: bool) -> String {
+        let trimmed = bound.trim();
+        let date_only = trimmed.len() == 10
+            && trimmed.as_bytes().get(4) == Some(&b'-')
+            && !trimmed.contains('T')
+            && !trimmed.contains(':')
+            && !trimmed.contains(' ');
+        if date_only && end_of_day {
+            format!("{trimmed}T23:59:59.999999999Z")
+        } else if date_only {
+            format!("{trimmed}T00:00:00.000Z")
+        } else {
+            trimmed.to_owned()
+        }
+    }
+
+    /// 块5：按时间范围取已确认纪要条目（新 MCP 工具 list_confirmed_minutes 的数据层）。
+    /// 只返回 confirmed 且记录未归档的条目（与 get_my_context 同一门），每条带溯源坐标
+    /// （记录标题、证据时间窗、逐字引文、确认时间）。时间范围按记录的 imported_at 过滤。
+    pub fn list_confirmed_minutes_in_range(
+        &self,
+        since: Option<&str>,
+        until: Option<&str>,
+        project_id: Option<&str>,
+        limit: usize,
+    ) -> AppResult<Vec<ConfirmedMinutesMemoryEntry>> {
+        let since = since.map(|bound| Self::normalize_time_bound(bound, false));
+        let until = until.map(|bound| Self::normalize_time_bound(bound, true));
+        let connection = self.connect()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT minutes_items.id, minutes_items.record_id, minutes_items.kind, minutes_items.text, \
+                 minutes_items.owner_text, minutes_items.evidence_json, minutes_items.updated_at, \
+                 records.title, records.imported_at, projects.name \
+                 FROM minutes_items \
+                 JOIN records ON records.id = minutes_items.record_id \
+                 LEFT JOIN projects ON projects.id = records.project_id \
+                 WHERE minutes_items.status = 'confirmed' AND records.archived_at IS NULL \
+                 AND (?1 IS NULL OR records.imported_at >= ?1) \
+                 AND (?2 IS NULL OR records.imported_at <= ?2) \
+                 AND (?3 IS NULL OR records.project_id = ?3) \
+                 ORDER BY records.imported_at DESC LIMIT ?4",
+            )
+            .map_err(|error| AppError::Invalid(format!("读取已确认纪要失败：{error}")))?;
+        let rows = statement
+            .query_map(
+                params![since, until, project_id, limit as i64],
+                |row| {
+                    let evidence: MinutesEvidence =
+                        serde_json::from_str(&row.get::<_, String>(5)?)
+                            .map_err(|_| rusqlite::Error::InvalidColumnType(
+                                5,
+                                "evidence_json".into(),
+                                rusqlite::types::Type::Text,
+                            ))?;
+                    Ok(ConfirmedMinutesMemoryEntry {
+                        item_id: row.get(0)?,
+                        kind: row.get(2)?,
+                        text: row.get(3)?,
+                        owner: row.get(4)?,
+                        record_id: row.get(1)?,
+                        record_title: row.get(7)?,
+                        start_ms: evidence.start_ms,
+                        end_ms: evidence.end_ms,
+                        quote_text: evidence.quote_text,
+                        confirmed_at: row.get(6)?,
+                        record_imported_at: row.get(8)?,
+                        project_name: row.get(9)?,
+                    })
+                },
+            )
+            .map_err(|error| AppError::Invalid(format!("读取已确认纪要失败：{error}")))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| AppError::Invalid(format!("读取已确认纪要失败：{error}")))
+    }
+
+    /// 块8 终审修1（P0）：独立工具 list_action_items 同样过导入确认门——
+    /// 未确认导入的分析派生待办（含其 title 文本）不得从该出口漏出。
+    pub fn mcp_list_action_items(
+        &self,
+        project_id: Option<&str>,
+        status: Option<&str>,
+    ) -> AppResult<Vec<crate::types::ActionItem>> {
+        let unconfirmed = self.unconfirmed_import_ids()?;
+        Ok(self
+            .list_action_items(project_id, status)?
+            .into_iter()
+            .filter(|item| !unconfirmed.contains(&item.record_id))
+            .collect())
+    }
+
+    /// 块4 导入确认门：未确认的 document/chat 记录对 MCP 完全不可见。
+    /// 门语义集中在 lib（可测试），二进制只做 JSON-RPC 壳。
+    fn ensure_import_confirmed(&self, record_id: &str) -> AppResult<()> {
+        if self.is_unconfirmed_import(record_id)? {
+            return Err(crate::error::AppError::Invalid(
+                "该记录是尚未确认的导入内容，对 AI 助手不可见；请在回声记忆里确认入记忆后再试。".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn unconfirmed_import_ids(&self) -> AppResult<std::collections::HashSet<String>> {
+        Ok(self
+            .list_unconfirmed_import_ids()?
+            .into_iter()
+            .collect())
+    }
+
+    /// MCP search_records：应用内搜索的同一召回，叠加导入确认门过滤。
+    pub fn mcp_search(&self, query: &str, project_id: Option<&str>, limit: usize) -> AppResult<Vec<crate::types::SearchResult>> {
+        let unconfirmed = self.unconfirmed_import_ids()?;
+        Ok(self
+            .search(query, project_id, false, limit)?
+            .into_iter()
+            .filter(|item| !unconfirmed.contains(&item.record_id))
+            .collect())
+    }
+
+    /// MCP get_record：元数据 + 最新逐字稿前 100 段；未确认导入拒绝。
+    pub fn mcp_get_record(
+        &self,
+        record_id: &str,
+    ) -> AppResult<(crate::types::RecordBrief, Vec<crate::types::TranscriptSegment>)> {
+        self.ensure_import_confirmed(record_id)?;
+        let record = self.get_record(record_id)?;
+        let transcript = self.list_transcript_segments(record_id)?;
+        Ok((record, transcript.into_iter().take(100).collect()))
+    }
+
+    /// MCP get_transcript：时间窗过滤的逐字稿段；未确认导入拒绝。
+    pub fn mcp_get_transcript(
+        &self,
+        record_id: &str,
+        start_ms: i64,
+        end_ms: i64,
+    ) -> AppResult<Vec<crate::types::TranscriptSegment>> {
+        self.ensure_import_confirmed(record_id)?;
+        Ok(self
+            .list_transcript_segments(record_id)?
+            .into_iter()
+            .filter(|segment| segment.end_ms >= start_ms && segment.start_ms <= end_ms)
+            .take(100)
+            .collect())
+    }
+
+    /// MCP get_project_context：项目内记录列表 + 决策 + 待办，全部过滤未确认导入。
+    pub fn mcp_project_context(
+        &self,
+        project_id: &str,
+    ) -> AppResult<(
+        Vec<crate::types::RecordBrief>,
+        Vec<serde_json::Value>,
+        Vec<crate::types::ActionItem>,
+    )> {
+        let unconfirmed = self.unconfirmed_import_ids()?;
+        let records = self
+            .list_records(Some(project_id), false)?
+            .into_iter()
+            .filter(|record| !unconfirmed.contains(&record.id))
+            .take(20)
+            .collect();
+        let decisions = self
+            .list_decisions(Some(project_id), 20)?
+            .into_iter()
+            .filter(|item| {
+                item.get("recordId")
+                    .and_then(serde_json::Value::as_str)
+                    .map(|id| !unconfirmed.contains(id))
+                    .unwrap_or(true)
+            })
+            .collect();
+        let action_items = self
+            .list_action_items(Some(project_id), None)?
+            .into_iter()
+            .filter(|item| !unconfirmed.contains(&item.record_id))
+            .collect();
+        Ok((records, decisions, action_items))
+    }
+
     pub fn set_mcp_enabled(&self, enabled: bool) -> AppResult<McpStatus> {
         self.connect()?.execute(
             "INSERT INTO app_settings (key, value, updated_at) VALUES ('mcp_enabled', ?1, ?2) \
@@ -55,7 +237,7 @@ impl LibraryRepository {
             .collect::<Result<Vec<_>, rusqlite::Error>>()?;
         Ok(McpStatus {
             enabled: self.mcp_enabled()?,
-            authorized_scope: "全部知识库（只读）".to_owned(),
+            authorized_scope: "全部记录的标题、逐字稿与文档原文（只读；未确认的导入内容除外）；记忆条目仅限已确认内容".to_owned(),
             executable_available: false,
             executable_path: None,
             recent_calls,
@@ -93,6 +275,8 @@ impl LibraryRepository {
                 end_ms: evidence.end_ms,
                 quote_text: evidence.quote_text,
                 confirmed_at: row.updated_at,
+                record_imported_at: None,
+                project_name: None,
             });
         }
         Ok(entries)
@@ -113,4 +297,43 @@ pub struct ConfirmedMinutesMemoryEntry {
     pub end_ms: i64,
     pub quote_text: String,
     pub confirmed_at: String,
+    /// 块5：记录的发生/导入时间与所属知识库（时间范围检索的过滤基准与展示字段）。
+    pub record_imported_at: Option<String>,
+    pub project_name: Option<String>,
+}
+
+#[cfg(test)]
+mod scope_copy_tests {
+    use super::*;
+
+    /// 块3/F1 契约测试：MCP 授权口径文案必须如实讲三层——
+    /// 原文层（记录标题/逐字稿/文档原文，只读、本就可读）、
+    /// 导入确认门（未确认的导入内容除外，块4）、
+    /// 记忆条目层（仅 confirmed）。缺任何一层都会误导用户。
+    #[test]
+    fn authorized_scope_copy_states_both_layers() {
+        let root = std::env::temp_dir().join(format!("echo-mcp-scope-{}", uuid::Uuid::new_v4()));
+        let library = crate::library::ManagedLibrary::open(root).unwrap();
+        let status = library.repository().mcp_status().unwrap();
+        assert!(
+            status.authorized_scope.contains("只读"),
+            "口径文案应声明只读：{}",
+            status.authorized_scope
+        );
+        assert!(
+            status.authorized_scope.contains("未确认"),
+            "口径文案应讲明未确认导入被排除（块4 导入确认门）：{}",
+            status.authorized_scope
+        );
+        assert!(
+            status.authorized_scope.contains("逐字稿") || status.authorized_scope.contains("原文"),
+            "口径文案应讲明原文层对 MCP 可读：{}",
+            status.authorized_scope
+        );
+        assert!(
+            status.authorized_scope.contains("已确认"),
+            "口径文案应讲明记忆条目仅限已确认：{}",
+            status.authorized_scope
+        );
+    }
 }

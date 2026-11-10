@@ -79,6 +79,20 @@ export type SystemAudioPermission =
 /** 录音来源：麦克风、系统内放声、双路（麦克风+系统声合并为立体声）。 */
 export type CaptureSource = "microphone" | "system" | "both";
 
+/** 可供选择的麦克风输入设备；id 为空字符串时表示系统默认设备。 */
+export interface RecordingInputDevice {
+  id: string;
+  name: string;
+  isDefault: boolean;
+}
+
+/** 当前可被系统内录按应用过滤的运行中应用。 */
+export interface SystemAudioApplication {
+  bundleId: string;
+  name: string;
+  processId: number;
+}
+
 /** 实时文字的一句（会话绝对时间轴，毫秒）。 */
 export interface LiveSegment {
   startMs: number;
@@ -197,6 +211,8 @@ export interface RecordBrief {
   progressCurrent: number;
   progressTotal: number;
   archivedAt: string | null;
+  /** 块4 导入确认门：document/chat 的确认时间；null=未确认（对 MCP 不可见）。录音类无此语义（null 但不显示未确认）。 */
+  importConfirmedAt: string | null;
 }
 
 export interface TranscriptSegment {

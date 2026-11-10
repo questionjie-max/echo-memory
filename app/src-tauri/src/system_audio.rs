@@ -31,7 +31,9 @@ const DB_FLOOR: f32 = -100.0;
 #[cfg(target_os = "macos")]
 mod native {
     use crate::error::{AppError, AppResult};
-    use std::os::raw::{c_float, c_int, c_uint};
+    use crate::system_audio::SystemAudioApplication;
+    use std::ffi::{CStr, CString};
+    use std::os::raw::{c_char, c_float, c_int, c_uint, c_void};
 
     const OK: c_int = 0;
     const INVALID_ARGUMENT: c_int = -1;
@@ -48,12 +50,22 @@ mod native {
         channels: c_int,
         sample_rate: c_uint,
     );
+    type ApplicationCallback = extern "C" fn(
+        bundle_id: *const c_char,
+        name: *const c_char,
+        process_id: c_int,
+        context: *mut c_void,
+    );
 
     unsafe extern "C" {
         fn echo_system_audio_set_sample_callback(callback: Option<SampleCallback>);
         fn echo_system_audio_permission_status() -> c_int;
         fn echo_system_audio_request_permission() -> c_int;
-        fn echo_system_audio_start() -> c_int;
+        fn echo_system_audio_list_applications(
+            callback: Option<ApplicationCallback>,
+            context: *mut c_void,
+        ) -> c_int;
+        fn echo_system_audio_start(application_bundle_id: *const c_char) -> c_int;
         fn echo_system_audio_stop() -> c_int;
         fn echo_system_audio_cancel() -> c_int;
         fn echo_system_audio_is_recording() -> c_int;
@@ -83,8 +95,56 @@ mod native {
         }
     }
 
-    pub(super) fn start() -> AppResult<()> {
-        map_result(unsafe { echo_system_audio_start() })
+    extern "C" fn collect_application(
+        bundle_id: *const c_char,
+        name: *const c_char,
+        process_id: c_int,
+        context: *mut c_void,
+    ) {
+        if bundle_id.is_null() || name.is_null() || context.is_null() {
+            return;
+        }
+        let bundle_id = unsafe { CStr::from_ptr(bundle_id) }
+            .to_string_lossy()
+            .into_owned();
+        let name = unsafe { CStr::from_ptr(name) }
+            .to_string_lossy()
+            .into_owned();
+        if bundle_id.is_empty() || name.is_empty() {
+            return;
+        }
+        let applications = unsafe { &mut *(context as *mut Vec<SystemAudioApplication>) };
+        applications.push(SystemAudioApplication {
+            bundle_id,
+            name,
+            process_id,
+        });
+    }
+
+    pub(super) fn list_applications() -> AppResult<Vec<SystemAudioApplication>> {
+        let mut applications = Vec::new();
+        map_result(unsafe {
+            echo_system_audio_list_applications(
+                Some(collect_application),
+                &mut applications as *mut Vec<SystemAudioApplication> as *mut c_void,
+            )
+        })?;
+        Ok(applications)
+    }
+
+    pub(super) fn start(application_bundle_id: Option<&str>) -> AppResult<()> {
+        let bundle_id = application_bundle_id
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| {
+                CString::new(value)
+                    .map_err(|_| AppError::Invalid("系统声应用标识包含无效字符".to_owned()))
+            })
+            .transpose()?;
+        map_result(unsafe {
+            echo_system_audio_start(
+                bundle_id.as_ref().map_or(std::ptr::null(), |value| value.as_ptr()),
+            )
+        })
     }
 
     /// 停流。NOT_ACTIVE（流已被系统中断或已自行停止）不算错误，返回 false；
@@ -187,7 +247,11 @@ mod native {
         Err(AppError::Invalid("当前平台不支持系统声采集".to_owned()))
     }
 
-    pub(super) fn start() -> AppResult<()> {
+    pub(super) fn list_applications() -> AppResult<Vec<crate::system_audio::SystemAudioApplication>> {
+        Ok(Vec::new())
+    }
+
+    pub(super) fn start(_application_bundle_id: Option<&str>) -> AppResult<()> {
         Err(AppError::Invalid("当前平台不支持系统声采集".to_owned()))
     }
 
@@ -435,6 +499,14 @@ pub enum SystemAudioPermission {
     Unsupported,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemAudioApplication {
+    pub bundle_id: String,
+    pub name: String,
+    pub process_id: i32,
+}
+
 #[derive(Debug)]
 struct ActiveSystemRecording {
     session_id: String,
@@ -501,10 +573,23 @@ impl SystemAudioController {
         })
     }
 
+    pub fn list_applications(&self) -> AppResult<Vec<SystemAudioApplication>> {
+        native::list_applications()
+    }
+
     pub fn start(
         &self,
         library: &ManagedLibrary,
         project_id: Option<&str>,
+    ) -> AppResult<RecordingState> {
+        self.start_with_application(library, project_id, None)
+    }
+
+    pub fn start_with_application(
+        &self,
+        library: &ManagedLibrary,
+        project_id: Option<&str>,
+        application_bundle_id: Option<&str>,
     ) -> AppResult<RecordingState> {
         install_native_callback_once();
         let library_root = library.root();
@@ -556,7 +641,7 @@ impl SystemAudioController {
         // 几百毫秒静默丢掉；启动失败时再取走丢弃。
         *capture_sink().lock().unwrap_or_else(|error| error.into_inner()) =
             Some(CaptureSink::new(writer));
-        if let Err(error) = native::start() {
+        if let Err(error) = native::start(application_bundle_id) {
             let _ = library.repository().update_recording_session_status(
                 &session_id,
                 "canceled",
@@ -1093,6 +1178,16 @@ pub async fn request_system_audio_permission(
 }
 
 #[tauri::command]
+pub fn list_system_audio_applications(
+    state: State<AppState>,
+) -> Result<Vec<SystemAudioApplication>, String> {
+    state
+        .system_audio
+        .list_applications()
+        .map_err(|error| error.to_frontend())
+}
+
+#[tauri::command]
 pub async fn start_system_recording(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -1100,9 +1195,10 @@ pub async fn start_system_recording(
     // 后端确认门：只有前端走完显性告知确认框（confirmAction 返回 true）才会传 true。
     // 隐私红线落在 API 契约上，而不是只靠前端自觉。
     confirmed: Option<bool>,
+    application_bundle_id: Option<String>,
 ) -> Result<RecordingState, String> {
     if confirmed != Some(true) {
-        return Err("系统内录开始前必须完成用户确认：本功能会录到 Mac 正在播放的所有声音（包括他人的声音），需要你显性同意后才能开始".to_owned());
+        return Err("系统内录开始前必须完成用户确认：本功能会录到系统正在播放的声音（包括他人的声音），需要你显性同意后才能开始".to_owned());
     }
     // 跨源互斥（块5 挂账收口）：双路或麦克风在录时拒绝。
     crate::dual_recording::DualRecordingController::ensure_no_capture_active(state.inner())
@@ -1110,7 +1206,11 @@ pub async fn start_system_recording(
     let controller = state.system_audio.clone();
     let library = state.library.clone();
     let started = tauri::async_runtime::spawn_blocking(move || {
-        controller.start(&library, project_id.as_deref())
+        controller.start_with_application(
+            &library,
+            project_id.as_deref(),
+            application_bundle_id.as_deref(),
+        )
     })
     .await
     .map_err(|_| "开始系统声采集后台任务异常".to_owned())?
@@ -1439,7 +1539,7 @@ mod tests {
         let sink = CaptureSink::new(writer);
         *capture_sink().lock().unwrap_or_else(|e| e.into_inner()) = Some(sink);
 
-        native::start().expect("有权限时系统声采集必须能启动");
+        native::start(None).expect("有权限时系统声采集必须能启动");
         let play = std::process::Command::new("/usr/bin/afplay")
             .arg(&tone_path)
             .stdout(std::process::Stdio::null())
