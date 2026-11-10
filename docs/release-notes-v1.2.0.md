@@ -2,6 +2,12 @@
 
 > The verification-first release: a full usability audit of v1.0+v1.1 (12 scenarios, zero P0, five P1 findings all fixed), four bounded expansions — the import confirmation gate, a time-range MCP tool for confirmed minutes, a repeatable minutes-quality healthcheck, and a one-click export package — plus a real-device recording and release-hardening pass.
 
+## Download
+
+- `回声记忆_1.2.0_aarch64.dmg` · macOS Apple Silicon
+- SHA-256: `ccd8d17e1607a10bae13cb74903921f02442ef4dd5115d7dd938a19fdc891632`
+- Developer ID signed, Apple-notarized, stapled, and accepted by Gatekeeper.
+
 ## Highlights
 
 - **Usability audit + P1 fixes（块1-3）.** A 12-scenario walkthrough (docs/usability-audit-v1.2.md) verified the product end to end with a real-binary MCP black-box probe: **P0 = 0**（未确认纪要条目经 11 个出口 0 泄漏，确认门完好）。Five P1 findings fixed, one commit each with regression tests: MCP scope copy now states both layers honestly (record原文 is readable over MCP by design; memory entries are confirmed-only); chat-import copy no longer claims analysis that doesn't happen; agent-session scan no longer defaults to select-all; the onboarding re-run actually re-pops after closing settings; live-minutes no longer degrades silently when Ollama is missing (one-shot honest notice per session).
@@ -38,5 +44,5 @@
 ## Not verified (needs a human)
 
 - **TCC 弹窗 / 真机 UI 走查**：正式包已具备正确的麦克风 entitlement，`tccutil reset` 后系统授权弹窗可正常出现；macOS 会保护授权弹窗，自动化不能替用户点击，因此「允许后实际录到人声、电平变化、停止入库」仍需要人手完成最后一跳。
-- **签名公证、Release 转正、PR 合入**：全部留给人定——本分支叠加在未合入的 PR #1 之上，是否先合 #1 再合本 PR、draft release 何时建，由人决定。
+- **干净机器安装体验**：本机已完成签名、公证与 Gatekeeper 验证；干净 macOS 首次安装和跨设备权限体验仍建议在另一台机器复核。
 - **真机说话人分离**（需 HF token）与 **真实会议体验**：沿 v1.1 未验证项不变。
