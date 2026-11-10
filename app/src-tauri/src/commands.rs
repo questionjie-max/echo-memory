@@ -4194,7 +4194,7 @@ mod tests {
         // Key 存在性读进程级环境变量，并发测试下不可假设——放进 env guard
         // 串行域内，让 Key 恒定存在，用同意的有无驱动「半配置」判定。
         use crate::external_ai_gate::AsrApiKeyEnvGuard;
-        let _key = AsrApiKeyEnvGuard::set("local-mock-0001");
+        let _key = AsrApiKeyEnvGuard::set("test-asr-token");
         let library = scratch_library("asr-half-configured");
         let repository = library.repository();
         let half = || crate::external_ai_gate::external_asr_channel_half_configured(&library).unwrap();
@@ -4260,7 +4260,7 @@ mod tests {
     fn external_mode_with_ready_asr_channel_routes_to_third_party() {
         use crate::external_ai_gate::AsrApiKeyEnvGuard;
 
-        let _key = AsrApiKeyEnvGuard::set("local-mock-0001");
+        let _key = AsrApiKeyEnvGuard::set("test-asr-token");
         let library = scratch_library("external-transcription-ready");
         let repository = library.repository();
         let (record, job) = repository
@@ -4310,7 +4310,7 @@ mod tests {
     fn external_import_with_ready_asr_is_not_blocked_by_analysis_channel() {
         use crate::external_ai_gate::AsrApiKeyEnvGuard;
 
-        let _key = AsrApiKeyEnvGuard::set("local-mock-0001");
+        let _key = AsrApiKeyEnvGuard::set("test-asr-token");
         let library = scratch_library("external-import-asr-ready");
         let repository = library.repository();
         let (record, job) = repository

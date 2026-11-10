@@ -53,6 +53,8 @@ import type {
   RecordingState,
   StoppedRecording,
   RecoverableRecording,
+  RecordingInputDevice,
+  SystemAudioApplication,
   SystemAudioPermission,
   MinutesView,
 } from "../shared/types";
@@ -293,12 +295,20 @@ export function startRecording(
   projectId?: string | null,
   source?: "microphone" | "both",
   confirmed?: boolean,
+  inputDeviceId?: string | null,
+  applicationBundleId?: string | null,
 ): Promise<RecordingState> {
   return invoke<RecordingState>("start_recording", {
     projectId: projectId ?? null,
     source: source ?? "microphone",
     confirmed: confirmed ?? null,
+    inputDeviceId: inputDeviceId || null,
+    applicationBundleId: applicationBundleId || null,
   });
+}
+
+export function listMicrophoneDevices(): Promise<RecordingInputDevice[]> {
+  return invoke<RecordingInputDevice[]>("list_microphone_devices");
 }
 
 export function pauseRecording(): Promise<RecordingState> {
@@ -350,11 +360,17 @@ export function requestSystemAudioPermission(): Promise<SystemAudioPermission> {
 export function startSystemRecording(
   projectId: string | null | undefined,
   confirmed: boolean,
+  applicationBundleId?: string | null,
 ): Promise<RecordingState> {
   return invoke<RecordingState>("start_system_recording", {
     projectId: projectId ?? null,
     confirmed,
+    applicationBundleId: applicationBundleId || null,
   });
+}
+
+export function listSystemAudioApplications(): Promise<SystemAudioApplication[]> {
+  return invoke<SystemAudioApplication[]>("list_system_audio_applications");
 }
 
 export function pauseSystemRecording(): Promise<RecordingState> {

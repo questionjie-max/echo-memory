@@ -39,6 +39,7 @@ beforeEach(() => {
   vi.mocked(tauri.recordingLevels).mockResolvedValue(recordingState());
   vi.mocked(tauri.listRecoverableRecordings).mockResolvedValue([]);
   vi.mocked(tauri.isDualRecording).mockResolvedValue(false);
+  vi.mocked(tauri.listMicrophoneDevices).mockResolvedValue([]);
 });
 
 function renderCard() {

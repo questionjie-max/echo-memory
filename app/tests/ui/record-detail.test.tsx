@@ -234,3 +234,38 @@ describe("记录详情：资料库音频权限", () => {
     await screen.findByText(/加载记录详情失败：Error: 数据库不可用/);
   });
 });
+
+describe("记录详情：辅助信息", () => {
+  it("说话人与相关记录默认收起，避免占住底部；展开后才显示解释和内容", async () => {
+    vi.mocked(tauri.getRecordSpeakers).mockResolvedValue([
+      { label: "未知", segmentCount: 357 },
+    ]);
+    vi.mocked(tauri.relatedRecords).mockResolvedValue([
+      {
+        recordId: "record-2",
+        title: "另一条记录",
+        similarity: 0.87,
+        projectId: null,
+      },
+    ]);
+    renderDetail();
+    await waitForAudioReady();
+
+    const speakersSummary = await screen.findByText("说话人");
+    const speakersDetails = speakersSummary.closest("details");
+    expect(speakersDetails?.open).toBe(false);
+
+    fireEvent.click(speakersSummary);
+    expect(speakersDetails?.open).toBe(true);
+    expect(await screen.findByText(/当前没有说话人标注/)).toBeTruthy();
+
+    const relatedSummary = screen.getByText("相关记录");
+    const relatedDetails = relatedSummary.closest("details");
+    expect(relatedDetails?.open).toBe(false);
+
+    fireEvent.click(relatedSummary);
+    expect(relatedDetails?.open).toBe(true);
+    expect(await screen.findByText("另一条记录")).toBeTruthy();
+    expect(screen.getByText("87% 相关")).toBeTruthy();
+  });
+});

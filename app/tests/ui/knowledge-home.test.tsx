@@ -70,6 +70,7 @@ beforeEach(() => {
   vi.mocked(tauri.getKnowledgeIndexStatus).mockResolvedValue(indexFixture());
   vi.mocked(tauri.listProjects).mockResolvedValue([]);
   vi.mocked(tauri.chatArchiveCount).mockResolvedValue(0);
+  vi.mocked(tauri.listMicrophoneDevices).mockResolvedValue([]);
 });
 
 describe("知识库主页", () => {

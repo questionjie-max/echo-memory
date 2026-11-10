@@ -8,7 +8,7 @@ Theme: **chat-as-workbench**. Echo Memory grows from a managed memory library in
 
 - Assistant Dock: a collapsible chat strip pinned above every view (about a quarter of the workspace when expanded). Four modes — summarize current record (injects the selected record's transcript and analysis), writing, Socratic brainstorm, and free chat. Local Ollama is the default engine; an external OpenAI-compatible engine is selectable only when configured, with a visible warning that the conversation leaves the machine. Conversations persist in the local database; any reply can be saved as a Markdown document.
 - AI template wizard: in Settings → Analysis Templates, "✨ AI 生成模板" opens a conversation where you describe your needs; the local model returns a strict-schema template draft (name, description, 2–6 sections with format and extraction instructions), shown as an editable preview before being added to the template library.
-- Output folder: choose any directory (by default `~/Documents/回声记忆产出`; an Obsidian vault folder works too). Analyses, transcripts, and dock replies are written there as standard Markdown with YAML frontmatter and `YYYY-MM-DD_title_kind.md` naming. Optional auto-export after each analysis completes (off by default). Echo Memory only writes files out — it stays a standalone product and never reads back or depends on external note tools.
+- Output folder: choose any directory (by default `~/Documents/回声记忆产出`; a Markdown notes folder works too). Analyses, transcripts, and dock replies are written there as standard Markdown with YAML frontmatter and `YYYY-MM-DD_title_kind.md` naming. Optional auto-export after each analysis completes (off by default). Echo Memory only writes files out — it stays a standalone product and never reads back or depends on external note tools.
 
 ## Requirements
 
@@ -34,7 +34,7 @@ Everything remains local by default. The dock's external engine is opt-in per co
 
 - AI 伙伴停靠栏：所有视图顶部可折叠对话条（展开约占工作区四分之一）。四种模式——总结当前记录（自动注入选中记录的逐字稿与分析）、文字创作、启发对话（费曼式追问）、自由聊天。默认本地 Ollama 引擎；外部 OpenAI-compatible 引擎仅在已配置时可选，选中时醒目提示对话将离开本机。会话保存在本地数据库，任意回复可一键保存为 Markdown 文档。
 - AI 模板向导：设置 → 分析模板中「✨ AI 生成模板」打开对话，描述需求后本地模型生成严格 schema 的模板草稿（名称、描述、2-6 个栏目及抽取要求），以可编辑预览确认后加入模板库。
-- 产出文件夹：指定任意目录（默认 `~/Documents/回声记忆产出`，指向 Obsidian 等笔记库目录亦可）。分析、逐字稿、AI 对话成稿以标准 Markdown + YAML frontmatter 写入，命名 `YYYY-MM-DD_标题_类型.md`；可选分析完成后自动导出（默认关闭）。回声记忆只写出文件，保持独立产品，不回读、不依赖任何笔记工具。
+- 产出文件夹：指定任意目录（默认 `~/Documents/回声记忆产出`，指向任意 Markdown 笔记库目录亦可）。分析、逐字稿、AI 对话成稿以标准 Markdown + YAML frontmatter 写入，命名 `YYYY-MM-DD_标题_类型.md`；可选分析完成后自动导出（默认关闭）。回声记忆只写出文件，保持独立产品，不回读、不依赖任何笔记工具。
 
 ## 环境要求
 

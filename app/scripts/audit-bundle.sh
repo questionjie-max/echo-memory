@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 发布产物审计：防「开发残留随包发出」这类回归。
 #
-# 反面教材来自得到大脑逆向报告（2026-10-14）：正式包内夹带了
+# 反面案例来自一次同类产品发布审计：正式包内夹带了
 # .claude/settings.local.json（开发机路径）、内部测试源码、开发域白名单与明文 HTTP 上报。
 # 本脚本把同类问题变成可执行的发布门禁。
 #
@@ -117,8 +117,14 @@ case "$target" in
     else
       fail "Info.plist 缺少 NSMicrophoneUsageDescription（录音功能无法通过 macOS 权限门）"
     fi
+    entitlements="$(codesign -d --entitlements :- "$target" 2>/dev/null || true)"
+    if printf '%s\n' "$entitlements" | grep -q 'com.apple.security.device.audio-input'; then
+      pass "Hardened Runtime 包含麦克风音频输入权限"
+    else
+      fail "缺少 com.apple.security.device.audio-input（正式包会被 macOS 直接拒绝麦克风）"
+    fi
     echo "  · entitlements（人工过目，最小权限原则）："
-    codesign -d --entitlements - "$target" 2>/dev/null | sed 's/^/      /' || echo "      （未签名或无法读取）"
+    printf '%s\n' "$entitlements" | sed 's/^/      /' || true
     ;;
 esac
 

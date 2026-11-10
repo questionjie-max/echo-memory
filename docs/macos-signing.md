@@ -9,23 +9,24 @@
 - 不扩大为全盘文件权限，不使用 `--no-sign` 或 `--skip-stapling` 生成正式产物。
 - 凭据不完整时，发布脚本在构建前明确失败，不产生“构建成功但不可分发”的假状态。
 - 真实 secrets 就绪前，CI 只保留确定性质量门禁，不增加始终失败的签名任务。
+- Hardened Runtime 下必须保留最小麦克风 entitlement：`com.apple.security.device.audio-input`。缺少它时，macOS 会在 TCC 授权前直接拒绝录音；发布审计会检查该 entitlement 和 `NSMicrophoneUsageDescription`。
 
 Tauri 的 `bundle.macOS.hardenedRuntime` 默认开启。本项目通过环境变量选择签名身份和公证凭据，不要求把证书或私钥写入仓库。
 
 ## 当前状态
 
-截至 2026-09-27，本机已安装有效的 Developer ID Application 身份，且 v0.7.0 DMG 已完成 Apple 公证与票据装订。公证凭据不写入仓库；后续发布仍需通过环境变量或本机钥匙串提供凭据。
+截至 2026-11-10，本机已安装有效的 Developer ID Application 身份，且 v1.2.0 DMG 已完成 Apple 公证与票据装订。公证凭据不写入仓库；后续发布仍需通过环境变量或本机钥匙串提供凭据。
 
 ```text
 security find-identity -v -p codesigning
-1) ... "Developer ID Application: Shanghai Yixin Fuyou Information Technology Co., Ltd. (UUW529RXG7)"
+1) ... "Developer ID Application: <organization> (<TEAMID>)"
 1 valid identities found
 
-xcrun stapler validate path/to/Echo-Memory_0.7.0_aarch64.dmg
+xcrun stapler validate "path/to/回声记忆_1.2.0_aarch64.dmg"
 The validate action worked!
 ```
 
-v0.7.0 的发布物已按上述流程验证；这不意味着凭据会自动出现在新 shell 或 CI 中。
+v1.2.0 的发布物已按上述流程验证；这不意味着凭据会自动出现在新 shell 或 CI 中。
 
 ## 前置条件
 
@@ -45,7 +46,7 @@ export APPLE_TEAM_ID="TEAMID1234"
 # App Store Connect API Key
 export APPLE_API_ISSUER="issuer-id"
 export APPLE_API_KEY="key-id"
-export APPLE_API_KEY_PATH="/absolute/path/AuthKey_KEYID.p8"
+export APPLE_API_KEY_PATH="$HOME/private/AuthKey_KEYID.p8"
 ```
 
 5. 设置签名身份：
@@ -85,9 +86,19 @@ npm run release:macos
 2. `tauri build --bundles dmg --ci`，正常等待公证和装订。
 3. 对 DMG 执行 `hdiutil verify`、`codesign`、`spctl` 和 `stapler validate`。
 4. 只读挂载 DMG，对内部 `.app` 再执行 `codesign`、`spctl` 和 `stapler validate`。
-5. 输出 DMG 绝对路径与 SHA-256。
+5. 检查 `.app` 的麦克风 entitlement 与 `NSMicrophoneUsageDescription`。
+6. 输出 DMG 绝对路径与 SHA-256。
 
 任一步骤失败都会返回非零退出码。正式验收还应在干净 macOS 机器上安装并启动一次，确认 Gatekeeper 不显示未验证阻断。
+
+单独复核麦克风权限：
+
+```bash
+codesign -d --entitlements :- "/Applications/回声记忆.app" \
+  | plutil -convert xml1 -o - -
+```
+
+输出中必须包含 `com.apple.security.device.audio-input`。不要用 `--no-sign`、`--skip-stapling` 或扩大文件系统权限来绕过授权问题。
 
 ## 预期结果
 

@@ -20,7 +20,9 @@ import type {
   LiveTickPayload,
   MicrophonePermission,
   RecoverableRecording,
+  RecordingInputDevice,
   RecordingState,
+  SystemAudioApplication,
   SystemAudioPermission,
 } from "../shared/types";
 import {
@@ -36,6 +38,8 @@ import {
   getRecordingState,
   getSystemRecordingState,
   listRecoverableRecordings,
+  listMicrophoneDevices,
+  listSystemAudioApplications,
   microphonePermission,
   pauseRecording,
   pauseSystemRecording,
@@ -114,6 +118,30 @@ const DUAL_CAPTURE_NOTICE = [
   "如果录的是会议，请确认你已告知参会者或有权录制。",
 ].join("\n\n");
 
+function systemCaptureNotice(applicationName: string | null): string {
+  if (applicationName) {
+    return [
+      `开始录制「${applicationName}」的声音前请确认：`,
+      `系统内录只会录制所选应用「${applicationName}」发出的声音，其他应用的声音不会被录制；麦克风不会被打开。`,
+      "音频只保存在这台 Mac 上，转写与分析全部本机完成；只有你之后亲自确认的内容才会进入记忆库。",
+      "如果录的是会议，请确认你已告知参会者或有权录制。",
+    ].join("\n\n");
+  }
+  return SYSTEM_CAPTURE_NOTICE;
+}
+
+function dualCaptureNotice(applicationName: string | null): string {
+  if (applicationName) {
+    return [
+      "开始双路录音前请确认：",
+      `双路录音会同时录制麦克风（你这边的声音）和所选应用「${applicationName}」发出的声音，合并成一个立体声文件保存。`,
+      "其他应用的声音不会被录制；音频只保存在这台 Mac 上，转写与分析全部本机完成。",
+      "如果录的是会议，请确认你已告知参会者或有权录制。",
+    ].join("\n\n");
+  }
+  return DUAL_CAPTURE_NOTICE;
+}
+
 /** 电平条宽度：把 -60dB~0dB 映射到 0%~100%，与系统表头量程一致。 */
 function levelWidth(db: number | null | undefined): string {
   if (db === null || db === undefined || !Number.isFinite(db)) return "0%";
@@ -135,6 +163,13 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [captureSource, setCaptureSource] = useState<CaptureSource>("microphone");
+  const [inputDevices, setInputDevices] = useState<RecordingInputDevice[]>([]);
+  const [inputDeviceId, setInputDeviceId] = useState("");
+  const [audioApplications, setAudioApplications] = useState<SystemAudioApplication[]>([]);
+  const [applicationBundleId, setApplicationBundleId] = useState("");
+  const [devicesLoading, setDevicesLoading] = useState(false);
+  const [applicationsLoading, setApplicationsLoading] = useState(false);
+  const [pickerNotice, setPickerNotice] = useState("");
   const [liveView, setLiveView] = useState<LiveTranscriptView>(emptyLiveView());
   const [liveMessage, setLiveMessage] = useState("");
   const [liveMinutes, setLiveMinutes] = useState<LiveMinutesEventPayload | null>(null);
@@ -269,6 +304,60 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
     void refreshState();
   }, [refreshKey]);
 
+  useEffect(() => {
+    setDevicesLoading(true);
+    void listMicrophoneDevices()
+      .then((devices) => {
+        const next = Array.isArray(devices) ? devices : [];
+        setInputDevices(next);
+        setInputDeviceId((current) =>
+          next.some((device) => device.id === current) ? current : "",
+        );
+      })
+      .catch(() => setInputDevices([]))
+      .finally(() => setDevicesLoading(false));
+  }, []);
+
+  async function loadAudioApplications(requestPermission: boolean) {
+    setApplicationsLoading(true);
+    setPickerNotice("");
+    try {
+      let permission = sysPermission;
+      if (permission !== "granted") {
+        if (!requestPermission) {
+          setPickerNotice("允许「屏幕与系统声音录制」后，可以选择只录制某个应用。");
+          return;
+        }
+        permission = await requestSystemAudioPermission();
+        setSysPermission(permission);
+      }
+      if (permission !== "granted") {
+        setPickerNotice(systemPermissionHint(permission));
+        return;
+      }
+      const applications = await listSystemAudioApplications();
+      const next = Array.isArray(applications) ? applications : [];
+      setAudioApplications(next);
+      setApplicationBundleId((current) =>
+        next.some((application) => application.bundleId === current) ? current : "",
+      );
+      if (next.length === 0) {
+        setPickerNotice("没有找到可单独录制的应用；仍可录制所有系统声音。");
+      }
+    } catch (reason) {
+      setPickerNotice(displayError(reason));
+    } finally {
+      setApplicationsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (captureSource === "microphone" || sysPermission !== "granted") return;
+    if (audioApplications.length === 0) void loadAudioApplications(false);
+    // 只在切到系统声且已有权限时自动读取；用户点「读取应用」会显式发起授权。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [captureSource, sysPermission]);
+
   // 录音中才轮询电平与计时：空闲时后端会直接报「没有正在进行的录音」。
   useEffect(() => {
     if (!active) return;
@@ -295,7 +384,7 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
     if (currentPermission !== "granted") {
       throw new Error(permissionHint(currentPermission));
     }
-    setMicState(await startRecording(projectId));
+    setMicState(await startRecording(projectId, undefined, undefined, inputDeviceId || null));
   }
 
   async function beginSystem() {
@@ -310,8 +399,8 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
     }
     // 隐私红线：没有确认过显性告知，就不开始录系统声。
     // confirmed=true 是后端的硬性参数：没走确认框后端直接拒绝。
-    if (!(await confirmAction(SYSTEM_CAPTURE_NOTICE))) return;
-    setSysState(await startSystemRecording(projectId, true));
+    if (!(await confirmAction(systemCaptureNotice(selectedApplicationName)))) return;
+    setSysState(await startSystemRecording(projectId, true, applicationBundleId || null));
   }
 
   async function begin() {
@@ -323,9 +412,15 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
         await beginSystem();
       } else if (captureSource === "both") {
         // 双路的隐私红线：与系统声同款显性确认，确认后才带 confirmed=true。
-        if (!(await confirmAction(DUAL_CAPTURE_NOTICE))) return;
+        if (!(await confirmAction(dualCaptureNotice(selectedApplicationName)))) return;
         setDualActive(true);
-        setMicState(await startRecording(projectId, "both", true));
+        setMicState(await startRecording(
+          projectId,
+          "both",
+          true,
+          inputDeviceId || null,
+          applicationBundleId || null,
+        ));
       } else {
         setDualActive(false);
         await beginMicrophone();
@@ -463,11 +558,17 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
     }
   }
 
+  const selectedApplicationName =
+    audioApplications.find((application) => application.bundleId === applicationBundleId)?.name ?? null;
   const lead =
     captureSource === "system"
-      ? "录制这台 Mac 正在播放的声音（例如线上会议里对方的话），不打开麦克风，音频只保存在本机。"
+      ? selectedApplicationName
+        ? `只录制「${selectedApplicationName}」发出的声音，不打开麦克风，音频只保存在本机。`
+        : "录制这台 Mac 正在播放的声音（例如线上会议里对方的话），不打开麦克风，音频只保存在本机。"
       : captureSource === "both"
-        ? "同时录麦克风与系统声音，合并成一个立体声文件（左=麦克风，右=系统声），开始前会再次向你确认。"
+        ? selectedApplicationName
+          ? `同时录麦克风与「${selectedApplicationName}」的声音，合并成一个立体声文件，开始前会再次向你确认。`
+          : "同时录麦克风与系统声音，合并成一个立体声文件（左=麦克风，右=系统声），开始前会再次向你确认。"
         : "只使用本机麦克风，音频默认只保存在这台 Mac 上。";
 
   return (
@@ -546,6 +647,58 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
           </button>
         </div>
       )}
+
+      {!active && (
+        <div className="recording-source-options">
+          {(captureSource === "microphone" || captureSource === "both") && (
+            <label className="recording-source-field">
+              <span>麦克风</span>
+              <select
+                aria-label="麦克风设备"
+                value={inputDeviceId}
+                disabled={devicesLoading || busy}
+                onChange={(event) => setInputDeviceId(event.target.value)}
+              >
+                <option value="">系统默认麦克风</option>
+                {inputDevices.map((device) => (
+                  <option value={device.id} key={device.id}>
+                    {device.name}{device.isDefault ? "（系统默认）" : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {(captureSource === "system" || captureSource === "both") && (
+            <label className="recording-source-field">
+              <span>系统声音来源</span>
+              <select
+                aria-label="系统声音来源"
+                value={applicationBundleId}
+                disabled={applicationsLoading || busy}
+                onChange={(event) => setApplicationBundleId(event.target.value)}
+              >
+                <option value="">所有系统声音</option>
+                {audioApplications.map((application) => (
+                  <option value={application.bundleId} key={application.bundleId}>
+                    {application.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {(captureSource === "system" || captureSource === "both") && (
+            <button
+              type="button"
+              className="link-button recording-source-refresh"
+              disabled={applicationsLoading || busy}
+              onClick={() => void loadAudioApplications(true)}
+            >
+              {applicationsLoading ? "读取中…" : audioApplications.length ? "刷新应用列表" : "读取可录制应用"}
+            </button>
+          )}
+        </div>
+      )}
+      {!active && pickerNotice && <p className="recording-entry-hint">{pickerNotice}</p>}
 
       {active && (
         <>
@@ -640,7 +793,9 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
         <p className="recording-entry-hint">
           {captureSource === "system"
             ? systemPermissionHint(sysPermission)
-            : permissionHint(micPermission)}
+            : captureSource === "both"
+              ? `${permissionHint(micPermission)} ${systemPermissionHint(sysPermission)}`
+              : permissionHint(micPermission)}
         </p>
       )}
 

@@ -35,7 +35,8 @@
   },
   "bundle": {
     "macOS": {
-      "infoPlist": "Info.plist"
+      "infoPlist": "Info.plist",
+      "entitlements": "Entitlements.plist"
     },
     "active": true,
     "targets": "all",

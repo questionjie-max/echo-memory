@@ -869,51 +869,62 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
             )}
           </div>
         )}
-      </div>
-      {speakers.length > 0 && !isDocument && (
-        <section className="speakers-section" aria-label="说话人">
-          <h3>说话人</h3>
-          <div className="speakers-list">
-            {speakers.map((speaker) => (
-              <SpeakerRow
-                key={speaker.label}
-                recordId={currentRecord.id}
-                speaker={speaker}
-                onRenamed={() => void load()}
-              />
-            ))}
-          </div>
-          {speakers.every((speaker) => speaker.label === "未知") && (
-            <p className="speakers-hint">当前没有说话人标注。用 whisperX 引擎重新转写即可自动区分说话人（设置 → 本机 AI → 转写引擎）。</p>
-          )}
-        </section>
-      )}
 
-      {related.length > 0 && (
-        <section className="related-records-section" aria-label="相关记录">
-          <h3>相关记录</h3>
-          <div className="related-records-list">
-            {related.map((item) => (
-              <button
-                type="button"
-                key={item.recordId}
-                className="related-record-card"
-                onClick={() => void (async () => {
-                  try {
-                    const record = await getRecord(item.recordId);
-                    onChanged(record);
-                  } catch (reason) {
-                    setError(reason instanceof Error ? reason.message : String(reason));
-                  }
-                })()}
-              >
-                <strong>{item.title}</strong>
-                <span>{Math.round(item.similarity * 100)}% 相关</span>
-              </button>
-            ))}
-          </div>
-        </section>
-      )}
+        {speakers.length > 0 && !isDocument && (
+          <details className="detail-more-section speakers-section">
+            <summary>
+              <span>说话人</span>
+              <span className="detail-more-count">
+                {speakers.every((speaker) => speaker.label === "未知") ? "暂无标注" : `${speakers.length} 人`}
+              </span>
+            </summary>
+            {speakers.every((speaker) => speaker.label === "未知") ? (
+              <p className="speakers-hint">当前没有说话人标注。用 whisperX 引擎重新转写即可自动区分说话人（设置 → 本机 AI → 转写引擎）。</p>
+            ) : (
+              <div className="speakers-list">
+                {speakers.map((speaker) => (
+                  <SpeakerRow
+                    key={speaker.label}
+                    recordId={currentRecord.id}
+                    speaker={speaker}
+                    onRenamed={() => void load()}
+                  />
+                ))}
+              </div>
+            )}
+          </details>
+        )}
+
+        {related.length > 0 && (
+          <details className="detail-more-section related-records-section">
+            <summary>
+              <span>相关记录</span>
+              <span className="detail-more-count">{related.length} 条</span>
+            </summary>
+            <p className="detail-more-hint">按内容相似度推荐，点开可跳到对应记录。</p>
+            <div className="related-records-list">
+              {related.map((item) => (
+                <button
+                  type="button"
+                  key={item.recordId}
+                  className="related-record-card"
+                  onClick={() => void (async () => {
+                    try {
+                      const record = await getRecord(item.recordId);
+                      onChanged(record);
+                    } catch (reason) {
+                      setError(reason instanceof Error ? reason.message : String(reason));
+                    }
+                  })()}
+                >
+                  <strong>{item.title}</strong>
+                  <span>{Math.round(item.similarity * 100)}% 相关</span>
+                </button>
+              ))}
+            </div>
+          </details>
+        )}
+      </div>
 
       {!isDocument && retranscribeOpen && (
         <div className="dialog-scrim" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setRetranscribeOpen(false)}>

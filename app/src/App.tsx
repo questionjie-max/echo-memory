@@ -127,6 +127,15 @@ export default function App() {
     setNavigation(null);
   }
 
+  /** 顶栏「首页」代表知识库主页，不能停留在上一条记录的详情页。 */
+  function selectMainView(nextView: MainView) {
+    if (nextView === "library") {
+      setSelectedRecord(null);
+      setNavigation(null);
+    }
+    setMainView(nextView);
+  }
+
   /** 工作区列表的播放钮：选中记录、切回首页并自动开播。 */
   function playFromList(record: RecordBrief) {
     setSelectedRecord(record);
@@ -150,7 +159,7 @@ export default function App() {
     <main className="app-shell">
       <AppToolbar
         mainView={mainView}
-        onSelectView={setMainView}
+        onSelectView={selectMainView}
         projectId={projectId}
         unfiledOnly={unfiledOnly}
         onOpenSearchResult={(result) => void openSearchResult(result)}
@@ -192,7 +201,7 @@ export default function App() {
       <SettingsPanel
         open={settingsOpen}
         onClose={() => { setSettingsOpen(false); changed(); void refreshOnboardingStatus(); }}
-        onOpenKnowledge={() => setMainView("library")}
+        onOpenKnowledge={() => selectMainView("library")}
       />
       {onboardingNeeded && (
         <OnboardingWizard

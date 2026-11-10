@@ -49,6 +49,8 @@ beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(tauri.getRecordingState).mockResolvedValue(recordingState());
   vi.mocked(tauri.microphonePermission).mockResolvedValue("granted");
+  vi.mocked(tauri.listMicrophoneDevices).mockResolvedValue([]);
+  vi.mocked(tauri.listSystemAudioApplications).mockResolvedValue([]);
   vi.mocked(tauri.listRecoverableRecordings).mockResolvedValue([]);
   vi.mocked(tauri.recordingLevels).mockResolvedValue(activeState("recording"));
   vi.mocked(tauri.isDualRecording).mockResolvedValue(false);
@@ -70,7 +72,7 @@ describe("本地记录模块", () => {
     const { container } = render(<RecordingEntry projectId="project-1" onImported={onImported} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "开始记录" }));
-    await waitFor(() => expect(tauri.startRecording).toHaveBeenCalledWith("project-1"));
+    await waitFor(() => expect(tauri.startRecording).toHaveBeenCalledWith("project-1", undefined, undefined, null));
 
     // 录音中：状态、计时、控制钮全在同一张卡内。
     expect(await screen.findByText("正在记录")).toBeTruthy();
@@ -173,6 +175,47 @@ describe("本地记录模块", () => {
     // 未确认：绝不启动系统录音，也不得偷偷改走麦克风。
     expect(tauri.startSystemRecording).not.toHaveBeenCalled();
     expect(tauri.startRecording).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
+  });
+
+  it("可以选择麦克风设备，并把设备标识传给录音命令", async () => {
+    vi.mocked(tauri.listMicrophoneDevices).mockResolvedValue([
+      { id: "default-uid", name: "MacBook 麦克风", isDefault: true },
+      { id: "studio-uid", name: "Studio Mic", isDefault: false },
+    ]);
+    vi.mocked(tauri.startRecording).mockResolvedValue(activeState("recording"));
+    render(<RecordingEntry projectId={null} onImported={() => undefined} />);
+
+    await screen.findByText("Studio Mic");
+    const select = screen.getByRole("combobox", { name: "麦克风设备" });
+    fireEvent.change(select, { target: { value: "studio-uid" } });
+    fireEvent.click(screen.getByRole("button", { name: "开始记录" }));
+
+    await waitFor(() =>
+      expect(tauri.startRecording).toHaveBeenCalledWith(null, undefined, undefined, "studio-uid"),
+    );
+  });
+
+  it("读取系统应用后可以只录所选应用，并明确告知录音范围", async () => {
+    vi.mocked(tauri.systemAudioPermission).mockResolvedValue("granted");
+    vi.mocked(tauri.listSystemAudioApplications).mockResolvedValue([
+      { bundleId: "com.example.player", name: "示例播放器", processId: 42 },
+    ]);
+    vi.mocked(tauri.startSystemRecording).mockResolvedValue(activeState("recording"));
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<RecordingEntry projectId={null} onImported={() => undefined} />);
+
+    fireEvent.click(await screen.findByRole("tab", { name: "系统声音" }));
+    await screen.findByText("示例播放器");
+    fireEvent.change(screen.getByRole("combobox", { name: "系统声音来源" }), {
+      target: { value: "com.example.player" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "开始录系统声音" }));
+
+    await waitFor(() =>
+      expect(tauri.startSystemRecording).toHaveBeenCalledWith(null, true, "com.example.player"),
+    );
+    expect(String(confirmSpy.mock.calls[0][0])).toContain("只会录制所选应用「示例播放器」");
     confirmSpy.mockRestore();
   });
 

@@ -457,7 +457,7 @@ mod tests {
 
     #[test]
     fn consented_transport_runs_after_key_lookup() {
-        let _key = AsrApiKeyEnvGuard::set("local-mock-0001");
+        let _key = AsrApiKeyEnvGuard::set("test-asr-token");
         let (library, root) = temp_library();
         let repository = library.repository();
         let mut settings = repository.external_ai_settings(false, false).unwrap();
@@ -473,7 +473,7 @@ mod tests {
             transcribe_with_transport(&library, &root.join("audio.wav"), "zh", 1_000, |request| {
                 calls.set(calls.get() + 1);
                 assert_eq!(request.model, "asr-model");
-                assert_eq!(request.api_key, "local-mock-0001");
+                assert_eq!(request.api_key, "test-asr-token");
                 Ok(ExternalAsrResult {
                     segments: vec![TranscriptSegmentInput {
                         start_ms: 0,
@@ -539,7 +539,7 @@ mod tests {
         let audio_path = std::env::temp_dir().join(format!("asr-request-{}.wav", Uuid::new_v4()));
         std::fs::write(&audio_path, b"AUDIO-BYTES").unwrap();
         // 令牌经环境变量中转再进请求，与真实调用路径一致；凭据字段不接受字面量直写
-        let _key = crate::external_ai_gate::AsrApiKeyEnvGuard::set("local-mock-0001");
+        let _key = crate::external_ai_gate::AsrApiKeyEnvGuard::set("test-asr-token");
         let request = ExternalAsrRequest {
             base_url: format!("{base_url}/v1"),
             model: "qwen3-asr-flash".to_owned(),
@@ -559,7 +559,7 @@ mod tests {
             "{received}"
         );
         let received_lower = received.to_ascii_lowercase();
-        assert!(received_lower.contains("authorization: bearer local-mock-0001"));
+        assert!(received_lower.contains("authorization: bearer test-asr-token"));
         assert!(received_lower.contains("content-type: multipart/form-data; boundary="));
         assert!(received.contains(r#"name="model""#));
         assert!(received.contains("qwen3-asr-flash"));

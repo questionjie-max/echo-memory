@@ -20,8 +20,9 @@ use uuid::Uuid;
 #[cfg(target_os = "macos")]
 mod native {
     use crate::error::{AppError, AppResult};
-    use std::ffi::CString;
-    use std::os::raw::{c_char, c_float, c_int};
+    use crate::recording::RecordingInputDevice;
+    use std::ffi::{CStr, CString};
+    use std::os::raw::{c_char, c_float, c_int, c_void};
     use std::path::Path;
 
     const OK: c_int = 0;
@@ -39,10 +40,15 @@ mod native {
     const PERMISSION_GRANTED: c_int = 2;
     const PERMISSION_UNSUPPORTED_STATUS: c_int = 3;
 
+    type DeviceCallback =
+        extern "C" fn(uid: *const c_char, name: *const c_char, is_default: c_int, context: *mut c_void);
+
     unsafe extern "C" {
         fn echo_recording_permission_status() -> c_int;
         fn echo_recording_request_permission() -> c_int;
-        fn echo_recording_start(path: *const c_char) -> c_int;
+        fn echo_recording_list_devices(callback: Option<DeviceCallback>, context: *mut c_void)
+            -> c_int;
+        fn echo_recording_start(path: *const c_char, device_uid: *const c_char) -> c_int;
         fn echo_recording_pause() -> c_int;
         fn echo_recording_resume() -> c_int;
         fn echo_recording_stop() -> c_int;
@@ -77,13 +83,60 @@ mod native {
         }
     }
 
-    pub(super) fn start(path: &Path) -> AppResult<()> {
+    extern "C" fn collect_device(
+        uid: *const c_char,
+        name: *const c_char,
+        is_default: c_int,
+        context: *mut c_void,
+    ) {
+        if uid.is_null() || name.is_null() || context.is_null() {
+            return;
+        }
+        let uid = unsafe { CStr::from_ptr(uid) }.to_string_lossy().into_owned();
+        let name = unsafe { CStr::from_ptr(name) }
+            .to_string_lossy()
+            .into_owned();
+        if uid.is_empty() || name.is_empty() {
+            return;
+        }
+        let devices = unsafe { &mut *(context as *mut Vec<RecordingInputDevice>) };
+        devices.push(RecordingInputDevice {
+            id: uid,
+            name,
+            is_default: is_default == 1,
+        });
+    }
+
+    pub(super) fn list_devices() -> AppResult<Vec<RecordingInputDevice>> {
+        let mut devices = Vec::new();
+        map_result(unsafe {
+            echo_recording_list_devices(
+                Some(collect_device),
+                &mut devices as *mut Vec<RecordingInputDevice> as *mut c_void,
+            )
+        })?;
+        Ok(devices)
+    }
+
+    pub(super) fn start(path: &Path, input_device_id: Option<&str>) -> AppResult<()> {
         let path = path
             .to_str()
             .ok_or_else(|| AppError::Invalid("录音路径不是有效的 UTF-8".to_owned()))?;
         let path =
             CString::new(path).map_err(|_| AppError::Invalid("录音路径包含无效字符".to_owned()))?;
-        map_result(unsafe { echo_recording_start(path.as_ptr()) })
+        let device_uid = input_device_id
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| {
+                CString::new(value)
+                    .map_err(|_| AppError::Invalid("麦克风设备标识包含无效字符".to_owned()))
+            })
+            .transpose()?;
+        map_result(unsafe {
+            echo_recording_start(
+                path.as_ptr(),
+                device_uid.as_ref().map_or(std::ptr::null(), |value| value.as_ptr()),
+            )
+        })
     }
 
     pub(super) fn pause() -> AppResult<()> {
@@ -170,7 +223,11 @@ mod native {
         Err(AppError::Invalid("当前平台不支持本地麦克风录音".to_owned()))
     }
 
-    pub(super) fn start(_path: &Path) -> AppResult<()> {
+    pub(super) fn list_devices() -> AppResult<Vec<crate::recording::RecordingInputDevice>> {
+        Ok(Vec::new())
+    }
+
+    pub(super) fn start(_path: &Path, _input_device_id: Option<&str>) -> AppResult<()> {
         Err(AppError::Invalid("当前平台不支持本地麦克风录音".to_owned()))
     }
 
@@ -271,6 +328,14 @@ pub enum MicrophonePermission {
     Denied,
     Granted,
     Unsupported,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordingInputDevice {
+    pub id: String,
+    pub name: String,
+    pub is_default: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -378,10 +443,23 @@ impl RecordingController {
         })
     }
 
+    pub fn list_input_devices(&self) -> AppResult<Vec<RecordingInputDevice>> {
+        native::list_devices()
+    }
+
     pub fn start(
         &self,
         library: &ManagedLibrary,
         project_id: Option<&str>,
+    ) -> AppResult<RecordingState> {
+        self.start_with_device(library, project_id, None)
+    }
+
+    pub fn start_with_device(
+        &self,
+        library: &ManagedLibrary,
+        project_id: Option<&str>,
+        input_device_id: Option<&str>,
     ) -> AppResult<RecordingState> {
         let library_root = library.root();
         let mut active = self
@@ -414,7 +492,7 @@ impl RecordingController {
             project_id,
             &started_at,
         )?;
-        if let Err(error) = native::start(&file_path) {
+        if let Err(error) = native::start(&file_path, input_device_id) {
             let _ = library.repository().update_recording_session_status(
                 &session_id,
                 "canceled",
@@ -852,6 +930,16 @@ pub async fn request_microphone_permission(
 }
 
 #[tauri::command]
+pub fn list_microphone_devices(
+    state: State<AppState>,
+) -> Result<Vec<RecordingInputDevice>, String> {
+    state
+        .recording
+        .list_input_devices()
+        .map_err(|error| error.to_frontend())
+}
+
+#[tauri::command]
 pub async fn start_recording(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -861,23 +949,37 @@ pub async fn start_recording(
     source: Option<String>,
     // 双路的确认门：与系统声单路同款硬校验（隐私红线落 API 契约）。
     confirmed: Option<bool>,
+    input_device_id: Option<String>,
+    application_bundle_id: Option<String>,
 ) -> Result<RecordingState, String> {
     if source.as_deref() == Some("both") {
         if confirmed != Some(true) {
-            return Err("双路录音会同时录到 Mac 正在播放的所有声音（包括他人的声音），需要你显性同意后才能开始".to_owned());
+            return Err("双路录音会同时录到麦克风与系统声音（包括他人的声音），需要你显性同意后才能开始".to_owned());
         }
-        return start_dual_recording(app, state, project_id).await;
+        return start_dual_recording(
+            app,
+            state,
+            project_id,
+            input_device_id,
+            application_bundle_id,
+        )
+        .await;
     }
     // 跨源互斥（块5 挂账收口）：任一路在录或双路在录时拒绝新开始。
     crate::dual_recording::DualRecordingController::ensure_no_capture_active(state.inner())
         .map_err(|error| error.to_frontend())?;
     let recording = state.recording.clone();
     let library = state.library.clone();
-    let started =
-        tauri::async_runtime::spawn_blocking(move || recording.start(&library, project_id.as_deref()))
-            .await
-            .map_err(|_| "开始录音后台任务异常".to_owned())?
-            .map_err(|error| error.to_frontend())?;
+    let started = tauri::async_runtime::spawn_blocking(move || {
+        recording.start_with_device(
+            &library,
+            project_id.as_deref(),
+            input_device_id.as_deref(),
+        )
+    })
+    .await
+    .map_err(|_| "开始录音后台任务异常".to_owned())?
+    .map_err(|error| error.to_frontend())?;
     // 录音已成立：启动实时文字线程（模型不可用只影响预览，不影响录音）。
     let config = crate::live_transcript::config_from_library(&state.library);
     if let Some(session_id) = started.session_id.clone() {
@@ -909,14 +1011,22 @@ async fn start_dual_recording(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     project_id: Option<String>,
+    input_device_id: Option<String>,
+    application_bundle_id: Option<String>,
 ) -> Result<RecordingState, String> {
     let state_clone = state.inner().clone();
     let project = project_id.clone();
-    let started =
-        tauri::async_runtime::spawn_blocking(move || state_clone.dual.start(&state_clone, project.as_deref()))
-            .await
-            .map_err(|_| "开始双路录音后台任务异常".to_owned())?
-            .map_err(|error| error.to_frontend())?;
+    let started = tauri::async_runtime::spawn_blocking(move || {
+        state_clone.dual.start_with_sources(
+            &state_clone,
+            project.as_deref(),
+            input_device_id.as_deref(),
+            application_bundle_id.as_deref(),
+        )
+    })
+    .await
+    .map_err(|_| "开始双路录音后台任务异常".to_owned())?
+    .map_err(|error| error.to_frontend())?;
     // 双路已成立：实时文字只挂主路（麦克风）；系统声路的实时预览记为
     // 已知限制（合并前两路内容独立，预览合并属块9+ 优化项）。
     let config = crate::live_transcript::config_from_library(&state.library);
