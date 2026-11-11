@@ -14,13 +14,13 @@ Echo Memory collects three kinds of sources into one local library on your Mac:
 - **Documents** — Markdown, TXT, DOCX
 - **AI conversations** — local Claude Code / Codex sessions, ChatGPT / Claude export archives
 
-Transcription and analysis run entirely on your machine (Whisper + Ollama — no cloud, no per-minute caps), every conclusion can be clicked back to the exact words and timestamp it came from; citations are compared word for word against the transcript, and anything that does not match is dropped — fabricated citations are never shown. Only memories you have personally confirmed are exposed to your agents through read-only MCP — what they receive is not the AI's guess, it is the account you signed off on.
+Transcription and analysis run on your machine by default (Whisper + Ollama — no cloud, no per-minute caps); you can also connect each one to your own third-party account when you want stronger results. Every conclusion can be clicked back to the exact words and timestamp it came from; citations are compared word for word against the transcript, and anything that does not match is dropped — fabricated citations are never shown. Only memories you have personally confirmed are exposed to your agents through read-only MCP — what they receive is not the AI's guess, it is the account you signed off on.
 
 **⬇ [Download the signed and notarized macOS build](https://github.com/questionjie-max/echo-memory/releases/latest)** · macOS Apple Silicon · Apache-2.0
 
 ## What it is not
 
-It is not a meeting bot, not an always-on recorder, and not a team collaboration tool. It records only after you explicitly start it; it can capture the microphone, system audio from a selected app, or both, but it does not join meetings, run in the background, or upload recordings to the cloud. Live preview text and provisional notes depend on local models; the full transcript and post-hoc minutes produced after stopping are authoritative. There is no Windows/mobile app and no cloud sync — these are trade-offs, not debts. It is a capture-plus-precipitation layer: record with one click in the app, or bring your own material — it makes sure that material stays usable by you and your agents later.
+It is not a meeting bot, not an always-on recorder, and not a team collaboration tool. It records only after you explicitly start it; it can capture the microphone, system audio from a selected app, or both, but it does not join meetings or run in the background. Audio stays local by default; it leaves your Mac only after you explicitly choose third-party transcription and confirm the audio-upload notice. Live preview text and provisional notes depend on local models; the full transcript and post-hoc minutes produced after stopping are authoritative. There is no Windows/mobile app and no cloud sync — these are trade-offs, not debts. It is a capture-plus-precipitation layer: record with one click in the app, or bring your own material — it makes sure that material stays usable by you and your agents later.
 
 ## Three steps to start
 
@@ -32,8 +32,8 @@ It is not a meeting bot, not an always-on recorder, and not a team collaboration
 
 - **Microphone permission denied?** Allow Echo Memory under "System Settings → Privacy & Security → Microphone".
 - **System audio unavailable?** Allow Echo Memory under "System Settings → Privacy & Security → Screen & System Audio Recording"; you can then record all system audio or only a selected app.
-- **No Ollama installed, analysis unavailable?** Clicking analysis opens the setup panel — local one-click prepare or cloud with an API key, either works.
-- **Can the cloud fully replace local?** Cloud covers analysis/understanding only; knowledge indexing still needs local Ollama.
+- **No Ollama installed, analysis unavailable?** Clicking analysis opens the setup panel — prepare a local model or choose a third-party provider.
+- **Can a third party fully replace local?** Transcription and analysis can each use a third-party provider; knowledge indexing still needs local Ollama.
 - **Is there a Windows version?** No Windows/mobile app, no cloud sync, no automatic meeting joining.
 
 ## Why it exists
@@ -81,9 +81,12 @@ The goal is not to save more notes. It is to preserve a person's experiences and
 - Imports `Markdown`, `TXT`, and `DOCX` documents into the same searchable library.
 - Imports AI conversation exports (ChatGPT / Claude) and local agent sessions (Claude Code, Codex) as their own content category: searchable, answerable, and kept outside the recording memory chain.
 - Transcribes audio locally with embedded Whisper or a local `whisper.cpp` command.
-- Optionally transcribes with a configured OpenAI-compatible third-party ASR provider. This requires a separate audio-upload consent, completed provider settings, and an API key; providers that return speaker fields can populate speaker labels without guessing.
+- Transcription can independently use the local engine or a third party. Built-in catalog entries for Zhipu, Alibaba Cloud Model Studio, OpenAI, Tencent Cloud, and Doubao carry the endpoint, protocol, recommended model, and credential fields, so ordinary users only choose a provider, paste the requested credentials, and confirm the audio-upload notice. Tencent Cloud shows `AppID + SecretId + SecretKey`; the other built-ins show one API key.
+- Third-party transcription automatically chunks long recordings, reports segment progress, and resumes failed jobs. Completed segments are cached temporarily so a retry sends only missing chunks. Zhipu's per-request audio limit is very short, so long recordings make noticeably more requests; Tencent Cloud and Doubao cover roughly two hours per chunk. Provider timestamps and speakers are used directly; absent speaker data stays “unknown” instead of being guessed from text.
 - Uses local Ollama models for summaries, key points, decisions, action items, and open questions. A per-record supplementary instruction can override the template's structure for that analysis.
-- Optionally sends transcript text to a separately configured OpenAI-compatible text model for structured analysis, subject to a distinct text-upload consent.
+- Analysis can independently use local Ollama or a third-party text model, subject to a distinct text-send consent. Built-in providers supply the endpoint and recommended model; only “Custom OpenAI-compatible endpoint” asks for a Base URL. When both cards use the same provider, saved credentials can be reused across them without sending the secret back to the interface.
+- Saved credentials show as “pasted” and stay hidden by default. Only “Show” retrieves them from the macOS Keychain; “Modify” requires the provider's complete credential set to be entered again. Both cards offer a real post-save connection test; the transcription test sends about one second of test audio and may incur a negligible charge.
+- Analysis providers, plus Zhipu, Model Studio, OpenAI, and custom OpenAI-compatible transcription endpoints, can fetch their current `/models` list using the Key in the form or the saved Key. The selected model still has to be saved explicitly. Tencent Cloud and Doubao transcription entries do not expose a unified model-list endpoint, so they continue to use the catalog model or a manual model ID under Advanced.
 - Adds navigable chapters and verbatim highlights to long recordings, with every item verified against the transcript.
 - Archives records from the single-record context menu, alongside moving, renaming, opening management, and deletion.
 - Preserves timestamped transcript evidence and lets users return from a conclusion to its source.
@@ -140,7 +143,9 @@ The screenshots use synthetic demonstration data.
 
 Audio, the SQLite library, local transcription, local analysis, retrieval, and MCP remain on the Mac by default. External processing is opt-in.
 
-Third-party ASR requires a separate audio-upload consent, a selected provider, endpoint, model, API key, and the audio-upload setting. Echo Memory must fail before creating an upload connection when any of these is missing. Third-party text analysis has its own text-send consent and never includes the audio file. Both forms of consent are enforced by the service layer rather than only by the interface. API keys are stored in macOS Keychain.
+Third-party processing is off by default. Transcription and analysis are two independent cards: transcription requires a provider, that provider's complete credential set, and separate audio-upload consent; analysis requires its own consent before transcript text is sent. Changing a provider or model clears the corresponding consent, and the service layer refuses to open a network connection when anything is missing. Built-in endpoints and protocols are fixed by the backend Provider Catalog and cannot be edited by the frontend; only a custom OpenAI-compatible endpoint may supply its own URL. The two channels keep credentials in separate macOS Keychain slots and show only a “pasted” state by default; the current credentials enter the webview only after an explicit “Show”, while cross-card reuse copies them inside Keychain.
+
+The four new ASR protocols (Zhipu, Alibaba Cloud Model Studio, Tencent Cloud, and Doubao) are covered by local HTTP fixtures for headers, signatures, request bodies, response parsing, error redaction, long-audio chunking, and cache recovery. They have not yet been validated one by one with real provider accounts. Release notes must not call these protocols “verified” until that real-account validation is complete.
 
 Generated cross-record memory is versioned, linked to sources, and can be confirmed or rejected. It does not overwrite original recordings, transcripts, or single-record analysis.
 

@@ -22,16 +22,37 @@ import {
   type ReactNode,
 } from "react";
 import {
+  clearExternalCredentials,
+  diagnoseExternalProvider,
+  getCredentialRevision,
   getExternalAiSettings,
   getLocalAiStatus,
   getOllamaInstallStatus,
-  listRemoteModels,
-  setExternalAiApiKey,
-  testExternalAiConnection,
+  getProviderCatalog,
+  getProviderHealthStatus,
+  listExternalModels,
+  revealExternalCredentials,
+  reuseExternalCredentials,
+  saveAndVerifyProvider,
+  saveExternalCredentials,
   updateExternalAiSettings,
+  verifySavedProvider,
 } from "../lib/tauri";
-import type { ExternalAiSettings, LocalAiStatus, OllamaInstallStatus } from "../shared/types";
-import { Button, Collapsible, Field, List, ListRow, Progress, Segmented, Stack } from "./SettingsKit";
+import type {
+  DiagnosisReport,
+  ExternalAiSettings,
+  LocalAiStatus,
+  OllamaInstallStatus,
+  ProviderCatalog,
+  ProviderHealthSnapshot,
+  SaveAndVerifyOutcome,
+} from "../shared/types";
+import { Button, Collapsible, List, ListRow, Progress, Segmented, Stack } from "./SettingsKit";
+import ProviderConnectionForm, {
+  type ProviderCommit,
+  type ProviderDiagnoseDraft,
+  type ProviderSaveAndVerifyDraft,
+} from "./ProviderConnectionForm";
 import { useModelDownloads, localizePullError, type DownloadState } from "./useModelDownloads";
 
 export interface AnalysisSetupOptions {
@@ -133,23 +154,6 @@ export function AnalysisSetupProvider({ children }: { children: ReactNode }) {
     </AnalysisSetupContext.Provider>
   );
 }
-
-/**
- * 中转站式预置：主流服务商的 OpenAI 兼容地址都填好，用户只填 Key；
- * 模型列表从服务商 /models 接口拉取下拉选择，拉不到的手填兜底。
- * defaultModel 是拉取失败时的兜底预填，不做长期维护承诺。
- */
-const CLOUD_PRESETS = [
-  { id: "zhipu", label: "智谱", baseUrl: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4-flash" },
-  { id: "deepseek", label: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat" },
-  { id: "qwen", label: "阿里通义千问", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-turbo" },
-  { id: "moonshot", label: "月之暗面 Kimi", baseUrl: "https://api.moonshot.cn/v1", model: "moonshot-v1-8k" },
-  { id: "minimax", label: "MiniMax", baseUrl: "https://api.minimax.chat/v1", model: "abab6.5s-chat" },
-  { id: "siliconflow", label: "硅基流动", baseUrl: "https://api.siliconflow.cn/v1", model: "Qwen/Qwen2.5-7B-Instruct" },
-  { id: "openai", label: "OpenAI 官方", baseUrl: "https://api.openai.com/v1", model: "gpt-4o-mini" },
-] as const;
-
-type CloudPresetId = (typeof CLOUD_PRESETS)[number]["id"] | "custom";
 
 function AnalysisSetupSheet({
   needEmbedding,
@@ -401,98 +405,203 @@ function ModelStatusRow({
   );
 }
 
-/* ------------------------------ 云端：填 Key 即用 ------------------------------ */
+/* ------------------------------ 云端：统一服务商表单 ------------------------------ */
 
 function CloudKeyTab({ onResume }: { onResume: () => void }) {
-  const [preset, setPreset] = useState<CloudPresetId>("zhipu");
-  const [baseUrl, setBaseUrl] = useState<string>(CLOUD_PRESETS[0].baseUrl);
-  const [model, setModel] = useState<string>(CLOUD_PRESETS[0].model);
-  const [apiKey, setApiKey] = useState("");
-  const [consent, setConsent] = useState(false);
+  const [catalog, setCatalog] = useState<ProviderCatalog | null>(null);
+  const [settings, setSettings] = useState<ExternalAiSettings | null>(null);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [savedButUnreachable, setSavedButUnreachable] = useState(false);
-  // 模型选择的两种来源：手填兜底永远可用；拉取成功后切下拉选真实模型列表。
-  const [modelSource, setModelSource] = useState<"manual" | "remote">("manual");
-  const [remoteModels, setRemoteModels] = useState<string[]>([]);
-  const [pulling, setPulling] = useState(false);
-  const [modelsError, setModelsError] = useState("");
-  // 拉取代次：在途请求返回时若已切过服务商/改过地址，结果作废。
-  const pullGeneration = useRef(0);
+  const [loadError, setLoadError] = useState("");
+  const [health, setHealth] = useState<ProviderHealthSnapshot | null>(null);
+  const [revision, setRevision] = useState(0);
 
-  function applyPreset(next: CloudPresetId) {
-    setPreset(next);
-    const found = CLOUD_PRESETS.find((item) => item.id === next);
-    if (found) {
-      setBaseUrl(found.baseUrl);
-      setModel(found.model);
-      setModelSource("manual");
-      setRemoteModels([]);
-      setModelsError("");
-      pullGeneration.current += 1;
-    }
-  }
-
-  async function pullModels() {
-    if (!apiKey.trim() || !baseUrl.trim() || pulling) return;
-    const generation = pullGeneration.current;
-    setPulling(true);
-    setModelsError("");
-    try {
-      const models = await listRemoteModels(baseUrl.trim(), apiKey.trim());
-      if (generation !== pullGeneration.current) return;
-      setRemoteModels(models);
-      setModelSource("remote");
-      // 当前手填值不在列表里时保持用户输入；在列表里则选中它。
-      if (models.includes(model.trim())) {
-        setModel(model.trim());
-      } else {
-        setModel(models[0]);
-      }
-    } catch (reason) {
-      if (generation !== pullGeneration.current) return;
-      setModelSource("manual");
-      setModelsError(`${String(reason)}。也可以直接手动填写模型名。`);
-    } finally {
-      if (generation === pullGeneration.current) setPulling(false);
-    }
-  }
-
-  async function saveCloud() {
-    if (!apiKey.trim()) {
-      setError("请先填写 API Key。");
-      return;
-    }
-    if (!consent) {
-      setError("请先勾选文本发送说明，云端通道才能启用。");
-      return;
-    }
-    setBusy(true);
-    setError("");
-    setSavedButUnreachable(false);
-    try {
-      await setExternalAiApiKey(apiKey.trim());
-      const current = await getExternalAiSettings();
-      await updateExternalAiSettings({
-        ...current,
-        enabled: true,
-        baseUrl: baseUrl.trim(),
-        model: model.trim(),
-        privacyConsentAt: new Date().toISOString(),
+  useEffect(() => {
+    let active = true;
+    void Promise.all([
+      getProviderCatalog(),
+      getExternalAiSettings(),
+      getProviderHealthStatus("analysis"),
+      getCredentialRevision("analysis"),
+    ])
+      .then(([nextCatalog, nextSettings, nextHealth, nextRevision]) => {
+        if (!active) return;
+        setCatalog(nextCatalog);
+        setSettings(nextSettings);
+        setHealth(nextHealth);
+        setRevision(nextRevision);
+      })
+      .catch((reason) => {
+        if (active) setLoadError(String(reason));
       });
-      await testExternalAiConnection();
-      onResume();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  async function refreshVerificationState() {
+    try {
+      const [nextHealth, nextRevision] = await Promise.all([
+        getProviderHealthStatus("analysis"),
+        getCredentialRevision("analysis"),
+      ]);
+      setHealth(nextHealth);
+      setRevision(nextRevision);
+    } catch {
+      // 状态读取失败不阻塞：状态条按「未验证」处理。
+    }
+  }
+
+  function normalizeProvider(
+    draft: Omit<ProviderCommit, "credentials" | "consentAt">,
+  ) {
+    if (!catalog) throw new Error("服务商目录尚未加载");
+    const provider = catalog.providers.find((item) => item.id === draft.providerId);
+    if (!provider?.analysis) throw new Error("该服务商不支持文本分析");
+    return {
+      providerId: provider.id,
+      baseUrl:
+        provider.id === "custom" ? draft.baseUrl.trim() : provider.analysis.baseUrl,
+      model: draft.model.trim() || provider.analysis.recommendedModel,
+    };
+  }
+
+  function analysisPatch(
+    provider: { providerId: string; baseUrl: string; model: string },
+    consentAt: string | null,
+    enabled: boolean,
+  ): Partial<ExternalAiSettings> {
+    return {
+      analysisProvider: provider.providerId,
+      baseUrl: provider.baseUrl,
+      model: provider.model,
+      privacyConsentAt: consentAt,
+      enabled,
+    };
+  }
+
+  async function save(
+    current: ExternalAiSettings,
+    patch: Partial<ExternalAiSettings>,
+  ): Promise<ExternalAiSettings> {
+    const saved = await updateExternalAiSettings({ ...current, ...patch });
+    setSettings(saved);
+    return saved;
+  }
+
+  /** 仅保存（跳过验证）：状态条会落在「已配置，未验证」。 */
+  async function commit(draft: ProviderCommit) {
+    if (!settings) throw new Error("分析设置尚未加载完成");
+    setBusy(true);
+    setLoadError("");
+    try {
+      const provider = normalizeProvider(draft);
+      let current = settings;
+      const changed =
+        current.analysisProvider !== provider.providerId ||
+        current.baseUrl !== provider.baseUrl ||
+        current.model !== provider.model;
+      if (changed) {
+        current = await save(current, analysisPatch(provider, null, false));
+      }
+      current = await save(current, analysisPatch(provider, draft.consentAt, false));
+      if (draft.credentials) {
+        current = await saveExternalCredentials(
+          "analysis",
+          provider.providerId,
+          draft.credentials,
+        );
+        setSettings(current);
+      }
+      current = await save(current, { enabled: true });
+      await refreshVerificationState();
     } catch (reason) {
-      // Key 与配置都已落库；检测失败时如实区分，让用户能针对性修正。
-      setSavedButUnreachable(true);
-      setError(String(reason));
+      setLoadError(String(reason));
+      throw reason;
     } finally {
       setBusy(false);
     }
   }
 
-  const canSave = apiKey.trim().length > 0 && consent && baseUrl.trim().length > 0 && model.trim().length > 0;
-  const canPull = apiKey.trim().length > 0 && baseUrl.trim().length > 0;
+  /** 主流程：先诊断草稿（不落盘），通过后凭票据提交，成功才续跑原动作。 */
+  async function diagnose(draft: ProviderDiagnoseDraft): Promise<DiagnosisReport> {
+    return diagnoseExternalProvider({
+      target: "analysis",
+      providerId: draft.providerId,
+      baseUrl: draft.baseUrl,
+      model: draft.model,
+      credentials: draft.credentials,
+    });
+  }
+
+  async function saveAndVerify(
+    draft: ProviderSaveAndVerifyDraft,
+  ): Promise<SaveAndVerifyOutcome> {
+    if (!settings) throw new Error("分析设置尚未加载完成");
+    setBusy(true);
+    setLoadError("");
+    try {
+      const outcome = await saveAndVerifyProvider({
+        target: "analysis",
+        providerId: draft.providerId,
+        baseUrl: draft.baseUrl,
+        model: draft.model,
+        credentials: draft.credentials,
+        privacyConsentAt: draft.consentAt,
+        audioUploadConsentAt: null,
+        enabled: true,
+        verificationToken: draft.verificationToken,
+      });
+      setSettings(outcome.settings);
+      await refreshVerificationState();
+      onResume();
+      return outcome;
+    } catch (reason) {
+      setLoadError(String(reason));
+      throw reason;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function verifySaved(): Promise<DiagnosisReport> {
+    setBusy(true);
+    setLoadError("");
+    try {
+      const report = await verifySavedProvider("analysis");
+      await refreshVerificationState();
+      return report;
+    } catch (reason) {
+      setLoadError(String(reason));
+      throw reason;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function clearCredentials() {
+    const saved = await clearExternalCredentials("analysis");
+    setSettings(saved);
+  }
+
+  async function reuseCredentials(
+    draft: Omit<ProviderCommit, "credentials" | "consentAt">,
+  ) {
+    if (!settings) throw new Error("分析设置尚未加载完成");
+    const provider = normalizeProvider(draft);
+    let current = settings;
+    if (current.analysisProvider !== provider.providerId) {
+      current = await save(current, analysisPatch(provider, null, false));
+    }
+    const saved = await reuseExternalCredentials("analysis");
+    setSettings(saved);
+  }
+
+  if (loadError && (!catalog || !settings)) {
+    return <p className="em-note err" role="alert">{loadError}</p>;
+  }
+  if (!catalog || !settings) {
+    return <p className="em-empty">正在读取服务商目录…</p>;
+  }
 
   return (
     <>
@@ -500,108 +609,33 @@ function CloudKeyTab({ onResume }: { onResume: () => void }) {
         云端只覆盖分析（理解整理）；知识索引（向量嵌入）仍需本机 Ollama，
         只配云端时跨记录问答/记忆生成仍会提示缺嵌入模型。
       </p>
-      <Field label="服务商" hint="地址已按 OpenAI 兼容协议填好，可改成中转站等其它兼容地址。">
-        <select
-          className="em-select"
-          value={preset}
-          onChange={(event) => applyPreset(event.target.value as CloudPresetId)}
-        >
-          {CLOUD_PRESETS.map((item) => (
-            <option value={item.id} key={item.id}>
-              {item.label}
-            </option>
-          ))}
-          <option value="custom">自定义</option>
-        </select>
-      </Field>
-      <Field label="接口地址" hint="OpenAI 兼容的 /v1 地址。只有本机地址允许用 http。">
-        <input
-          className="em-input"
-          value={baseUrl}
-          placeholder="https://api.example.com/v1"
-          onChange={(event) => {
-            setBaseUrl(event.target.value);
-            setPreset("custom");
-            pullGeneration.current += 1;
-          }}
-        />
-      </Field>
-      <Field label="API Key" hint="保存在 macOS 钥匙串里，不会回显。">
-        <input
-          className="em-input"
-          type="password"
-          autoComplete="new-password"
-          value={apiKey}
-          placeholder="仅用于保存，不会回显"
-          onChange={(event) => setApiKey(event.target.value)}
-        />
-      </Field>
-      <Field
-        label="模型"
-        hint={modelSource === "remote" ? "从服务商拉取的模型列表，可直接切换。" : "填好 Key 后可拉取模型列表；拉不到就手动写模型 ID。"}
-      >
-        <div className="em-field-row">
-          {modelSource === "remote" && remoteModels.length > 0 ? (
-            <select
-              className="em-select"
-              value={model}
-              onChange={(event) => setModel(event.target.value)}
-            >
-              {remoteModels.map((name) => (
-                <option value={name} key={name}>
-                  {name}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <input
-              className="em-input"
-              value={model}
-              placeholder="glm-4-flash"
-              onChange={(event) => setModel(event.target.value)}
-            />
-          )}
-          {modelSource === "remote" ? (
-            <Button variant="quiet" onClick={() => setModelSource("manual")}>
-              手动填写
-            </Button>
-          ) : (
-            <Button
-              variant="quiet"
-              disabled={!canPull || pulling}
-              onClick={() => void pullModels()}
-            >
-              {pulling ? "拉取中…" : "拉取模型列表"}
-            </Button>
-          )}
-        </div>
-      </Field>
-      {modelsError && (
-        <p className="em-note err" role="alert">
-          {modelsError}
-        </p>
-      )}
-      <label className="em-check-row">
-        <input
-          type="checkbox"
-          checked={consent}
-          onChange={(event) => setConsent(event.target.checked)}
-        />
-        <span>我了解逐字稿全文与分析内容会发送给所填服务商。</span>
-      </label>
-      <div className="em-card-foot">
-        <Button variant="primary" disabled={!canSave || busy} onClick={() => void saveCloud()}>
-          {busy ? "正在检测连通…" : "保存并检测连通"}
-        </Button>
-        <span className="em-hint">未填 Key 或未勾选说明时无法保存。</span>
-      </div>
-      {error && (
-        <p className="em-note err" role="alert">
-          {savedButUnreachable ? "Key 与配置已保存，但连通检测失败：" : ""}
-          {error}
-          {savedButUnreachable ? "。请检查接口地址、模型名称与 Key 后重试。" : ""}
-        </p>
-      )}
+      <ProviderConnectionForm
+        target="analysis"
+        catalog={catalog}
+        settings={settings}
+        busy={busy}
+        actionLabel="保存并验证"
+        health={health}
+        credentialRevision={revision}
+        catalogVersion={catalog.version}
+        onCommit={commit}
+        onDiagnose={diagnose}
+        onSaveAndVerify={saveAndVerify}
+        onVerifySaved={verifySaved}
+        onClearCredentials={clearCredentials}
+        onReuseCredentials={reuseCredentials}
+        onRevealCredentials={(providerId) =>
+          revealExternalCredentials("analysis", providerId)
+        }
+        onListModels={(input) =>
+          listExternalModels(
+            "analysis",
+            input.providerId,
+            input.baseUrl,
+            input.apiKey,
+          )
+        }
+      />
     </>
   );
 }

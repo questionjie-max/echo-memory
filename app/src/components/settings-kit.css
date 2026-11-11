@@ -30,7 +30,7 @@
 .em-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .em-card-head h3 { margin: 0; font-size: var(--em-text-lg); font-weight: 660; letter-spacing: -0.01em; }
 .em-card-head p { margin: 4px 0 0; color: var(--em-ink-3); font-size: var(--em-text-xs); line-height: 1.55; }
-.em-card-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; }
+.em-card-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; flex-wrap: wrap; }
 .em-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 12px; border-top: 0.5px solid var(--em-hairline-soft); }
 
 /* ---------------- 药丸 / 状态 ---------------- */
@@ -126,7 +126,7 @@
 
 /* ---------------- 行内提示 ---------------- */
 .em-hint { margin: 0; color: var(--em-ink-3); font-size: var(--em-text-xs); line-height: 1.55; }
-.em-note { margin: 0; padding: 9px 11px; border-radius: var(--em-r-md); background: var(--em-surface-2); color: var(--em-ink-3); font-size: var(--em-text-xs); line-height: 1.55; }
+.em-note { margin: 0; padding: 9px 11px; border-radius: var(--em-r-md); background: var(--em-surface-2); color: var(--em-ink-3); font-size: var(--em-text-xs); line-height: 1.55; overflow-wrap: anywhere; }
 .em-note.ok { background: var(--em-ok-soft); color: var(--em-ok-ink); }
 .em-note.err { background: var(--em-err-soft); color: var(--em-err-ink); }
 .em-note.warn { background: var(--em-warn-soft); color: var(--em-warn-ink); }
@@ -137,3 +137,18 @@
 .em-saved { position: absolute; z-index: 20; top: 14px; right: 52px; display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: var(--em-r-pill); background: var(--em-ok-soft); color: var(--em-ok-ink); font-size: var(--em-text-xs); font-weight: 620; animation: em-saved-in 180ms var(--em-motion); }
 .em-saved.failed { background: var(--em-err-soft); color: var(--em-err-ink); }
 @keyframes em-saved-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+
+/* ---------------- 验证状态条与结构化错误（Phase 0）---------------- */
+.em-verify-pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: var(--em-r-pill); font-size: var(--em-text-xs); font-weight: 620; }
+.em-verify-unconfigured { background: var(--em-surface-2); color: var(--em-ink-3); }
+.em-verify-unverified { background: var(--em-warn-soft); color: var(--em-warn-ink); }
+.em-verify-verifying { background: var(--em-surface-2); color: var(--em-ink-2); }
+.em-verify-verified { background: var(--em-ok-soft); color: var(--em-ok-ink); }
+.em-verify-stale { background: var(--em-warn-soft); color: var(--em-warn-ink); }
+.em-verify-failed { background: var(--em-err-soft); color: var(--em-err-ink); }
+
+.em-error-note { display: grid; gap: 6px; padding: 10px 12px; border-radius: var(--em-r-md); background: var(--em-err-soft); color: var(--em-err-ink); overflow-wrap: anywhere; }
+.em-error-note p { margin: 0; font-size: var(--em-text-xs); line-height: 1.55; }
+.em-error-what { font-weight: 660; }
+.em-error-note .em-collapsible > summary { color: inherit; opacity: 0.85; }
+.em-error-details { margin: 0; padding: 8px 10px; border-radius: var(--em-r-sm); background: color-mix(in srgb, var(--em-err-ink) 8%, transparent); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }

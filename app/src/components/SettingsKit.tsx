@@ -7,6 +7,8 @@
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { CheckCircleIcon, TriangleAlertIcon, CircleXIcon, CheckIcon, CircleIcon } from "./icons";
+import type { VerifyState } from "../lib/verify-state";
+import { VERIFY_STATE_LABELS } from "../lib/verify-state";
 import "./settings-kit.css";
 
 /* ---------------- 面板骨架 ---------------- */
@@ -407,6 +409,58 @@ export function SavedToast({ flash }: { flash: SavedState }) {
     <span className={`em-saved${flash.tone === "failed" ? " failed" : ""}`} role="status">
       {flash.message}
     </span>
+  );
+}
+
+/* ---------------- 验证状态条与结构化错误 ---------------- */
+
+/**
+ * 第三方连接的六态状态条。状态语义与卡片头药丸同源同词，
+ * 独立于按钮文案（测试结果不再塞进按钮文字）。
+ */
+export function VerifyStatusPill({
+  state,
+  description,
+}: {
+  state: VerifyState;
+  description?: string | null;
+}) {
+  return (
+    <span className={`em-verify-pill em-verify-${state}`} role="status">
+      {VERIFY_STATE_LABELS[state]}
+      {description ? ` · ${description}` : ""}
+    </span>
+  );
+}
+
+export interface ErrorNoteModel {
+  /** 发生了什么。 */
+  what: string;
+  /** 最可能的原因。 */
+  cause?: string | null;
+  /** 建议动作。 */
+  action?: string | null;
+  /** 可折叠的技术详情（阶段/HTTP 状态/脱敏服务商消息/模型 ID）。 */
+  details?: string | null;
+}
+
+/**
+ * 四段式错误展示：发生了什么 / 可能原因 / 建议动作 / 技术详情。
+ * 一个错误只在一个就近区域展示；调用方不得再在页面级重复渲染同一错误。
+ */
+export function ErrorNote({ error }: { error: ErrorNoteModel | null }) {
+  if (!error) return null;
+  return (
+    <div role="alert" className="em-error-note">
+      <p className="em-error-what">{error.what}</p>
+      {error.cause ? <p className="em-error-cause">可能原因：{error.cause}</p> : null}
+      {error.action ? <p className="em-error-action">建议：{error.action}</p> : null}
+      {error.details ? (
+        <Collapsible title="技术详情">
+          <pre className="em-error-details">{error.details}</pre>
+        </Collapsible>
+      ) : null}
+    </div>
   );
 }
 

@@ -567,8 +567,9 @@ export interface OllamaInstallStatus {
 }
 
 export interface ExternalAiSettings {
-  processingMode: "local" | "external";
+  transcriptionMode: "local" | "external";
   enabled: boolean;
+  analysisProvider: string;
   baseUrl: string;
   model: string;
   hasApiKey: boolean;
@@ -579,6 +580,112 @@ export interface ExternalAiSettings {
   transcriptionModel: string;
   transcriptionHasApiKey: boolean;
   audioUploadConsentAt: string | null;
+}
+
+export interface ProviderCredentialField {
+  key: string;
+  label: string;
+  placeholder: string;
+  secret: boolean;
+  help: string | null;
+}
+
+export interface ProviderCapability {
+  baseUrl: string;
+  recommendedModel: string;
+  models: string[];
+  supportsModelList: boolean;
+  protocol: string;
+  protocolHint: string;
+  maxDurationMs: number | null;
+  maxFileBytes: number | null;
+  returnsTimestamps: boolean;
+  returnsSpeakers: boolean;
+  note: string | null;
+}
+
+export interface ProviderDefinition {
+  id: string;
+  label: string;
+  description: string;
+  capabilities: Array<"transcription" | "analysis">;
+  credentialFields: ProviderCredentialField[];
+  keyUrl: string | null;
+  analysis: ProviderCapability | null;
+  transcription: ProviderCapability | null;
+}
+
+export interface ProviderCatalog {
+  version: number;
+  providers: ProviderDefinition[];
+}
+
+/* ------------------------ 第三方连接诊断与验证状态 ------------------------ */
+
+/** 诊断阶段：失败发生在哪一层。 */
+export type DiagnosisStage =
+  | "catalog"
+  | "inference"
+  | "model"
+  | "protocol"
+  | "quota"
+  | "network"
+  | "response"
+  | "format"
+  | "ok";
+
+/** 建议动作：界面映射为中文文案与按钮。 */
+export type SuggestedAction =
+  | "refill_key"
+  | "switch_model"
+  | "check_account"
+  | "check_network"
+  | "retry"
+  | "change_model_or_permission";
+
+/** 一次草稿诊断的结构化结果（全部字段非敏感）。 */
+export interface DiagnosisReport {
+  target: "analysis" | "transcription";
+  stage: DiagnosisStage;
+  status: "passed" | "failed";
+  model: string;
+  httpStatus: number | null;
+  errorCode: string | null;
+  providerMessage: string | null;
+  testedAt: string;
+  suggestedAction: SuggestedAction;
+  /** 仅通过时签发：一次性验证票据（saveAndVerify 时回传核销）。 */
+  verificationToken: string | null;
+}
+
+/** 健康快照：最后一次真实验证的结果与配置指纹。 */
+export interface ProviderHealthSnapshot {
+  target: "analysis" | "transcription";
+  providerId: string;
+  baseUrl: string;
+  model: string;
+  credentialRevision: number;
+  catalogVersion: number;
+  stage: string;
+  status: "passed" | "failed";
+  errorCode: string | null;
+  verifiedAt: string;
+}
+
+/** 「保存并验证」结果：partial=true 时前端必须重读后端真实状态。 */
+export interface SaveAndVerifyOutcome {
+  settings: ExternalAiSettings;
+  saved: string[];
+  rolledBack: string[];
+  partial: boolean;
+  health: ProviderHealthSnapshot;
+}
+
+/** 远端模型分组：分析首选 chat 候选，其余进「其他模型」折叠组。 */
+export interface RemoteModelList {
+  chatCandidates: string[];
+  otherModels: string[];
+  allUnclassified: boolean;
 }
 
 export type MemoryViewKind = "timeline" | "map" | "evolution" | "profile";

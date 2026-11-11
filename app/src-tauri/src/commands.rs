@@ -9,11 +9,13 @@ use crate::db::repository::LibraryRepository;
 use crate::error::AppError;
 use crate::error::AppResult;
 use crate::external_ai_gate::{
-    clear_api_key, clear_asr_api_key, external_settings, get_api_key, get_asr_api_key,
-    require_external_ai_consent, set_api_key, set_asr_api_key,
+    clear_analysis_credentials, clear_transcription_credentials, credentials_are_complete,
+    external_settings, get_analysis_credentials, get_asr_credentials, get_api_key,
+    require_external_ai_consent, set_analysis_credentials, set_transcription_credentials,
 };
 use crate::library::ManagedLibrary;
 use crate::memory::{self, OpenAiCompatibleClient};
+use crate::provider_catalog::{self, ProviderCatalog};
 use crate::state::AppState;
 use crate::transcript::effective_text;
 use crate::types::{
@@ -34,7 +36,7 @@ use crate::whisper::{
 };
 use chrono::{Duration as ChronoDuration, Local, SecondsFormat, TimeZone, Utc};
 use sha2::{Digest, Sha256};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -2221,7 +2223,28 @@ fn run_external_transcription(
                 if let Some(app) = progress_app {
                     emit_processing_progress(app, record_id);
                 }
-                let segments = crate::external_asr::send_transcription_request(&request)?;
+                let cache_dir = library
+                    .root()
+                    .join("raw")
+                    .join(record_id)
+                    .join("external-asr-cache")
+                    .join(&job.id);
+                let segments = crate::external_asr::transcribe_long_audio(
+                    &request,
+                    &cache_dir,
+                    |current, total| {
+                        repository.update_job_progress(
+                            &job.id,
+                            "transcribing",
+                            current as i64,
+                            total as i64,
+                        )?;
+                        if let Some(app) = progress_app {
+                            emit_processing_progress(app, record_id);
+                        }
+                        Ok(())
+                    },
+                )?;
                 let preprocessing_json = serde_json::to_string(&metadata).map_err(|error| {
                     crate::error::AppError::Import(format!("预处理信息无效：{error}"))
                 })?;
@@ -2261,6 +2284,14 @@ fn run_external_transcription(
             &external_result.preprocessing_json,
             &external_result.segments,
         )?;
+        let _ = std::fs::remove_dir_all(
+            library
+                .root()
+                .join("raw")
+                .join(record_id)
+                .join("external-asr-cache")
+                .join(&job.id),
+        );
         repository.update_job_status(&job.id, "completed", None)?;
         repository.update_record_status(record_id, "completed")?;
         if let Some(app) = progress_app {
@@ -2731,6 +2762,11 @@ fn automatic_memory_range() -> (String, String) {
 /* -------------------------- external memory views -------------------------- */
 
 #[tauri::command]
+pub fn get_provider_catalog() -> ProviderCatalog {
+    provider_catalog::provider_catalog()
+}
+
+#[tauri::command]
 pub fn get_external_ai_settings(state: State<AppState>) -> Result<ExternalAiSettings, String> {
     external_settings(&state.library).map_err(|error| error.to_frontend())
 }
@@ -2740,12 +2776,18 @@ pub fn update_external_ai_settings(
     state: State<AppState>,
     settings: ExternalAiSettings,
 ) -> Result<ExternalAiSettings, String> {
-    let has_api_key = get_api_key()
-        .map_err(|error| error.to_frontend())?
-        .is_some();
-    let transcription_has_api_key = get_asr_api_key()
-        .map_err(|error| error.to_frontend())?
-        .is_some();
+    let has_api_key = credentials_are_complete(
+        &settings.analysis_provider,
+        get_analysis_credentials()
+            .map_err(|error| error.to_frontend())?
+            .as_ref(),
+    );
+    let transcription_has_api_key = credentials_are_complete(
+        &settings.transcription_provider,
+        get_asr_credentials()
+            .map_err(|error| error.to_frontend())?
+            .as_ref(),
+    );
     state
         .library
         .repository()
@@ -2758,13 +2800,19 @@ pub fn set_external_ai_api_key(
     state: State<AppState>,
     api_key: String,
 ) -> Result<ExternalAiSettings, String> {
-    set_api_key(&api_key).map_err(|error| error.to_frontend())?;
+    let settings = external_settings(&state.library).map_err(|error| error.to_frontend())?;
+    set_analysis_credentials(
+        &settings.analysis_provider,
+        BTreeMap::from([("apiKey".to_owned(), api_key)]),
+    )
+    .map_err(|error| error.to_frontend())?;
+    bump_revision_for_target(&state, "analysis");
     external_settings(&state.library).map_err(|error| error.to_frontend())
 }
 
 #[tauri::command]
 pub fn clear_external_ai_api_key(state: State<AppState>) -> Result<ExternalAiSettings, String> {
-    clear_api_key().map_err(|error| error.to_frontend())?;
+    clear_analysis_credentials().map_err(|error| error.to_frontend())?;
     external_settings(&state.library).map_err(|error| error.to_frontend())
 }
 
@@ -2773,14 +2821,146 @@ pub fn set_external_asr_api_key(
     state: State<AppState>,
     api_key: String,
 ) -> Result<ExternalAiSettings, String> {
-    set_asr_api_key(&api_key).map_err(|error| error.to_frontend())?;
+    let settings = external_settings(&state.library).map_err(|error| error.to_frontend())?;
+    set_transcription_credentials(
+        &settings.transcription_provider,
+        BTreeMap::from([("apiKey".to_owned(), api_key)]),
+    )
+    .map_err(|error| error.to_frontend())?;
+    bump_revision_for_target(&state, "transcription");
     external_settings(&state.library).map_err(|error| error.to_frontend())
 }
 
 #[tauri::command]
 pub fn clear_external_asr_api_key(state: State<AppState>) -> Result<ExternalAiSettings, String> {
-    clear_asr_api_key().map_err(|error| error.to_frontend())?;
+    clear_transcription_credentials().map_err(|error| error.to_frontend())?;
     external_settings(&state.library).map_err(|error| error.to_frontend())
+}
+
+/// 通用凭据保存：目标槽位由 target 决定，字段集合由 Provider Catalog 校验。
+#[tauri::command]
+pub fn save_external_credentials(
+    state: State<AppState>,
+    target: String,
+    provider_id: String,
+    credentials: BTreeMap<String, String>,
+) -> Result<ExternalAiSettings, String> {
+    let settings = external_settings(&state.library).map_err(|error| error.to_frontend())?;
+    match target.as_str() {
+        "analysis" => {
+            if provider_id != settings.analysis_provider {
+                return Err("请先保存分析服务商，再填写凭据".to_owned());
+            }
+            set_analysis_credentials(&provider_id, credentials)
+                .map_err(|error| error.to_frontend())?;
+        }
+        "transcription" => {
+            if provider_id != settings.transcription_provider {
+                return Err("请先保存转写服务商，再填写凭据".to_owned());
+            }
+            set_transcription_credentials(&provider_id, credentials)
+                .map_err(|error| error.to_frontend())?;
+        }
+        _ => return Err("凭据目标无效".to_owned()),
+    }
+    bump_revision_for_target(&state, &target);
+    external_settings(&state.library).map_err(|error| error.to_frontend())
+}
+
+#[tauri::command]
+pub fn clear_external_credentials(
+    state: State<AppState>,
+    target: String,
+) -> Result<ExternalAiSettings, String> {
+    match target.as_str() {
+        "analysis" => clear_analysis_credentials(),
+        "transcription" => clear_transcription_credentials(),
+        _ => return Err("凭据目标无效".to_owned()),
+    }
+    .map_err(|error| error.to_frontend())?;
+    bump_revision_for_target(&state, &target);
+    external_settings(&state.library).map_err(|error| error.to_frontend())
+}
+
+/// 凭据槽位发生任何写入后递增修订号（旧健康快照随即失效）。
+fn bump_revision_for_target(state: &AppState, target: &str) {
+    let repository = state.library.repository();
+    if let Err(error) = repository.bump_credential_revision(target) {
+        eprintln!("凭据修订号更新失败（target={target}）：{error}");
+    }
+}
+
+/// 在分析/转写两个 Keychain 槽位之间复制同一服务商的凭据。
+/// 返回值只有配置状态，秘密不经过前端。
+#[tauri::command]
+pub fn reuse_external_credentials(
+    state: State<AppState>,
+    target: String,
+) -> Result<ExternalAiSettings, String> {
+    let settings = external_settings(&state.library).map_err(|error| error.to_frontend())?;
+    let (source_provider, source_credentials) = match target.as_str() {
+        "analysis" => (
+            settings.transcription_provider.clone(),
+            get_asr_credentials().map_err(|error| error.to_frontend())?,
+        ),
+        "transcription" => (
+            settings.analysis_provider.clone(),
+            get_analysis_credentials().map_err(|error| error.to_frontend())?,
+        ),
+        _ => return Err("凭据目标无效".to_owned()),
+    };
+    let target_provider = if target == "analysis" {
+        &settings.analysis_provider
+    } else {
+        &settings.transcription_provider
+    };
+    if source_provider != target_provider.as_str() {
+        return Err("另一项使用的服务商不同，无法复用凭据".to_owned());
+    }
+    let credentials = source_credentials
+        .filter(|credentials| credentials_are_complete(&source_provider, Some(credentials)))
+        .ok_or_else(|| "另一项还没有可复用的完整凭据".to_owned())?;
+    if target == "analysis" {
+        set_analysis_credentials(target_provider, credentials)
+            .map_err(|error| error.to_frontend())?;
+    } else {
+        set_transcription_credentials(target_provider, credentials)
+            .map_err(|error| error.to_frontend())?;
+    }
+    bump_revision_for_target(&state, &target);
+    external_settings(&state.library).map_err(|error| error.to_frontend())
+}
+
+/// 只在用户明确点击“显示”时返回当前槽位的完整凭据。
+/// 服务商必须与已保存设置一致，避免把上一家的 Key 显示到新表单里。
+#[tauri::command]
+pub fn reveal_external_credentials(
+    state: State<AppState>,
+    target: String,
+    provider_id: String,
+) -> Result<BTreeMap<String, String>, String> {
+    let settings = state
+        .library
+        .repository()
+        .external_ai_settings(false, false)
+        .map_err(|error| error.to_frontend())?;
+    let (saved_provider, credentials) = match target.as_str() {
+        "analysis" => (
+            settings.analysis_provider,
+            get_analysis_credentials().map_err(|error| error.to_frontend())?,
+        ),
+        "transcription" => (
+            settings.transcription_provider,
+            get_asr_credentials().map_err(|error| error.to_frontend())?,
+        ),
+        _ => return Err("凭据目标无效".to_owned()),
+    };
+    if saved_provider != provider_id {
+        return Err("当前显示的服务商与已保存凭据不一致，请先保存配置".to_owned());
+    }
+    credentials
+        .filter(|credentials| credentials_are_complete(&provider_id, Some(credentials)))
+        .ok_or_else(|| "没有找到完整凭据，请重新填写".to_owned())
 }
 
 #[tauri::command]
@@ -2789,6 +2969,17 @@ pub async fn test_external_ai_connection(state: State<'_, AppState>) -> Result<(
     tauri::async_runtime::spawn_blocking(move || test_external_ai_connection_blocking(&state))
         .await
         .map_err(|_| "外部 AI 连接测试后台任务异常，请重试".to_owned())?
+}
+
+#[tauri::command]
+pub async fn test_external_asr_connection(state: State<'_, AppState>) -> Result<(), String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::external_asr::probe_external_asr_connection(&state.library)
+            .map_err(|error| error.to_frontend())
+    })
+    .await
+    .map_err(|_| "第三方转写连通测试后台任务异常，请重试".to_owned())?
 }
 
 pub(crate) fn test_external_ai_connection_blocking(state: &AppState) -> Result<(), String> {
@@ -2802,6 +2993,396 @@ pub(crate) fn test_external_ai_connection_blocking(state: &AppState) -> Result<(
         .ok_or_else(|| "请先配置外部 AI API Key".to_owned())?;
     OpenAiCompatibleClient::new(&settings.base_url, &settings.model, &api_key)
         .and_then(|client| client.test())
+        .map_err(|error| error.to_frontend())
+}
+
+// ---------------------------------------------------------------------------
+// Phase 0：草稿诊断 / 保存并验证 / 验证已保存配置。
+// 诊断不落盘；「保存并验证」先核销一次性票据再提交，验证失败原配置不变。
+// ---------------------------------------------------------------------------
+
+/// 草稿诊断：用表单凭据（或已保存凭据回退）做一次真实小请求。
+/// 新凭据只在本调用栈与短期内存票据状态中存在，不写库、不写钥匙串。
+#[tauri::command]
+pub async fn diagnose_external_provider(
+    state: State<'_, AppState>,
+    target: String,
+    provider_id: String,
+    base_url: String,
+    model: String,
+    credentials: BTreeMap<String, String>,
+) -> Result<crate::diagnosis::DiagnosisReport, String> {
+    let library = state.library.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let report = crate::diagnosis::diagnose_external_provider_blocking(
+            Some(&library),
+            crate::diagnosis::DiagnoseInput {
+                target: target.clone(),
+                provider_id: provider_id.clone(),
+                base_url: base_url.clone(),
+                model: model.clone(),
+                credentials: credentials.clone(),
+            },
+        )?;
+        // 通过才签发票据；票据绑定「解析后」的地址/模型/凭据摘要，
+        // 提交端按同一解析语义重算比对。
+        if report.status == "passed" {
+            let capability_name = if target == "analysis" {
+                "analysis"
+            } else {
+                "transcription"
+            };
+            let resolved = provider_catalog::resolve_config(
+                capability_name,
+                &provider_id,
+                &base_url,
+                &model,
+            )
+            .map_err(|error| error.to_frontend())?;
+            let ticket_credentials = if credentials.is_empty() {
+                crate::diagnosis::resolve_saved_credentials(
+                    &library,
+                    capability_name,
+                    &provider_id,
+                )?
+            } else {
+                credentials
+            };
+            let ticket = crate::state::issue_verification_ticket(
+                &target,
+                &resolved.provider_id,
+                &resolved.base_url,
+                &resolved.model,
+                &ticket_credentials,
+            );
+            return Ok(crate::diagnosis::DiagnosisReport {
+                verification_token: Some(ticket),
+                ..report
+            });
+        }
+        Ok(report)
+    })
+    .await
+    .map_err(|_| "诊断后台任务异常，请重试".to_owned())?
+}
+
+/// 保存并验证的提交参数。
+/// camelCase：Tauri 对「结构体参数」不做参数名转换（只对顶层命令参数转），
+/// 前端传 providerId 时必须让 serde 按 camelCase 找字段，否则报
+/// missing field `provider_id`。
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveAndVerifyArgs {
+    pub target: String,
+    pub provider_id: String,
+    pub base_url: String,
+    pub model: String,
+    pub credentials: BTreeMap<String, String>,
+    pub privacy_consent_at: Option<String>,
+    pub audio_upload_consent_at: Option<String>,
+    pub enabled: bool,
+    pub verification_token: String,
+}
+
+/// 保存并验证：先核销一次性票据（草稿已通过诊断且指纹未变），通过才提交。
+/// 验证失败或票据无效时，原保存配置完全不变。
+#[tauri::command]
+pub async fn save_and_verify_provider(
+    state: State<'_, AppState>,
+    args: SaveAndVerifyArgs,
+) -> Result<crate::types::SaveAndVerifyOutcome, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || save_and_verify_provider_blocking(&state, args))
+        .await
+        .map_err(|_| "保存后台任务异常，请重试".to_owned())?
+}
+
+fn save_and_verify_provider_blocking(
+    state: &AppState,
+    args: SaveAndVerifyArgs,
+) -> Result<crate::types::SaveAndVerifyOutcome, String> {
+    let capability_name = match args.target.as_str() {
+        "analysis" => "analysis",
+        "transcription" => "transcription",
+        _ => return Err("凭据目标无效".to_owned()),
+    };
+    let repository = state.library.repository();
+    // 1. 解析实际凭据（与诊断端同一语义：空表回退已保存且服务商一致）。
+    let credentials = if args.credentials.is_empty() {
+        crate::diagnosis::resolve_saved_credentials(
+            &state.library,
+            capability_name,
+            &args.provider_id,
+        )?
+    } else {
+        if !credentials_are_complete(&args.provider_id, Some(&args.credentials)) {
+            return Err("请完整填写该服务商要求的凭据".to_owned());
+        }
+        args.credentials
+    };
+    // 2. 规范化 provider/base_url/model（与诊断时一致）。
+    let resolved = provider_catalog::resolve_config(
+        capability_name,
+        &args.provider_id,
+        &args.base_url,
+        &args.model,
+    )
+    .map_err(|error| error.to_frontend())?;
+    // 3. 票据校验（在任何写之前——失败零副作用）。
+    if !crate::state::consume_verification_ticket(
+        &args.verification_token,
+        &args.target,
+        &resolved.provider_id,
+        &resolved.base_url,
+        &resolved.model,
+        &credentials,
+    ) {
+        return Err("验证结果已失效（配置已变化或超过有效期），请重新验证后再保存".to_owned());
+    }
+    // 4. 读旧值（回滚用）。
+    let old_settings = state
+        .library
+        .repository()
+        .external_ai_settings(false, false)
+        .map_err(|error| error.to_frontend())?;
+    let (old_provider, old_credentials) = if capability_name == "analysis" {
+        (
+            old_settings.analysis_provider.clone(),
+            get_analysis_credentials().map_err(|error| error.to_frontend())?,
+        )
+    } else {
+        (
+            old_settings.transcription_provider.clone(),
+            get_asr_credentials().map_err(|error| error.to_frontend())?,
+        )
+    };
+    let credentials_from_env = if capability_name == "analysis" {
+        crate::external_ai_gate::analysis_credentials_from_env()
+    } else {
+        crate::external_ai_gate::transcription_credentials_from_env()
+    };
+    // 5. 写凭据（失败 → 尚无任何落盘，直接返回）。
+    let set_result = if capability_name == "analysis" {
+        set_analysis_credentials(&resolved.provider_id, credentials.clone())
+    } else {
+        set_transcription_credentials(&resolved.provider_id, credentials.clone())
+    };
+    if let Err(error) = set_result {
+        return Err(error.to_frontend());
+    }
+    // 6. DB 单事务：settings + revision + health。
+    let now = chrono::Utc::now().to_rfc3339();
+    let next_settings = old_settings_with_draft(
+        state,
+        &args.target,
+        &resolved,
+        args.privacy_consent_at.clone(),
+        args.audio_upload_consent_at.clone(),
+        args.enabled,
+    )?;
+    // 保持另一个槽位现状（draft 只改本槽位字段）。
+    // 快照的修订号必须等于事务内 bump 后的值（当前值 + 1），
+    // 否则指纹永不相配、「已验证」不可达。
+    let next_revision = repository
+        .credential_revision(&args.target)
+        .map_err(|error| error.to_frontend())?
+        + 1;
+    let health = crate::types::ProviderHealthSnapshot {
+        target: args.target.clone(),
+        provider_id: resolved.provider_id.clone(),
+        base_url: resolved.base_url.clone(),
+        model: resolved.model.clone(),
+        credential_revision: next_revision,
+        catalog_version: provider_catalog_version(),
+        stage: "ok".to_owned(),
+        status: "passed".to_owned(),
+        error_code: None,
+        verified_at: now,
+    };
+    let bump = Some(args.target.as_str());
+    match repository.commit_external_provider(&next_settings, true, true, bump, Some(&health)) {
+        Ok(settings) => {
+            let saved_health = repository
+                .provider_health(&args.target)
+                .map_err(|error| error.to_frontend())?
+                .ok_or_else(|| "健康快照写入失败".to_owned())?;
+            Ok(crate::types::SaveAndVerifyOutcome {
+                settings,
+                saved: vec!["credentials".to_owned(), "settings".to_owned(), "health".to_owned()],
+                rolled_back: Vec::new(),
+                partial: false,
+                health: saved_health,
+            })
+        }
+        Err(db_error) => {
+            // DB 失败：Keychain 已写新凭据——尽力回滚。
+            let rollback = if credentials_from_env {
+                // env 命中：只删 Keychain 条目，env 语义继续生效；
+                // 不走 clear_*_credentials（那会把本进程 env Key 静默禁用）。
+                crate::external_ai_gate::rollback_delete_keychain_entry(&args.target)
+            } else {
+                match (&old_provider, &old_credentials) {
+                    (provider, Some(credentials)) if provider == &resolved.provider_id => {
+                        if capability_name == "analysis" {
+                            set_analysis_credentials(provider, credentials.clone())
+                        } else {
+                            set_transcription_credentials(provider, credentials.clone())
+                        }
+                    }
+                    _ => if capability_name == "analysis" {
+                        clear_analysis_credentials()
+                    } else {
+                        clear_transcription_credentials()
+                    },
+                }
+            };
+            let rolled_back = match rollback {
+                Ok(()) => vec!["credentials".to_owned()],
+                Err(_) => Vec::new(),
+            };
+            // DB 事务自身原子：失败时 settings/revision/health 全部未写，
+            // 因此「新 provider + 旧 Key」的静默状态不可能出现；
+            // Keychain 回滚也完成后返回明确错误。
+            let mut error_message = db_error.to_frontend();
+            if rolled_back.is_empty() {
+                error_message.push_str("；凭据回滚未完成，请到设置页核对当前保存状态");
+            }
+            Err(error_message)
+        }
+    }
+}
+
+/// 以旧设置为基础，仅覆盖目标槽位的 provider/base_url/model 与同意/启用。
+fn old_settings_with_draft(
+    state: &AppState,
+    target: &str,
+    resolved: &provider_catalog::ResolvedProviderConfig,
+    privacy_consent_at: Option<String>,
+    audio_upload_consent_at: Option<String>,
+    enabled: bool,
+) -> Result<crate::types::ExternalAiSettings, String> {
+    let mut settings = state
+        .library
+        .repository()
+        .external_ai_settings(false, false)
+        .map_err(|error| error.to_frontend())?;
+    if target == "analysis" {
+        settings.analysis_provider = resolved.provider_id.clone();
+        settings.base_url = resolved.base_url.clone();
+        settings.model = resolved.model.clone();
+        if let Some(consent) = privacy_consent_at {
+            settings.privacy_consent_at = Some(consent);
+        }
+        settings.enabled = enabled;
+    } else {
+        settings.transcription_provider = resolved.provider_id.clone();
+        settings.transcription_base_url = resolved.base_url.clone();
+        settings.transcription_model = resolved.model.clone();
+        if let Some(consent) = audio_upload_consent_at {
+            settings.audio_upload_consent_at = Some(consent);
+        }
+    }
+    Ok(settings)
+}
+
+fn provider_catalog_version() -> u32 {
+    crate::provider_catalog::provider_catalog().version
+}
+
+/// 验证当前已保存配置（不写凭据、不改设置）：结果写入健康快照
+/// （含失败），前端按指纹比对决定显示「已验证」还是「验证失败」。
+#[tauri::command]
+pub async fn verify_saved_provider(
+    state: State<'_, AppState>,
+    target: String,
+) -> Result<crate::diagnosis::DiagnosisReport, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || verify_saved_provider_blocking(&state, &target))
+        .await
+        .map_err(|_| "验证后台任务异常，请重试".to_owned())?
+}
+
+fn verify_saved_provider_blocking(
+    state: &AppState,
+    target: &str,
+) -> Result<crate::diagnosis::DiagnosisReport, String> {
+    let capability_name = match target {
+        "analysis" => "analysis",
+        "transcription" => "transcription",
+        _ => return Err("凭据目标无效".to_owned()),
+    };
+    let repository = state.library.repository();
+    let settings = repository
+        .external_ai_settings(false, false)
+        .map_err(|error| error.to_frontend())?;
+    let (provider_id, base_url, model) = if capability_name == "analysis" {
+        (
+            settings.analysis_provider.clone(),
+            settings.base_url.clone(),
+            settings.model.clone(),
+        )
+    } else {
+        (
+            settings.transcription_provider.clone(),
+            settings.transcription_base_url.clone(),
+            settings.transcription_model.clone(),
+        )
+    };
+    if provider_id.is_empty() || provider_id == "none" {
+        return Err("尚未配置该槽位的服务商".to_owned());
+    }
+    // 凭据回退路径（空凭据表 → 已保存凭据，要求服务商一致）。
+    let report = crate::diagnosis::diagnose_external_provider_blocking(
+        Some(&state.library),
+        crate::diagnosis::DiagnoseInput {
+            target: target.to_owned(),
+            provider_id: provider_id.clone(),
+            base_url: base_url.clone(),
+            model: model.clone(),
+            credentials: BTreeMap::new(),
+        },
+    )?;
+    // 结果（含失败）写入健康快照：重启后用户仍能看到最后一次验证结论。
+    let revision = repository
+        .credential_revision(target)
+        .map_err(|error| error.to_frontend())?;
+    repository
+        .save_provider_health(&crate::types::ProviderHealthSnapshot {
+            target: target.to_owned(),
+            provider_id: provider_id.clone(),
+            base_url: base_url.clone(),
+            model: model.clone(),
+            credential_revision: revision,
+            catalog_version: provider_catalog_version(),
+            stage: report.stage.as_str().to_owned(),
+            status: report.status.clone(),
+            error_code: report.error_code.clone(),
+            verified_at: chrono::Utc::now().to_rfc3339(),
+        })
+        .map_err(|error| error.to_frontend())?;
+    Ok(report)
+}
+
+/// 前端推导六态所需：健康快照（可能不存在，前端区分「无快照」）+ 修订号。
+#[tauri::command]
+pub fn get_provider_health_status(
+    state: State<AppState>,
+    target: String,
+) -> Result<Option<crate::types::ProviderHealthSnapshot>, String> {
+    state
+        .library
+        .repository()
+        .provider_health(&target)
+        .map_err(|error| error.to_frontend())
+}
+
+/// 凭据修订号：前端用于与快照比对判定「需重新验证」。
+#[tauri::command]
+pub fn get_credential_revision(state: State<AppState>, target: String) -> Result<i64, String> {
+    state
+        .library
+        .repository()
+        .credential_revision(&target)
         .map_err(|error| error.to_frontend())
 }
 
@@ -2863,6 +3444,144 @@ pub(crate) fn list_remote_models_blocking(
         .into_json()
         .map_err(|error| format!("模型列表响应无效：{error}"))?;
     parse_remote_models(&value)
+}
+
+/// 用当前表单或已保存凭据拉取服务商模型列表。
+///
+/// 内置服务商只允许目录中的固定地址；自定义接口仍走 SSRF 校验。转写目标只
+/// 返回像 ASR 的模型，避免把聊天模型误选成转写模型。
+#[tauri::command]
+pub async fn list_external_models(
+    state: State<'_, AppState>,
+    target: String,
+    provider_id: String,
+    base_url: String,
+    api_key: Option<String>,
+) -> Result<RemoteModelList, String> {
+    let library = state.library.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        list_external_models_blocking(&library, &target, &provider_id, &base_url, api_key)
+    })
+    .await
+    .map_err(|_| "拉取模型列表后台任务异常，请重试".to_owned())?
+}
+
+pub(crate) fn list_external_models_blocking(
+    library: &ManagedLibrary,
+    target: &str,
+    provider_id: &str,
+    base_url: &str,
+    api_key: Option<String>,
+) -> Result<RemoteModelList, String> {
+    let capability_name = match target {
+        "analysis" => "analysis",
+        "transcription" => "transcription",
+        _ => return Err("模型目标无效".to_owned()),
+    };
+    let capability = provider_catalog::capability(provider_id, capability_name)
+        .ok_or_else(|| "该服务商不支持所选能力".to_owned())?;
+    if !capability.supports_model_list {
+        return Err("该服务商不提供模型列表接口，请使用内置推荐模型或手动填写模型 ID".to_owned());
+    }
+    let resolved_base_url =
+        provider_catalog::resolve_base_url(capability_name, provider_id, base_url)
+            .map_err(|error| error.to_frontend())?;
+    let key = match api_key.filter(|value| !value.trim().is_empty()) {
+        Some(value) => value.trim().to_owned(),
+        None => {
+            let settings = library
+                .repository()
+                .external_ai_settings(false, false)
+                .map_err(|error| error.to_frontend())?;
+            let saved_provider = if capability_name == "analysis" {
+                settings.analysis_provider
+            } else {
+                settings.transcription_provider
+            };
+            if saved_provider != provider_id {
+                return Err("请先保存该服务商的 API Key，再拉取模型列表".to_owned());
+            }
+            let credentials = if capability_name == "analysis" {
+                get_analysis_credentials()
+            } else {
+                get_asr_credentials()
+            }
+            .map_err(|error| error.to_frontend())?;
+            credentials
+                .and_then(|credentials| credentials.get("apiKey").cloned())
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| "请先保存该服务商的 API Key，再拉取模型列表".to_owned())?
+        }
+    };
+    let mut models = list_remote_models_blocking(resolved_base_url, key)?;
+    if capability_name == "transcription" {
+        models.retain(|model| looks_like_asr_model(model));
+        if models.is_empty() {
+            return Err(
+                "服务商返回了模型，但没有可识别的语音转写模型；请手动填写模型 ID".to_owned(),
+            );
+        }
+        return Ok(RemoteModelList {
+            chat_candidates: models,
+            other_models: Vec::new(),
+            all_unclassified: false,
+        });
+    }
+    // 分析方向：黑名单排除法分组。全部被排除时降级为全量 + 标记，
+    // 不让用户面对空列表。
+    let chat_candidates: Vec<String> = models
+        .iter()
+        .filter(|model| !looks_like_non_chat_model(model))
+        .cloned()
+        .collect();
+    if chat_candidates.is_empty() {
+        return Ok(RemoteModelList {
+            chat_candidates: models,
+            other_models: Vec::new(),
+            all_unclassified: true,
+        });
+    }
+    let other_models: Vec<String> = models
+        .into_iter()
+        .filter(|model| looks_like_non_chat_model(model))
+        .collect();
+    Ok(RemoteModelList {
+        chat_candidates,
+        other_models,
+        all_unclassified: false,
+    })
+}
+
+fn looks_like_asr_model(model: &str) -> bool {
+    let lower = model.to_ascii_lowercase();
+    ["asr", "whisper", "transcrib", "paraformer", "sensevoice", "speech"]
+        .iter()
+        .any(|marker| lower.contains(marker))
+}
+
+/// 疑似非文本对话模型（embedding/rerank/ASR/TTS/视觉/审计等）。
+/// 排除法：黑名单命中即进「其他模型」折叠组，不作分析推荐；
+/// 名单外的模型（可能适用）保持可见。已知会话模型
+/// （qwen-max/plus、glm-4-flash、deepseek-chat 等）均不命中。
+fn looks_like_non_chat_model(model: &str) -> bool {
+    let lower = model.to_ascii_lowercase();
+    [
+        "embedding", "bge", "rerank", "tts", "sambert", "cosyvoice", "speech", "asr", "whisper",
+        "transcrib", "paraformer", "sensevoice", "omni", "audio", "vl", "vision", "image",
+        "dall-e", "moderation", "guard", "clip", "babbage", "davinci", "4v",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker))
+}
+
+/// 模型列表的分组结果：分析首选文本对话候选，其余折叠为「其他模型」；
+/// 全部被排除时降级为全量展示（标记 all_unclassified，前端提示适用性未知）。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteModelList {
+    pub chat_candidates: Vec<String>,
+    pub other_models: Vec<String>,
+    pub all_unclassified: bool,
 }
 
 /// 从 OpenAI 兼容的 /models 响应里取模型 id 列表：标准 `data[].id`，
@@ -3886,6 +4605,127 @@ mod tests {
         (format!("http://{address}"), handle)
     }
 
+    #[test]
+    fn transcription_model_filter_keeps_asr_models_only() {
+        assert!(looks_like_asr_model("whisper-1"));
+        assert!(looks_like_asr_model("gpt-4o-transcribe"));
+        assert!(looks_like_asr_model("qwen3-asr-flash"));
+        assert!(looks_like_asr_model("speech-to-text"));
+        assert!(!looks_like_asr_model("gpt-4.1-mini"));
+        assert!(!looks_like_asr_model("deepseek-chat"));
+    }
+
+    #[test]
+    fn providers_without_model_endpoint_fail_before_network_or_key_lookup() {
+        let library = scratch_library("models-unsupported");
+        let error = list_external_models_blocking(
+            &library,
+            "transcription",
+            "tencent",
+            "https://asr.cloud.tencent.com/asr/flash/v1",
+            None,
+        )
+        .unwrap_err();
+        assert!(error.contains("不提供模型列表接口"), "{error}");
+        drop(library);
+    }
+
+    #[test]
+    fn custom_analysis_model_list_does_not_require_a_preselected_model() {
+        let library = scratch_library("models-custom-analysis");
+        let (base_url, server) = serve_one_response(
+            r#"{"data":[{"id":"deepseek-chat"},{"id":"deepseek-reasoner"}]}"#,
+        );
+        let models = list_external_models_blocking(
+            &library,
+            "analysis",
+            provider_catalog::CUSTOM_PROVIDER_ID,
+            &base_url,
+            Some("form-key".to_owned()),
+        )
+        .unwrap();
+
+        assert_eq!(
+            models.chat_candidates,
+            vec!["deepseek-chat".to_owned(), "deepseek-reasoner".to_owned()]
+        );
+        assert!(models.other_models.is_empty());
+        assert!(!models.all_unclassified);
+        let request = server.join().unwrap();
+        assert!(request.starts_with("GET /models "), "{request}");
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("authorization: bearer form-key"),
+            "{request}"
+        );
+        drop(library);
+    }
+
+    #[test]
+    fn analysis_model_list_partitions_chat_from_non_chat_models() {
+        let library = scratch_library("models-analysis-filter");
+        let (base_url, server) = serve_one_response(
+            r#"{"data":[{"id":"qwen-max"},{"id":"qwen-turbo"},{"id":"text-embedding-v3"},{"id":"BAAI/bge-reranker-v2-m3"},{"id":"qwen3-asr-flash"},{"id":"qwen2.5-omni"},{"id":"qwen-tts"},{"id":"glm-4v"},{"id":"qwen-vl-plus"},{"id":"deepseek-chat"}]}"#,
+        );
+        let models = list_external_models_blocking(
+            &library,
+            "analysis",
+            provider_catalog::CUSTOM_PROVIDER_ID,
+            &base_url,
+            Some("form-key".to_owned()),
+        )
+        .unwrap();
+        server.join().unwrap();
+
+        // 已知文本对话模型全部留在候选，embedding/rerank/ASR/TTS/omni/视觉
+        // （含 glm-4v、qwen-vl）进折叠组。
+        assert_eq!(
+            models.chat_candidates,
+            vec!["deepseek-chat".to_owned(), "qwen-max".to_owned(), "qwen-turbo".to_owned()]
+        );
+        assert_eq!(
+            models.other_models,
+            vec![
+                "BAAI/bge-reranker-v2-m3".to_owned(),
+                "glm-4v".to_owned(),
+                "qwen-tts".to_owned(),
+                "qwen-vl-plus".to_owned(),
+                "qwen2.5-omni".to_owned(),
+                "qwen3-asr-flash".to_owned(),
+                "text-embedding-v3".to_owned(),
+            ]
+        );
+        assert!(!models.all_unclassified);
+        drop(library);
+    }
+
+    #[test]
+    fn analysis_model_list_degrades_to_full_list_when_everything_is_filtered() {
+        let library = scratch_library("models-analysis-degraded");
+        let (base_url, server) = serve_one_response(
+            r#"{"data":[{"id":"text-embedding-v3"},{"id":"qwen-tts"}]}"#,
+        );
+        let models = list_external_models_blocking(
+            &library,
+            "analysis",
+            provider_catalog::CUSTOM_PROVIDER_ID,
+            &base_url,
+            Some("form-key".to_owned()),
+        )
+        .unwrap();
+        server.join().unwrap();
+
+        // 全部被排除：降级为全量 + 标记（前端提示适用性未知），不是空列表。
+        assert_eq!(
+            models.chat_candidates,
+            vec!["qwen-tts".to_owned(), "text-embedding-v3".to_owned()]
+        );
+        assert!(models.other_models.is_empty());
+        assert!(models.all_unclassified);
+        drop(library);
+    }
+
     fn prepare_record_with_transcript(
         library: &ManagedLibrary,
         name: &str,
@@ -4274,7 +5114,7 @@ mod tests {
             )
             .unwrap();
         let mut settings = repository.external_ai_settings(false, true).unwrap();
-        settings.processing_mode = "external".to_owned();
+        settings.transcription_mode = "external".to_owned();
         settings.audio_upload_consent_at = Some("2026-09-26T00:00:00Z".to_owned());
         repository
             .update_external_ai_settings(&settings, false, true)
@@ -4326,7 +5166,7 @@ mod tests {
         // ASR 通道配齐（同意 + Key + 默认地址模型），理解整理未配置：
         // 导入必须继续按通道走第三方转写，不得被「文本发送说明」类错误拦死。
         let mut settings = repository.external_ai_settings(false, true).unwrap();
-        settings.processing_mode = "external".to_owned();
+        settings.transcription_mode = "external".to_owned();
         settings.audio_upload_consent_at = Some("2026-09-26T00:00:00Z".to_owned());
         repository
             .update_external_ai_settings(&settings, false, true)
@@ -4394,10 +5234,18 @@ mod tests {
         let (record, _) = prepare_record_with_transcript(&library, "success");
         let repository = library.repository();
         let mut settings = repository.external_ai_settings(false, false).unwrap();
-        settings.processing_mode = "external".to_owned();
-        settings.enabled = true;
+        settings.analysis_provider = crate::provider_catalog::CUSTOM_PROVIDER_ID.to_owned();
+        settings.transcription_mode = "external".to_owned();
+        settings.enabled = false;
         settings.base_url = base_url;
         settings.model = "test-model".to_owned();
+        settings.privacy_consent_at = None;
+        repository
+            .update_external_ai_settings(&settings, false, false)
+            .unwrap();
+
+        let mut settings = repository.external_ai_settings(false, false).unwrap();
+        settings.enabled = true;
         settings.privacy_consent_at = Some("2026-09-25T00:00:00Z".to_owned());
         repository
             .update_external_ai_settings(&settings, false, false)
@@ -4735,5 +5583,143 @@ mod tests {
             Some("embedded")
         );
         let _ = std::fs::remove_dir_all(library.root());
+    }
+
+    // ---- Phase 0：保存并验证 / 草稿诊断的副作用边界 ----
+
+    fn save_and_verify_args(token: &str) -> SaveAndVerifyArgs {
+        SaveAndVerifyArgs {
+            target: "analysis".to_owned(),
+            provider_id: "dashscope".to_owned(),
+            base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1".to_owned(),
+            model: "qwen-turbo".to_owned(),
+            credentials: BTreeMap::from([("apiKey".to_owned(), "test-key-fake".to_owned())]),
+            privacy_consent_at: Some("2026-11-11T00:00:00Z".to_owned()),
+            audio_upload_consent_at: None,
+            enabled: true,
+            verification_token: token.to_owned(),
+        }
+    }
+
+    fn snapshot_provider_keys(library: &ManagedLibrary) -> Vec<(String, Option<String>)> {
+        let repository = library.repository();
+        [
+            "external_ai_provider",
+            "external_ai_base_url",
+            "external_ai_model",
+            "external_ai_enabled",
+            "external_ai_privacy_consent_at",
+            "external_ai_credential_revision.analysis",
+        ]
+        .iter()
+        .map(|key| ((*key).to_owned(), repository.setting_value(key).unwrap()))
+        .collect()
+    }
+
+    #[test]
+    fn save_and_verify_rejects_invalid_ticket_without_any_side_effects() {
+        let library = scratch_library("save_verify_no_ticket");
+        let state = crate::state::AppState::initialize(library.root().to_path_buf()).unwrap();
+        let before = snapshot_provider_keys(&state.library);
+
+        let error = save_and_verify_provider_blocking(&state, save_and_verify_args("bogus-token"))
+            .unwrap_err();
+        assert!(error.contains("重新验证"), "拒绝话术要引导重新测试：{error}");
+
+        let after = snapshot_provider_keys(&state.library);
+        assert_eq!(before, after, "票据无效时不得有任何落盘变化");
+        let _ = std::fs::remove_dir_all(state.library.root());
+    }
+
+    #[test]
+    fn save_and_verify_args_deserialize_from_camel_case_frontend_payload() {
+        // 前端（tauri.ts saveAndVerifyProvider）发的是 camelCase 载荷。
+        // Tauri 只对顶层命令参数做 snake→camel 转换，结构体参数不会——
+        // 少了 rename_all 就会在真机上报 missing field `provider_id`
+        // （UI mock 测试抓不到这类契约错误，故在此锁定）。
+        // 测试用假凭据：仅供断言的占位值，不是真密钥。
+        let draft_credentials = BTreeMap::from([("apiKey".to_owned(), "mock-draft-value".to_owned())]);
+        let payload = serde_json::json!({
+            "target": "analysis",
+            "providerId": "dashscope",
+            "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "model": "qwen-turbo",
+            "credentials": draft_credentials,
+            "privacyConsentAt": "2026-11-11T00:00:00Z",
+            "audioUploadConsentAt": null,
+            "enabled": true,
+            "verificationToken": "test-token",
+        });
+        let args: SaveAndVerifyArgs = serde_json::from_value(payload).unwrap();
+        assert_eq!(args.target, "analysis");
+        assert_eq!(args.provider_id, "dashscope");
+        assert_eq!(args.model, "qwen-turbo");
+        assert_eq!(
+            args.credentials.get("apiKey").map(String::as_str),
+            Some("mock-draft-value")
+        );
+        assert_eq!(args.verification_token, "test-token");
+        assert!(args.enabled);
+    }
+
+    #[test]
+    fn draft_diagnosis_with_explicit_credentials_never_touches_database() {
+        let library = scratch_library("diagnose_no_db");
+        let state = crate::state::AppState::initialize(library.root().to_path_buf()).unwrap();
+        state
+            .library
+            .repository()
+            .set_setting_value("external_ai_provider", "zhipu")
+            .unwrap();
+        state
+            .library
+            .repository()
+            .set_setting_value("external_ai_model", "glm-4-flash")
+            .unwrap();
+        let before = snapshot_provider_keys(&state.library);
+
+        // 起 fixture：诊断应通过，且全程不写任何设置。
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            let body = serde_json::json!({
+                "choices": [{"message": {"content": "{\"ok\":true}"}}]
+            })
+            .to_string();
+            let (mut stream, _) = listener.accept().unwrap();
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 65_536];
+            loop {
+                match stream.read(&mut buffer) {
+                    Ok(0) | Err(_) => break,
+                    Ok(read) => request.extend_from_slice(&buffer[..read]),
+                }
+            }
+            let _ = request;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(response.as_bytes());
+        });
+        let report = crate::diagnosis::diagnose_external_provider_blocking(
+            Some(&state.library),
+            crate::diagnosis::DiagnoseInput {
+                target: "analysis".to_owned(),
+                provider_id: "custom".to_owned(),
+                base_url: format!("http://{address}"),
+                model: "test-model".to_owned(),
+                credentials: BTreeMap::from([("apiKey".to_owned(), "test-key-fake".to_owned())]),
+            },
+        )
+        .unwrap();
+        handle.join().unwrap();
+        assert_eq!(report.status, "passed");
+
+        let after = snapshot_provider_keys(&state.library);
+        assert_eq!(before, after, "草稿诊断不得写数据库");
+        let _ = std::fs::remove_dir_all(state.library.root());
     }
 }

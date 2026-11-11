@@ -157,6 +157,73 @@ pub fn plan_chunks(samples: &[f32]) -> Vec<AudioChunk> {
         .collect()
 }
 
+/// Plans third-party ASR chunks within a provider's duration and file-size limits.
+///
+/// Timestamped providers get a short overlap on each side; the accept window
+/// remains disjoint so callers can deduplicate repeated boundary text. Pure-text
+/// providers get no overlap because duplicate text has no timestamp to reconcile.
+pub fn plan_provider_chunks(
+    samples: &[f32],
+    max_duration_ms: i64,
+    max_file_bytes: u64,
+    overlap_ms: i64,
+    returns_timestamps: bool,
+) -> Vec<AudioChunk> {
+    let duration_ms = samples.len() as i64 * 1_000 / SAMPLE_RATE as i64;
+    let bytes_limited_samples = max_file_bytes.saturating_sub(44) as usize / 2;
+    let duration_limited_samples =
+        ((max_duration_ms.max(1) as u128 * SAMPLE_RATE as u128) / 1_000) as usize;
+    let hard_limit = bytes_limited_samples
+        .min(duration_limited_samples)
+        .max(SAMPLE_RATE);
+    if samples.len() <= hard_limit {
+        return vec![AudioChunk {
+            sample_start: 0,
+            sample_end: samples.len(),
+            accept_start_ms: 0,
+            accept_end_ms: duration_ms,
+        }];
+    }
+    let overlap = if returns_timestamps {
+        ((overlap_ms.max(0) as usize * SAMPLE_RATE) / 1_000).min(hard_limit / 4)
+    } else {
+        0
+    };
+    let max_core = hard_limit.saturating_sub(overlap.saturating_mul(2)).max(1);
+    let mut boundaries = vec![0usize];
+    let mut start = 0usize;
+    while samples.len().saturating_sub(start) > hard_limit {
+        let latest = (start + max_core).min(samples.len());
+        let earliest = (start + (max_core / 2).max(SAMPLE_RATE)).min(latest);
+        let target = start + max_core * 4 / 5;
+        let boundary = quiet_boundaries(samples, earliest, latest)
+            .into_iter()
+            .min_by_key(|candidate| candidate.abs_diff(target))
+            .unwrap_or(latest);
+        if boundary <= start {
+            boundaries.push(latest);
+            start = latest;
+        } else {
+            boundaries.push(boundary);
+            start = boundary;
+        }
+    }
+    boundaries.push(samples.len());
+    boundaries
+        .windows(2)
+        .map(|window| {
+            let core_start = window[0];
+            let core_end = window[1];
+            AudioChunk {
+                sample_start: core_start.saturating_sub(overlap),
+                sample_end: (core_end + overlap).min(samples.len()),
+                accept_start_ms: core_start as i64 * 1_000 / SAMPLE_RATE as i64,
+                accept_end_ms: core_end as i64 * 1_000 / SAMPLE_RATE as i64,
+            }
+        })
+        .collect()
+}
+
 fn core_boundaries(samples: &[f32]) -> Vec<usize> {
     let mut boundaries = vec![0];
     let mut start = 0usize;
@@ -392,6 +459,40 @@ mod tests {
         assert!(chunks
             .iter()
             .all(|chunk| chunk.accept_end_ms - chunk.accept_start_ms <= 60_000));
+    }
+
+    #[test]
+    fn provider_chunks_respect_short_duration_limit_without_overlap_for_text() {
+        let samples = vec![0.02; 75 * SAMPLE_RATE];
+        let chunks = plan_provider_chunks(&samples, 30_000, 25 * 1024 * 1024, 2_000, false);
+        assert!(chunks.len() >= 3);
+        assert!(chunks.iter().all(|chunk| {
+            (chunk.sample_end - chunk.sample_start) <= 30 * SAMPLE_RATE
+                && chunk.sample_start == chunk.accept_start_ms as usize * SAMPLE_RATE / 1_000
+        }));
+    }
+
+    #[test]
+    fn provider_chunks_add_overlap_only_for_timestamped_suppliers() {
+        let samples = vec![0.02; 80 * SAMPLE_RATE];
+        let chunks = plan_provider_chunks(&samples, 30_000, 25 * 1024 * 1024, 2_000, true);
+        assert!(chunks.windows(2).all(|pair| {
+            let left = &pair[0];
+            let right = &pair[1];
+            left.accept_end_ms == right.accept_start_ms
+                && right.sample_start
+                    < right.accept_start_ms as usize * SAMPLE_RATE / 1_000
+        }));
+    }
+
+    #[test]
+    fn provider_chunks_are_capped_by_bytes() {
+        let samples = vec![0.02; 30 * SAMPLE_RATE];
+        let chunks = plan_provider_chunks(&samples, 10 * 60_000, 500_000, 2_000, true);
+        assert!(chunks.len() > 1);
+        assert!(chunks
+            .iter()
+            .all(|chunk| (chunk.sample_end - chunk.sample_start) * 2 <= 500_000));
     }
 
     #[test]

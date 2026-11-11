@@ -8,6 +8,7 @@ pub mod db;
 pub mod degeneration;
 pub mod disk_space;
 pub mod dock;
+pub mod diagnosis;
 pub mod document;
 pub mod dual_recording;
 pub mod error;
@@ -22,6 +23,7 @@ pub mod live_transcript;
 pub mod memory;
 pub mod memory_index;
 pub mod minutes;
+pub mod provider_catalog;
 pub mod record_commands;
 pub mod recording;
 pub mod state;
@@ -150,14 +152,26 @@ pub fn run() {
             commands::retranscribe_record,
             commands::analyze_record,
             commands::latest_analysis,
+            commands::get_provider_catalog,
             commands::get_external_ai_settings,
             commands::update_external_ai_settings,
             commands::set_external_ai_api_key,
             commands::clear_external_ai_api_key,
             commands::set_external_asr_api_key,
             commands::clear_external_asr_api_key,
+            commands::save_external_credentials,
+            commands::clear_external_credentials,
+            commands::reuse_external_credentials,
+            commands::reveal_external_credentials,
+            commands::list_external_models,
             commands::test_external_ai_connection,
+            commands::test_external_asr_connection,
             commands::list_remote_models,
+            commands::diagnose_external_provider,
+            commands::save_and_verify_provider,
+            commands::verify_saved_provider,
+            commands::get_provider_health_status,
+            commands::get_credential_revision,
             commands::get_local_timeline,
             commands::get_local_growth_graph,
             commands::generate_memory_snapshot,

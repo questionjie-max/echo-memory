@@ -1,6 +1,6 @@
 import { open } from "@tauri-apps/plugin-dialog";
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { SparklesIcon, CheckIcon, XIcon } from "./icons";
+import { useEffect, useRef, useState } from "react";
+import { SparklesIcon } from "./icons";
 import { open as openDirectory } from "@tauri-apps/plugin-dialog";
 import AiModelSettings from "./AiModelSettings";
 import TemplateWizard from "./TemplateWizard";
@@ -34,6 +34,7 @@ import type {
   KnowledgeSettings,
   LocalAiStatus,
   OutputStatus,
+  ProviderCatalog,
   StorageReport,
   TemplateSection,
   TranscriptionEngineStatus,
@@ -42,40 +43,57 @@ import {
   addHotword,
   addInboxWatchFolder,
   cleanupStorage,
-  clearExternalAiApiKey,
-  clearExternalAsrApiKey,
+  clearExternalCredentials,
   clearHfToken,
   createAnalysisTemplate,
   deleteAnalysisTemplate,
+  diagnoseExternalProvider,
   getAppInfo,
   getAudioPreprocessorStatus,
+  getCredentialRevision,
   getExternalAiSettings,
   getInboxStatus,
   getLocalAiStatus,
   getOutputStatus,
+  getProviderCatalog,
+  getProviderHealthStatus,
   getStorageReport,
   getTranscriptCorrectionEnabled,
   getTranscriptionEngineStatus,
+  listExternalModels,
   listAnalysisTemplates,
   listHotwords,
   removeHotword,
   removeInboxWatchFolder,
   resetOnboarding,
+  revealExternalCredentials,
+  reuseExternalCredentials,
   rescanInbox,
+  saveAndVerifyProvider as saveAndVerifyProviderCommand,
+  saveExternalCredentials,
   setAutoExportAnalysis,
-  setExternalAiApiKey,
-  setExternalAsrApiKey,
   setHfToken,
   setInboxUsbDetection,
   setOutputFolder,
   setTranscriptCorrectionEnabled,
   setTranscriptionEngine,
-  testExternalAiConnection,
   updateAnalysisTemplate,
   updateExternalAiSettings,
   updateKnowledgeSettings,
+  verifySavedProvider as verifySavedProviderCommand,
 } from "../lib/tauri";
 import { confirmAction } from "../lib/dialogs";
+import type {
+  DiagnosisReport,
+  ProviderHealthSnapshot,
+} from "../shared/types";
+import type {
+  ProviderCommit,
+  ProviderDiagnoseDraft,
+  ProviderSaveAndVerifyDraft,
+  ProviderTarget,
+} from "./ProviderConnectionForm";
+import type { SaveAndVerifyOutcome } from "../shared/types";
 
 interface Props {
   open: boolean;
@@ -116,6 +134,7 @@ export default function SettingsPanel({ open: visible, onClose, onOpenKnowledge 
   const [tab, setTab] = useState<SettingsTab>("models");
   const [status, setStatus] = useState<LocalAiStatus | null>(null);
   const [external, setExternal] = useState<ExternalAiSettings | null>(null);
+  const [catalog, setCatalog] = useState<ProviderCatalog | null>(null);
   const [preprocessor, setPreprocessor] = useState<AudioPreprocessorStatus | null>(null);
   const [engineStatus, setEngineStatus] = useState<TranscriptionEngineStatus | null>(null);
   const [templates, setTemplates] = useState<AnalysisTemplate[]>([]);
@@ -133,7 +152,14 @@ export default function SettingsPanel({ open: visible, onClose, onOpenKnowledge 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [tabError, setTabError] = useState<string | null>(null);
-  const [testResult, setTestResult] = useState<ReactNode>(null);
+  const [providerHealth, setProviderHealth] = useState<{
+    analysis: ProviderHealthSnapshot | null;
+    transcription: ProviderHealthSnapshot | null;
+  }>({ analysis: null, transcription: null });
+  const [credentialRevisions, setCredentialRevisions] = useState<{
+    analysis: number;
+    transcription: number;
+  }>({ analysis: 0, transcription: 0 });
   const { flash, show } = useSavedFlash();
   const { downloads, start, cancel } = useModelDownloads((settled) => {
     if (settled.phase === "done") void refresh();
@@ -156,20 +182,44 @@ export default function SettingsPanel({ open: visible, onClose, onOpenKnowledge 
   async function refresh() {
     setError("");
     try {
-      const [ai, audio, items, externalSettings, transcriptionEngine] = await Promise.all([
+      const [ai, audio, items, externalSettings, transcriptionEngine, providerCatalog] = await Promise.all([
         getLocalAiStatus(),
         getAudioPreprocessorStatus(),
         listAnalysisTemplates(),
         getExternalAiSettings(),
         getTranscriptionEngineStatus(),
+        getProviderCatalog(),
       ]);
       applyStatus(ai);
       setPreprocessor(audio);
       setTemplates(items);
       applyExternal(externalSettings);
       setEngineStatus(transcriptionEngine);
+      setCatalog(providerCatalog);
+      await refreshProviderHealth();
     } catch (reason) {
       setError(String(reason));
+    }
+  }
+
+  /** 健康快照 + 凭据修订号：六态推导的数据源。 */
+  async function refreshProviderHealth() {
+    try {
+      const [analysisHealth, transcriptionHealth, analysisRevision, transcriptionRevision] =
+        await Promise.all([
+          getProviderHealthStatus("analysis"),
+          getProviderHealthStatus("transcription"),
+          getCredentialRevision("analysis"),
+          getCredentialRevision("transcription"),
+        ]);
+      setProviderHealth({ analysis: analysisHealth, transcription: transcriptionHealth });
+      setCredentialRevisions({
+        analysis: analysisRevision,
+        transcription: transcriptionRevision,
+      });
+    } catch (reason) {
+      // 健康快照读取失败不阻塞设置页：状态条会落在「已配置，未验证」。
+      console.warn("读取第三方验证状态失败", reason);
     }
   }
 
@@ -275,9 +325,12 @@ export default function SettingsPanel({ open: visible, onClose, onOpenKnowledge 
     if (typeof selected === "string") await saveSettings({ whisperModelPath: selected });
   }
 
-  async function saveExternal(patch: Partial<ExternalAiSettings>) {
+  async function saveExternal(
+    patch: Partial<ExternalAiSettings>,
+    notify = true,
+  ): Promise<ExternalAiSettings> {
     const previous = externalRef.current;
-    if (!previous) return;
+    if (!previous) throw new Error("第三方设置尚未加载完成");
     const next = { ...previous, ...patch };
     externalRef.current = next;
     setExternal(next);
@@ -285,46 +338,209 @@ export default function SettingsPanel({ open: visible, onClose, onOpenKnowledge 
       const saved = await updateExternalAiSettings(next);
       externalRef.current = saved;
       setExternal(saved);
-      show("saved", "已保存");
+      if (notify) show("saved", "已保存");
       setError("");
+      return saved;
     } catch (reason) {
       // 校验失败（例如没勾隐私说明就启用）时要退回，不能留下一个假的已启用状态。
       externalRef.current = previous;
       setExternal(previous);
       show("failed", String(reason));
       setError(String(reason));
+      throw reason;
     }
   }
 
-  async function saveExternalKey(key: string) {
-    await report(() => setExternalAiApiKey(key), "API Key 已保存到钥匙串", applyExternal);
+  function normalizeProviderDraft(
+    target: ProviderTarget,
+    draft: Omit<ProviderCommit, "credentials" | "consentAt">,
+  ) {
+    if (!catalog) throw new Error("服务商目录尚未加载");
+    const provider = catalog.providers.find((item) => item.id === draft.providerId);
+    if (!provider) throw new Error("服务商无效");
+    const capability = target === "analysis" ? provider.analysis : provider.transcription;
+    if (!capability) throw new Error("该服务商不支持所选能力");
+    return {
+      providerId: provider.id,
+      baseUrl:
+        provider.id === "custom" ? draft.baseUrl.trim() : capability.baseUrl.trim(),
+      model: draft.model.trim() || capability.recommendedModel,
+    };
   }
 
-  async function removeExternalKey() {
-    if (!(await confirmAction("清除外部 AI API Key？外部 AI 将无法生成记忆快照。"))) return;
-    await report(() => clearExternalAiApiKey(), "API Key 已清除", applyExternal);
+  function providerPatch(
+    target: ProviderTarget,
+    provider: { providerId: string; baseUrl: string; model: string },
+    consentAt: string | null,
+    enabled: boolean,
+  ): Partial<ExternalAiSettings> {
+    if (target === "analysis") {
+      return {
+        analysisProvider: provider.providerId,
+        baseUrl: provider.baseUrl,
+        model: provider.model,
+        privacyConsentAt: consentAt,
+        enabled,
+      };
+    }
+    return {
+      transcriptionMode: "external",
+      transcriptionProvider: provider.providerId,
+      transcriptionBaseUrl: provider.baseUrl,
+      transcriptionModel: provider.model,
+      audioUploadConsentAt: consentAt,
+    };
   }
 
-  async function saveExternalAsrKey(key: string) {
-    await report(() => setExternalAsrApiKey(key), "语音转文字 API Key 已保存到钥匙串", applyExternal);
-  }
-
-  async function removeExternalAsrKey() {
-    if (!(await confirmAction("清除语音转文字 API Key？第三方录音转写将无法执行。"))) return;
-    await report(() => clearExternalAsrApiKey(), "语音转文字 API Key 已清除", applyExternal);
-  }
-
-  async function checkExternal() {
+  async function commitProvider(target: ProviderTarget, draft: ProviderCommit) {
     setBusy(true);
     setError("");
     try {
-      const startedAt = Date.now();
-      await testExternalAiConnection();
-      setTestResult(<><CheckIcon size={12} /> {Date.now() - startedAt}ms</>);
-      await refresh();
+      const previous = externalRef.current;
+      if (!previous) throw new Error("第三方设置尚未加载完成");
+      const next = normalizeProviderDraft(target, draft);
+      const targetChanged =
+        target === "analysis"
+          ? previous.analysisProvider !== next.providerId ||
+            previous.baseUrl !== next.baseUrl ||
+            previous.model !== next.model
+          : previous.transcriptionProvider !== next.providerId ||
+            previous.transcriptionBaseUrl !== next.baseUrl ||
+            previous.transcriptionModel !== next.model;
+
+      if (targetChanged) {
+        await saveExternal(providerPatch(target, next, null, false), false);
+      }
+      await saveExternal(
+        providerPatch(target, next, draft.consentAt, false),
+        false,
+      );
+      if (draft.credentials) {
+        const saved = await saveExternalCredentials(
+          target,
+          next.providerId,
+          draft.credentials,
+        );
+        applyExternal(saved);
+      }
+      if (target === "analysis") {
+        await saveExternal({ enabled: true }, false);
+      }
+      show("saved", "已保存（未验证）");
+      await refreshProviderHealth();
     } catch (reason) {
-      setTestResult(<><XIcon size={12} /> 失败</>);
+      // 仅保存分多步写入，中途失败可能留下部分状态：
+      // 如实重读后端真实状态，让页面显示当前到底保存了什么。
+      await refresh().catch(() => undefined);
+      throw reason;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function clearProviderCredentials(target: ProviderTarget) {
+    const label = target === "analysis" ? "分析" : "转写";
+    if (!(await confirmAction(`清除${label}服务凭据？对应第三方功能将无法执行。`))) return;
+    setBusy(true);
+    setError("");
+    try {
+      const saved = await clearExternalCredentials(target);
+      applyExternal(saved);
+      show("saved", "凭据已清除");
+      await refreshProviderHealth();
+    } catch (reason) {
       setError(String(reason));
+      throw reason;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function reuseProviderCredentials(
+    target: ProviderTarget,
+    draft: Omit<ProviderCommit, "credentials" | "consentAt">,
+  ) {
+    setBusy(true);
+    setError("");
+    try {
+      const previous = externalRef.current;
+      if (!previous) throw new Error("第三方设置尚未加载完成");
+      const next = normalizeProviderDraft(target, draft);
+      const savedProvider =
+        target === "analysis" ? previous.analysisProvider : previous.transcriptionProvider;
+      if (savedProvider !== next.providerId) {
+        await saveExternal(providerPatch(target, next, null, false), false);
+      }
+      const saved = await reuseExternalCredentials(target);
+      applyExternal(saved);
+      show("saved", "凭据已从另一项复制");
+    } catch (reason) {
+      setError(String(reason));
+      throw reason;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** 草稿诊断：不落盘的真实小请求；通过时带一次性验证票据回来。 */
+  async function diagnoseProvider(
+    target: ProviderTarget,
+    draft: ProviderDiagnoseDraft,
+  ): Promise<DiagnosisReport> {
+    return diagnoseExternalProvider({
+      target,
+      providerId: draft.providerId,
+      baseUrl: draft.baseUrl,
+      model: draft.model,
+      credentials: draft.credentials,
+    });
+  }
+
+  /** 保存并验证：先核销票据再提交；成功后刷新健康快照与修订号。 */
+  async function saveAndVerifyProvider(
+    target: ProviderTarget,
+    draft: ProviderSaveAndVerifyDraft,
+  ): Promise<SaveAndVerifyOutcome> {
+    setBusy(true);
+    setError("");
+    try {
+      const outcome = await saveAndVerifyProviderCommand({
+        target,
+        providerId: draft.providerId,
+        baseUrl: draft.baseUrl,
+        model: draft.model,
+        credentials: draft.credentials,
+        privacyConsentAt: target === "analysis" ? draft.consentAt : null,
+        audioUploadConsentAt: target === "transcription" ? draft.consentAt : null,
+        enabled: draft.enabled,
+        verificationToken: draft.verificationToken,
+      });
+      applyExternal(outcome.settings);
+      show("saved", `已保存并验证 · ${outcome.health.model}`);
+      await refreshProviderHealth();
+      return outcome;
+    } catch (reason) {
+      // 错误已在表单内 ErrorNote 就近展示（单一出口），不再重复到页面级。
+      throw reason;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** 验证当前已保存配置（结果写入健康快照，含失败）。 */
+  async function verifySavedProvider(target: ProviderTarget): Promise<DiagnosisReport> {
+    setBusy(true);
+    setError("");
+    try {
+      const report = await verifySavedProviderCommand(target);
+      await refreshProviderHealth();
+      if (report.status === "passed") {
+        show("saved", "验证通过");
+      }
+      return report;
+    } catch (reason) {
+      // 错误已在表单内 ErrorNote 就近展示（单一出口），不再重复到页面级。
+      throw reason;
     } finally {
       setBusy(false);
     }
@@ -407,9 +623,9 @@ export default function SettingsPanel({ open: visible, onClose, onOpenKnowledge 
               preprocessor={preprocessor}
               engine={engineStatus}
               external={external}
+              catalog={catalog}
               downloads={downloads}
               busy={busy}
-              testResult={testResult}
               error={error}
               onSaveSettings={(patch) => void saveSettings(patch)}
               onStartDownload={(kind, model) => void start(kind, model)}
@@ -418,12 +634,22 @@ export default function SettingsPanel({ open: visible, onClose, onOpenKnowledge 
               onSaveHfToken={(token) => void saveHfToken(token)}
               onClearHfToken={() => void removeHfToken()}
               onChooseWhisperFile={() => void chooseWhisperModel()}
-              onSaveExternal={(patch) => void saveExternal(patch)}
-              onSaveExternalKey={(key) => void saveExternalKey(key)}
-              onClearExternalKey={() => void removeExternalKey()}
-              onSaveExternalAsrKey={(key) => void saveExternalAsrKey(key)}
-              onClearExternalAsrKey={() => void removeExternalAsrKey()}
-              onTestExternal={() => void checkExternal()}
+              onSaveExternal={(patch) => saveExternal(patch).then(() => undefined)}
+              onCommitProvider={commitProvider}
+              onClearProviderCredentials={clearProviderCredentials}
+              onReuseProviderCredentials={reuseProviderCredentials}
+              onRevealProviderCredentials={(target, providerId) =>
+                revealExternalCredentials(target, providerId)
+              }
+              onListProviderModels={(target, providerId, baseUrl, apiKey) =>
+                listExternalModels(target, providerId, baseUrl, apiKey)
+              }
+              onDiagnoseProvider={diagnoseProvider}
+              onSaveAndVerifyProvider={saveAndVerifyProvider}
+              onVerifySavedProvider={verifySavedProvider}
+              providerHealth={providerHealth}
+              credentialRevisions={credentialRevisions}
+              catalogVersion={catalog?.version ?? 0}
               onRefresh={() => void refresh()}
               onOpenAnalysisSetup={() => openAnalysisSetupSheet()}
               onOpenKnowledge={() => {
