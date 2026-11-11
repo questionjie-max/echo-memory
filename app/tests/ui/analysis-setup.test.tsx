@@ -2,8 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useRef, useState } from "react";
 import { AnalysisSetupProvider, useAnalysisSetup } from "../../src/components/AnalysisSetupSheet";
+import { diagnosisReportFixture, healthSnapshotFixture } from "./settings-mocks";
 import * as tauri from "../../src/lib/tauri";
-import { externalAiSettingsFixture, localAiStatusFixture } from "./settings-mocks";
+import type { ExternalAiSettings } from "../../src/shared/types";
+import {
+  externalAiSettingsFixture,
+  localAiStatusFixture,
+  providerCatalogFixture,
+} from "./settings-mocks";
 
 vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => false }));
 vi.mock("@tauri-apps/api/event", () => ({
@@ -44,17 +50,62 @@ function renderHarness(needEmbedding?: boolean) {
   );
 }
 
+let settingsState: ExternalAiSettings;
+
 beforeEach(() => {
   vi.resetAllMocks();
+  settingsState = externalAiSettingsFixture();
   // 默认一切未就绪：无 Ollama、无模型、云端未配置。
   vi.mocked(tauri.getLocalAiStatus).mockResolvedValue(
     localAiStatusFixture({ ollamaAvailable: false, ollamaModels: [] }),
   );
-  vi.mocked(tauri.getExternalAiSettings).mockResolvedValue(externalAiSettingsFixture());
+  vi.mocked(tauri.getExternalAiSettings).mockImplementation(() => Promise.resolve(settingsState));
+  vi.mocked(tauri.getProviderCatalog).mockResolvedValue(providerCatalogFixture());
   vi.mocked(tauri.getOllamaInstallStatus).mockResolvedValue({ installed: false, running: false });
-  vi.mocked(tauri.setExternalAiApiKey).mockResolvedValue(externalAiSettingsFixture({ hasApiKey: true }));
-  vi.mocked(tauri.updateExternalAiSettings).mockImplementation((settings) => Promise.resolve(settings));
+  vi.mocked(tauri.updateExternalAiSettings).mockImplementation((settings) => {
+    settingsState = settings;
+    return Promise.resolve(settingsState);
+  });
+  vi.mocked(tauri.saveExternalCredentials).mockImplementation(() => {
+    settingsState = { ...settingsState, hasApiKey: true };
+    return Promise.resolve(settingsState);
+  });
+  vi.mocked(tauri.clearExternalCredentials).mockImplementation(() => {
+    settingsState = { ...settingsState, hasApiKey: false };
+    return Promise.resolve(settingsState);
+  });
+  vi.mocked(tauri.reuseExternalCredentials).mockImplementation(() => {
+    settingsState = { ...settingsState, hasApiKey: settingsState.transcriptionHasApiKey };
+    return Promise.resolve(settingsState);
+  });
   vi.mocked(tauri.testExternalAiConnection).mockResolvedValue(undefined);
+  // Phase 0：草稿诊断默认通过并携带一次性票据；保存并验证落盘为新配置。
+  vi.mocked(tauri.diagnoseExternalProvider).mockImplementation((input) =>
+    Promise.resolve(diagnosisReportFixture({ target: input.target })),
+  );
+  vi.mocked(tauri.saveAndVerifyProvider).mockImplementation((args) => {
+    settingsState = {
+      ...settingsState,
+      analysisProvider: args.providerId,
+      baseUrl: args.baseUrl,
+      model: args.model,
+      hasApiKey: true,
+      enabled: args.enabled,
+      privacyConsentAt: args.privacyConsentAt ?? settingsState.privacyConsentAt,
+    };
+    return Promise.resolve({
+      settings: settingsState,
+      saved: ["credentials", "settings", "health"],
+      rolledBack: [],
+      partial: false,
+      health: healthSnapshotFixture({ target: args.target }),
+    });
+  });
+  vi.mocked(tauri.verifySavedProvider).mockImplementation((target) =>
+    Promise.resolve(diagnosisReportFixture({ target })),
+  );
+  vi.mocked(tauri.getProviderHealthStatus).mockResolvedValue(null);
+  vi.mocked(tauri.getCredentialRevision).mockResolvedValue(0);
 });
 
 describe("分析设置发起面板", () => {
@@ -118,86 +169,93 @@ describe("分析设置发起面板", () => {
     expect(screen.queryByRole("dialog", { name: "分析设置" })).toBeNull();
   });
 
-  it("服务商预置联动地址与兜底模型，拉取成功后模型变下拉可选", async () => {
-    vi.mocked(tauri.listRemoteModels).mockResolvedValue([
-      "alpha-model",
-      "zeta-model",
-    ]);
-    const { container } = renderHarness(true);
-    fireEvent.click(await screen.findByRole("button", { name: "触发" }));
-    fireEvent.click(await screen.findByRole("button", { name: "云端（填 Key 即用）" }));
-
-    // 默认智谱：地址与兜底模型已按品牌预填
-    const baseUrlInput = screen.getByDisplayValue("https://open.bigmodel.cn/api/paas/v4");
-    expect(baseUrlInput).toBeTruthy();
-    expect(screen.getByDisplayValue("glm-4-flash")).toBeTruthy();
-
-    // 切换服务商 → 地址与兜底模型联动
-    const presetSelect = container.querySelector("select.em-select") as HTMLSelectElement;
-    fireEvent.change(presetSelect, { target: { value: "deepseek" } });
-    expect(screen.getByDisplayValue("https://api.deepseek.com/v1")).toBeTruthy();
-    expect(screen.getByDisplayValue("deepseek-chat")).toBeTruthy();
-
-    // 填 Key → 拉取 → 下拉出现服务商真实模型，默认选中第一个
-    fireEvent.change(screen.getByPlaceholderText("仅用于保存，不会回显"), {
-      target: { value: "sk-test-pull" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "拉取模型列表" }));
-    await waitFor(() =>
-      expect(tauri.listRemoteModels).toHaveBeenCalledWith(
-        "https://api.deepseek.com/v1",
-        "sk-test-pull",
-      ),
-    );
-    const modelSelect = await screen.findByRole("combobox", { name: /模型/ });
-    const options = Array.from(modelSelect.querySelectorAll("option")).map((o) => o.value);
-    expect(options).toEqual(["alpha-model", "zeta-model"]);
-    expect((modelSelect as HTMLSelectElement).value).toBe("alpha-model");
-    // 下拉旁保留「手动填写」切回入口
-    expect(screen.getByRole("button", { name: "手动填写" })).toBeTruthy();
-  });
-
-  it("拉取失败显示中文原因，手填不受影响", async () => {
-    vi.mocked(tauri.listRemoteModels).mockRejectedValue(
-      new Error("无法连接服务商，请检查接口地址与网络"),
-    );
+  it("首次打开云端复用同一服务商表单，不再维护第二份预置", async () => {
     renderHarness(true);
     fireEvent.click(await screen.findByRole("button", { name: "触发" }));
     fireEvent.click(await screen.findByRole("button", { name: "云端（填 Key 即用）" }));
 
-    fireEvent.change(screen.getByPlaceholderText("仅用于保存，不会回显"), {
-      target: { value: "sk-test-pull" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "拉取模型列表" }));
-
-    const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain("无法连接服务商，请检查接口地址与网络");
-    expect(alert.textContent).toContain("手动填写");
-    // 手填输入框仍在且值保留，保存流程不被拉取失败阻塞
-    expect(screen.getByPlaceholderText("glm-4-flash")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "保存并检测连通" })).toBeTruthy();
+    const provider = (await screen.findByLabelText("分析服务商")) as HTMLSelectElement;
+    expect(provider.value).toBe("openai");
+    expect(screen.queryByLabelText("接口地址")).toBeNull();
+    fireEvent.change(provider, { target: { value: "zhipu" } });
+    expect(screen.getByLabelText("智谱 API Key")).toBeTruthy();
+    expect((screen.getByLabelText("分析模型") as HTMLSelectElement).value).toBe("glm-4-flash");
+    expect(screen.queryByLabelText("接口地址")).toBeNull();
   });
 
-  it("云端选项卡未填 Key 时保存被挡，连通检测失败显示明确原因", async () => {
-    vi.mocked(tauri.testExternalAiConnection).mockRejectedValue(new Error("无法连接服务商"));
+  it("保存后启用分析并执行一次真实小请求，成功后恢复原动作", async () => {
     renderHarness(true);
     fireEvent.click(await screen.findByRole("button", { name: "触发" }));
     fireEvent.click(await screen.findByRole("button", { name: "云端（填 Key 即用）" }));
 
-    const save = await screen.findByRole("button", { name: "保存并检测连通" });
+    fireEvent.change(await screen.findByLabelText("OpenAI API Key"), {
+      target: { value: "sk-analysis" },
+    });
+    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("button", { name: "保存并验证" }));
+
+    // 先草稿诊断（不落盘），通过后凭票据提交，成功才续跑原动作。
+    await waitFor(() => expect(tauri.diagnoseExternalProvider).toHaveBeenCalled());
+    await waitFor(() => expect(tauri.saveAndVerifyProvider).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByTestId("ran-count").textContent).toBe("1"));
+    expect(screen.queryByRole("dialog", { name: "分析设置" })).toBeNull();
+    expect(tauri.saveAndVerifyProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: "analysis",
+        verificationToken: "test-verification-token",
+        enabled: true,
+      }),
+    );
+    // 旧的先保存再测路径不该再被走到。
+    expect(tauri.saveExternalCredentials).not.toHaveBeenCalled();
+    expect(tauri.testExternalAiConnection).not.toHaveBeenCalled();
+  });
+
+  it("未填 Key 或未勾同意时保存被挡", async () => {
+    renderHarness(true);
+    fireEvent.click(await screen.findByRole("button", { name: "触发" }));
+    fireEvent.click(await screen.findByRole("button", { name: "云端（填 Key 即用）" }));
+
+    const save = await screen.findByRole("button", { name: "保存并验证" });
     expect(save.hasAttribute("disabled")).toBe(true);
 
-    fireEvent.change(screen.getByPlaceholderText("仅用于保存，不会回显"), {
+    fireEvent.change(screen.getByLabelText("OpenAI API Key"), {
+      target: { value: "sk-test-0001" },
+    });
+    expect(save.hasAttribute("disabled")).toBe(true);
+    fireEvent.click(screen.getByRole("checkbox"));
+    expect(save.hasAttribute("disabled")).toBe(false);
+  });
+
+  it("草稿诊断失败时不落盘、明确报错且不继续原动作", async () => {
+    vi.mocked(tauri.diagnoseExternalProvider).mockResolvedValue(
+      diagnosisReportFixture({
+        status: "failed",
+        stage: "network",
+        suggestedAction: "check_network",
+        verificationToken: null,
+      }),
+    );
+    renderHarness(true);
+    fireEvent.click(await screen.findByRole("button", { name: "触发" }));
+    fireEvent.click(await screen.findByRole("button", { name: "云端（填 Key 即用）" }));
+
+    fireEvent.change(await screen.findByLabelText("OpenAI API Key"), {
       target: { value: "sk-test-0001" },
     });
     fireEvent.click(screen.getByRole("checkbox"));
-    expect(save.hasAttribute("disabled")).toBe(false);
+    expect(settingsState.enabled).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "保存并验证" }));
 
-    fireEvent.click(save);
-    const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain("连通检测失败");
-    expect(alert.textContent).toContain("无法连接服务商");
-    // 检测失败不继续原动作，用户留在面板里修正
+    // 四段式错误：发生了什么 + 建议动作；配置不落盘，面板保留，原动作不继续。
+    const alert = await screen.findByRole("alert", undefined, { timeout: 3000 });
+    expect(alert.textContent).toContain("无法连接到服务商");
+    expect(alert.textContent).toContain("检查网络");
+    // 一个错误只展示一次：同一错误不得在页面内重复出现。
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(settingsState.enabled).toBe(false);
+    expect(tauri.saveAndVerifyProvider).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: "分析设置" })).toBeTruthy();
     expect(screen.getByTestId("ran-count").textContent).toBe("0");
   });
 });

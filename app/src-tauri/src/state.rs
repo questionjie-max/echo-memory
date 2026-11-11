@@ -124,6 +124,139 @@ pub fn consume_export_ticket(ticket: &str) -> bool {
         .is_some_and(|issued| now.duration_since(issued) < EXPORT_TICKET_TTL)
 }
 
+// ---------------------------------------------------------------------------
+// 第三方连接验证票据：草稿诊断（不落盘测试）通过后签发，save_and_verify 提交
+// 时核销。与导出票据同一威胁模型：能触达 invoke 的代码不能凭空给一份未测试
+// 的配置盖上「已验证」章。票据绑定 target/provider/base_url/model/凭据摘要，
+// 任一不符即拒绝复用；纯进程内存，不落盘、不跨重启。
+// ---------------------------------------------------------------------------
+
+const VERIFY_TICKET_TTL: std::time::Duration = std::time::Duration::from_secs(600);
+
+struct VerifyTicket {
+    target: String,
+    provider_id: String,
+    /// 规范化后的地址（去尾斜杠）。
+    base_url: String,
+    model: String,
+    credentials_digest: String,
+    issued_at: std::time::Instant,
+}
+
+static VERIFY_TICKETS: OnceLock<Mutex<HashMap<String, VerifyTicket>>> = OnceLock::new();
+
+fn verify_tickets() -> &'static Mutex<HashMap<String, VerifyTicket>> {
+    VERIFY_TICKETS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// 票据凭据摘要的 HMAC 密钥：进程首次需要时由 OS 随机熵生成，
+/// 只存在于此处——不落盘、不进日志、不返回前端。
+fn diagnosis_hmac_key() -> &'static [u8; 32] {
+    static KEY: OnceLock<[u8; 32]> = OnceLock::new();
+    KEY.get_or_init(|| {
+        let mut key = [0_u8; 32];
+        let first = uuid::Uuid::new_v4().as_u128().to_le_bytes();
+        let second = uuid::Uuid::new_v4().as_u128().to_le_bytes();
+        key[..16].copy_from_slice(&first);
+        key[16..].copy_from_slice(&second);
+        key
+    })
+}
+
+/// 凭据集合摘要：按解析后（trim 非空）的键值对计算 HMAC-SHA256，
+/// 与表单原文无关——回退已保存凭据时两次解析结果一致即可通过。
+pub fn credentials_digest(credentials: &std::collections::BTreeMap<String, String>) -> String {
+    use hmac::Mac as _;
+
+    let normalized: std::collections::BTreeMap<&str, &str> = credentials
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.trim()))
+        .filter(|(_, value)| !value.is_empty())
+        .collect();
+    let payload = serde_json::to_string(&normalized).unwrap_or_default();
+    let mut mac = hmac::Hmac::<sha2::Sha256>::new_from_slice(diagnosis_hmac_key())
+        .expect("HMAC 密钥长度合法");
+    mac.update(payload.as_bytes());
+    mac.finalize()
+        .into_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// 诊断通过时签发一张验证票据。
+pub fn issue_verification_ticket(
+    target: &str,
+    provider_id: &str,
+    base_url: &str,
+    model: &str,
+    credentials: &std::collections::BTreeMap<String, String>,
+) -> String {
+    let ticket = uuid::Uuid::new_v4().to_string();
+    let mut tickets = verify_tickets()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let now = std::time::Instant::now();
+    tickets.retain(|_, ticket| now.duration_since(ticket.issued_at) < VERIFY_TICKET_TTL);
+    tickets.insert(
+        ticket.clone(),
+        VerifyTicket {
+            target: target.to_owned(),
+            provider_id: provider_id.to_owned(),
+            base_url: base_url.trim().trim_end_matches('/').to_owned(),
+            model: model.trim().to_owned(),
+            credentials_digest: credentials_digest(credentials),
+            issued_at: now,
+        },
+    );
+    ticket
+}
+
+/// 核销一张验证票据：target/provider/base_url/model/凭据摘要全部一致才通过，
+/// 通过即消费（一次性）。字段不符不消费（用户重填正确凭据后仍可复用剩余时效），
+/// 过期与不存在一律拒绝。
+pub fn consume_verification_ticket(
+    ticket: &str,
+    target: &str,
+    provider_id: &str,
+    base_url: &str,
+    model: &str,
+    credentials: &std::collections::BTreeMap<String, String>,
+) -> bool {
+    let mut tickets = verify_tickets()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let now = std::time::Instant::now();
+    let Some(stored) = tickets.get(ticket) else {
+        return false;
+    };
+    if now.duration_since(stored.issued_at) >= VERIFY_TICKET_TTL {
+        tickets.remove(ticket);
+        return false;
+    }
+    let base_matches = stored.base_url == base_url.trim().trim_end_matches('/');
+    let matches = stored.target == target
+        && stored.provider_id == provider_id
+        && base_matches
+        && stored.model == model.trim()
+        && stored.credentials_digest == credentials_digest(credentials);
+    if matches {
+        tickets.remove(ticket);
+    }
+    matches
+}
+
+#[cfg(test)]
+pub(crate) fn expire_all_verification_tickets() {
+    let mut tickets = verify_tickets()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let expired = std::time::Instant::now() - VERIFY_TICKET_TTL;
+    for ticket in tickets.values_mut() {
+        ticket.issued_at = expired;
+    }
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub library: ManagedLibrary,
@@ -465,5 +598,134 @@ mod tests {
     fn global_heavy_job_limiter_has_bounded_capacity() {
         let limiter = heavy_job_limiter();
         assert!((1..=8).contains(&limiter.max()));
+    }
+
+    // ---- 验证票据生命周期 ----
+
+    use std::collections::BTreeMap;
+
+    fn sample_credentials() -> BTreeMap<String, String> {
+        BTreeMap::from([
+            ("apiKey".to_owned(), "test-key-abc".to_owned()),
+        ])
+    }
+
+    fn issue_sample_ticket() -> String {
+        super::issue_verification_ticket(
+            "analysis",
+            "dashscope",
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "qwen-turbo",
+            &sample_credentials(),
+        )
+    }
+
+    fn consume_sample(ticket: &str) -> bool {
+        super::consume_verification_ticket(
+            ticket,
+            "analysis",
+            "dashscope",
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "qwen-turbo",
+            &sample_credentials(),
+        )
+    }
+
+    #[test]
+    fn verification_ticket_is_one_time_and_matches_exact_fields() {
+        let ticket = issue_sample_ticket();
+        assert!(consume_sample(&ticket));
+        // 一次性：再次核销必须失败。
+        assert!(!consume_sample(&ticket));
+    }
+
+    #[test]
+    fn verification_ticket_rejects_wrong_target() {
+        let ticket = issue_sample_ticket();
+        assert!(!super::consume_verification_ticket(
+            &ticket,
+            "transcription", // target 不符：分析诊断的票据不能验证转写
+            "dashscope",
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "qwen-turbo",
+            &sample_credentials(),
+        ));
+        // 不匹配不消费：字段修正后仍可核销。
+        assert!(consume_sample(&ticket));
+    }
+
+    #[test]
+    fn verification_ticket_rejects_changed_model_or_provider() {
+        let ticket = issue_sample_ticket();
+        assert!(!super::consume_verification_ticket(
+            &ticket,
+            "analysis",
+            "dashscope",
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "qwen-plus", // 模型换了
+            &sample_credentials(),
+        ));
+        assert!(!super::consume_verification_ticket(
+            &ticket,
+            "analysis",
+            "zhipu", // 服务商换了
+            "https://open.bigmodel.cn/api/paas/v4",
+            "qwen-turbo",
+            &sample_credentials(),
+        ));
+        assert!(consume_sample(&ticket));
+    }
+
+    #[test]
+    fn verification_ticket_rejects_changed_credentials() {
+        let ticket = issue_sample_ticket();
+        let rotated = BTreeMap::from([("apiKey".to_owned(), "test-key-rotated".to_owned())]);
+        assert!(!super::consume_verification_ticket(
+            &ticket,
+            "analysis",
+            "dashscope",
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "qwen-turbo",
+            &rotated,
+        ));
+        assert!(consume_sample(&ticket));
+    }
+
+    #[test]
+    fn verification_ticket_normalizes_base_url_trailing_slash() {
+        let ticket = issue_sample_ticket();
+        assert!(super::consume_verification_ticket(
+            &ticket,
+            "analysis",
+            "dashscope",
+            "https://dashscope.aliyuncs.com/compatible-mode/v1/", // 尾斜杠
+            "qwen-turbo",
+            &sample_credentials(),
+        ));
+    }
+
+    #[test]
+    fn expired_verification_ticket_is_rejected() {
+        let ticket = issue_sample_ticket();
+        super::expire_all_verification_tickets();
+        assert!(!consume_sample(&ticket), "过期票据必须拒绝");
+        // 拒绝即清除。
+        assert!(!consume_sample(&ticket));
+    }
+
+    #[test]
+    fn credentials_digest_ignores_blank_values_and_whitespace() {
+        let a = BTreeMap::from([
+            ("apiKey".to_owned(), "  key  ".to_owned()),
+            ("appId".to_owned(), "125".to_owned()),
+            ("blank".to_owned(), "   ".to_owned()),
+        ]);
+        let b = BTreeMap::from([
+            ("apiKey".to_owned(), "key".to_owned()),
+            ("appId".to_owned(), "125".to_owned()),
+        ]);
+        assert_eq!(super::credentials_digest(&a), super::credentials_digest(&b));
+        let rotated = BTreeMap::from([("apiKey".to_owned(), "other".to_owned())]);
+        assert_ne!(super::credentials_digest(&a), super::credentials_digest(&rotated));
     }
 }

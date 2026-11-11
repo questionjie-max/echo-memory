@@ -7,12 +7,17 @@
  *
  * 所有改动即时生效，成功飘一句「已保存」，失败留在该卡片自己的提示里。
  */
-import { useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import type {
   AudioPreprocessorStatus,
+  DiagnosisReport,
   ExternalAiSettings,
   KnowledgeSettings,
   LocalAiStatus,
+  ProviderCatalog,
+  ProviderHealthSnapshot,
+  RemoteModelList,
+  SaveAndVerifyOutcome,
   TranscriptionEngineStatus,
 } from "../shared/types";
 import {
@@ -28,9 +33,15 @@ import {
   Segmented,
   Stack,
   StatusPill,
-  ToggleRow,
-  useDraftSave,
+  VerifyStatusPill,
 } from "./SettingsKit";
+import ProviderConnectionForm, {
+  type ProviderCommit,
+  type ProviderDiagnoseDraft,
+  type ProviderSaveAndVerifyDraft,
+  type ProviderTarget,
+} from "./ProviderConnectionForm";
+import { deriveVerifyState, failedDescription, verifiedDescription } from "../lib/verify-state";
 import { formatBytes, type DownloadState, type DownloadKind } from "./useModelDownloads";
 
 const LANGUAGES = [
@@ -49,6 +60,7 @@ export interface AiModelSettingsProps {
   preprocessor: AudioPreprocessorStatus | null;
   engine: TranscriptionEngineStatus | null;
   external: ExternalAiSettings | null;
+  catalog: ProviderCatalog | null;
   downloads: Record<string, DownloadState>;
   busy: boolean;
   onSaveSettings: (patch: Partial<KnowledgeSettings>) => void;
@@ -58,17 +70,47 @@ export interface AiModelSettingsProps {
   onSaveHfToken: (token: string) => void;
   onClearHfToken: () => void;
   onChooseWhisperFile: () => void;
-  onSaveExternal: (patch: Partial<ExternalAiSettings>) => void;
-  onSaveExternalKey: (key: string) => void;
-  onClearExternalKey: () => void;
-  onSaveExternalAsrKey: (key: string) => void;
-  onClearExternalAsrKey: () => void;
-  onTestExternal: () => void;
+  onSaveExternal: (patch: Partial<ExternalAiSettings>) => Promise<void>;
+  onCommitProvider: (target: ProviderTarget, draft: ProviderCommit) => Promise<void>;
+  onClearProviderCredentials: (target: ProviderTarget) => Promise<void>;
+  onReuseProviderCredentials: (
+    target: ProviderTarget,
+    draft: Omit<ProviderCommit, "credentials" | "consentAt">,
+  ) => Promise<void>;
+  onRevealProviderCredentials: (
+    target: ProviderTarget,
+    providerId: string,
+  ) => Promise<Record<string, string>>;
+  onListProviderModels: (
+    target: ProviderTarget,
+    providerId: string,
+    baseUrl: string,
+    apiKey: string | null,
+  ) => Promise<RemoteModelList>;
+  /** 草稿诊断（不落盘）；通过时返回一次性验证票据。 */
+  onDiagnoseProvider: (
+    target: ProviderTarget,
+    draft: ProviderDiagnoseDraft,
+  ) => Promise<DiagnosisReport>;
+  /** 保存并验证：先核销票据再提交；验证失败原配置不变。 */
+  onSaveAndVerifyProvider: (
+    target: ProviderTarget,
+    draft: ProviderSaveAndVerifyDraft,
+  ) => Promise<SaveAndVerifyOutcome>;
+  /** 验证当前已保存配置（结果写入健康快照）。 */
+  onVerifySavedProvider: (target: ProviderTarget) => Promise<DiagnosisReport>;
+  /** 两个槽位的健康快照（null = 尚未验证过）。 */
+  providerHealth: {
+    analysis: ProviderHealthSnapshot | null;
+    transcription: ProviderHealthSnapshot | null;
+  };
+  /** 两个槽位的凭据修订号（与快照比对判定「需重新验证」）。 */
+  credentialRevisions: { analysis: number; transcription: number };
+  catalogVersion: number;
   onRefresh: () => void;
   onOpenKnowledge: () => void;
   /** 打开「分析设置」发起面板；不传则不显示入口按钮。 */
   onOpenAnalysisSetup?: () => void;
-  testResult: ReactNode;
   error: string | null;
 }
 
@@ -77,9 +119,12 @@ export default function AiModelSettings(props: AiModelSettingsProps) {
   const recommendedDownload = downloads[status.recommendedWhisperModel.id];
   const analysisDownload = downloads[status.settings.analysisModel];
   const embeddingDownload = downloads[status.settings.embeddingModel];
-  const channel = external?.processingMode ?? "local";
+  const transcriptionMode = external?.transcriptionMode ?? "local";
+  const [analysisMode, setAnalysisMode] = useState<"local" | "external">(
+    external?.enabled ? "external" : "local",
+  );
   const asrReady = Boolean(
-    channel === "external" &&
+    transcriptionMode === "external" &&
       external &&
       !["", "none"].includes(external.transcriptionProvider) &&
       external.transcriptionBaseUrl.trim() &&
@@ -87,74 +132,69 @@ export default function AiModelSettings(props: AiModelSettingsProps) {
       external.transcriptionHasApiKey &&
       external.audioUploadConsentAt,
   );
-  const externalAnalysisReady = analysisReady(status, external);
-  const externalMissing = channel === "external"
-    ? [
-        !asrReady && "第三方转写",
-        !externalAnalysisReady && "第三方理解整理",
-      ].filter(Boolean)
-    : [];
+  const externalAnalysisReady = analysisReady(external);
+  const localAnalysisReady = Boolean(
+    status.ollamaAvailable &&
+      status.ollamaModels.some((model) => model.name === status.settings.analysisModel),
+  );
+  const currentAnalysisReady =
+    analysisMode === "external" ? externalAnalysisReady : localAnalysisReady;
   const [whisperxGuide, setWhisperxGuide] = useState(false);
   const whisperxActive = engine?.engine === "whisperx";
   const whisperxDetailVisible = whisperxGuide || whisperxActive;
 
+  useEffect(() => {
+    if (external?.enabled) setAnalysisMode("external");
+  }, [external?.enabled]);
+
   return (
     <Stack>
       <p className="em-hint">
-        {summary(status, engine, channel, external)}
+        {summary(
+          status,
+          engine,
+          transcriptionMode,
+          analysisMode,
+          external,
+          props.catalog,
+        )}
       </p>
-
-      <Card
-        title="录音处理通道"
-        description="选择新录音和手动导入音频由谁完成转写与结构化分析。"
-        status={
-          <StatusPill
-            ok={channel === "local" || Boolean(external?.enabled && external.hasApiKey)}
-            okText="已配置"
-            badText="待配置"
-          />
-        }
-      >
-        <Segmented
-          label="处理方式"
-          value={channel}
-          onChange={(next) => props.onSaveExternal({ processingMode: next })}
-          options={[
-            { value: "local", label: "本机处理", hint: "显示本机通道配置：Whisper 转写、Ollama 分析" },
-            { value: "external", label: "第三方处理", hint: "显示第三方通道配置；转写仅在通道配齐时走第三方，缺项自动回退本机 Whisper" },
-          ]}
-        />
-        {channel === "external" && (
-          <p className="em-note">
-            第三方处理需要分别确认音频上传与文本发送说明，并填写服务商的 API Key。
-            两个通道独立判定：转写通道缺项时，导入会自动回退本机 Whisper（会提示一次补配），不会被拦下；
-            分析是否走云端由下方「启用理解与结构化整理」开关、API Key 与隐私同意决定，与本开关无关。
-          </p>
-        )}
-        {externalMissing.length > 0 && (
-          <p className="em-note warn">
-            第三方通道待完成：{externalMissing.join("、")}。完成配置后新导入的录音才会走完整链路。
-          </p>
-        )}
-      </Card>
 
       {/* ---------------- 转写 ---------------- */}
       <Card
         title="转写"
         description={
-          channel === "local"
+          transcriptionMode === "local"
             ? "把录音变成文字。音频只在这台机器上处理，不上传。"
             : "把录音上传给第三方服务商，返回逐字稿。"
         }
         status={
-          <StatusPill
-            ok={channel === "local" ? status.whisperAvailable : asrReady}
-            okText="可用"
-            badText={channel === "local" ? "缺模型" : "待配置"}
-          />
+          transcriptionMode === "external" ? (
+            <ExternalVerifyPill
+              target="transcription"
+              settings={external}
+              health={props.providerHealth.transcription}
+              credentialRevision={props.credentialRevisions.transcription}
+              catalogVersion={props.catalogVersion}
+              fallbackState={asrReady ? "unverified" : "unconfigured"}
+            />
+          ) : (
+            <StatusPill ok={status.whisperAvailable} okText="可用" badText="缺模型" />
+          )
         }
       >
-        {channel === "local" ? (
+        <Segmented
+          label="转写方式"
+          value={transcriptionMode}
+          onChange={(next) => {
+            void props.onSaveExternal({ transcriptionMode: next }).catch(() => undefined);
+          }}
+          options={[
+            { value: "local", label: "本机", hint: "音频只在本机处理，不上传。" },
+            { value: "external", label: "第三方", hint: "选择服务商并粘贴凭据，地址与模型自动配置。" },
+          ]}
+        />
+        {transcriptionMode === "local" ? (
           <>
             <Segmented
               label="转写引擎"
@@ -190,17 +230,43 @@ export default function AiModelSettings(props: AiModelSettingsProps) {
               onChooseFile={props.onChooseWhisperFile}
             />
           </>
-        ) : (
-          <ExternalAsrChannel
-            external={external}
+        ) : external && props.catalog ? (
+          <ProviderConnectionForm
+            target="transcription"
+            catalog={props.catalog}
+            settings={external}
             busy={busy}
-            onSave={props.onSaveExternal}
-            onSaveKey={props.onSaveExternalAsrKey}
-            onClearKey={props.onClearExternalAsrKey}
+            actionLabel="保存并验证"
+            onCommit={(draft) => props.onCommitProvider("transcription", draft)}
+            onClearCredentials={() =>
+              props.onClearProviderCredentials("transcription")
+            }
+            onReuseCredentials={(draft) =>
+              props.onReuseProviderCredentials("transcription", draft)
+            }
+            onRevealCredentials={(providerId) =>
+              props.onRevealProviderCredentials("transcription", providerId)
+            }
+            onListModels={(input) =>
+              props.onListProviderModels(
+                "transcription",
+                input.providerId,
+                input.baseUrl,
+                input.apiKey,
+              )
+            }
+            onDiagnose={(draft) => props.onDiagnoseProvider("transcription", draft)}
+            onSaveAndVerify={(draft) => props.onSaveAndVerifyProvider("transcription", draft)}
+            onVerifySaved={() => props.onVerifySavedProvider("transcription")}
+            health={props.providerHealth.transcription}
+            credentialRevision={props.credentialRevisions.transcription}
+            catalogVersion={props.catalogVersion}
           />
+        ) : (
+          <p className="em-empty">正在读取服务商目录…</p>
         )}
 
-        {channel === "local" && whisperxDetailVisible && (
+        {transcriptionMode === "local" && whisperxDetailVisible && (
           <Collapsible
             title="配置说话人分离（实验特性，3 步）"
             open={whisperxDetailVisible}
@@ -308,15 +374,46 @@ export default function AiModelSettings(props: AiModelSettingsProps) {
       {/* ---------------- 分析 ---------------- */}
       <Card
         title="分析"
-        description="把逐字稿变成摘要、决策和待办：云端理解启用且有 Key 时走云端，否则走本机 Ollama。"
-        status={<StatusPill ok={externalAnalysisReady} okText="可用" badText={channel === "local" ? "未运行" : "未配置"} />}
+        description="把逐字稿变成摘要、决策和待办。本机用 Ollama，第三方用你选择的文本模型。"
+        status={
+          analysisMode === "external" ? (
+            <ExternalVerifyPill
+              target="analysis"
+              settings={external}
+              health={props.providerHealth.analysis}
+              credentialRevision={props.credentialRevisions.analysis}
+              catalogVersion={props.catalogVersion}
+              fallbackState={externalAnalysisReady ? "unverified" : "unconfigured"}
+            />
+          ) : (
+            <StatusPill
+              ok={currentAnalysisReady}
+              okText="可用"
+              badText={analysisMode === "local" ? "未运行" : "待配置"}
+            />
+          )
+        }
         actions={
           props.onOpenAnalysisSetup ? (
             <Button onClick={props.onOpenAnalysisSetup}>配置分析…</Button>
           ) : undefined
         }
       >
-        {channel === "local" ? (
+        <Segmented
+          label="分析方式"
+          value={analysisMode}
+          onChange={(next) => {
+            setAnalysisMode(next);
+            if (next === "local") {
+              void props.onSaveExternal({ enabled: false }).catch(() => undefined);
+            }
+          }}
+          options={[
+            { value: "local", label: "本机", hint: "使用本机 Ollama，逐字稿不离开设备。" },
+            { value: "external", label: "第三方", hint: "选择服务商并粘贴凭据，地址与推荐模型自动配置。" },
+          ]}
+        />
+        {analysisMode === "local" ? (
           <>
             {!status.ollamaAvailable && (
               <p className="em-note warn">
@@ -339,16 +436,38 @@ export default function AiModelSettings(props: AiModelSettingsProps) {
               <Button onClick={props.onRefresh}>重新检测</Button>
             </div>
           </>
-        ) : (
-          <ExternalChannel
-            external={external}
+        ) : external && props.catalog ? (
+          <ProviderConnectionForm
+            target="analysis"
+            catalog={props.catalog}
+            settings={external}
             busy={busy}
-            testResult={props.testResult}
-            onSave={props.onSaveExternal}
-            onSaveKey={props.onSaveExternalKey}
-            onClearKey={props.onClearExternalKey}
-            onTest={props.onTestExternal}
+            actionLabel="保存并验证"
+            onCommit={(draft) => props.onCommitProvider("analysis", draft)}
+            onClearCredentials={() => props.onClearProviderCredentials("analysis")}
+            onReuseCredentials={(draft) =>
+              props.onReuseProviderCredentials("analysis", draft)
+            }
+            onRevealCredentials={(providerId) =>
+              props.onRevealProviderCredentials("analysis", providerId)
+            }
+            onListModels={(input) =>
+              props.onListProviderModels(
+                "analysis",
+                input.providerId,
+                input.baseUrl,
+                input.apiKey,
+              )
+            }
+            onDiagnose={(draft) => props.onDiagnoseProvider("analysis", draft)}
+            onSaveAndVerify={(draft) => props.onSaveAndVerifyProvider("analysis", draft)}
+            onVerifySaved={() => props.onVerifySavedProvider("analysis")}
+            health={props.providerHealth.analysis}
+            credentialRevision={props.credentialRevisions.analysis}
+            catalogVersion={props.catalogVersion}
           />
+        ) : (
+          <p className="em-empty">正在读取服务商目录…</p>
         )}
       </Card>
 
@@ -375,293 +494,9 @@ export default function AiModelSettings(props: AiModelSettingsProps) {
         </div>
       </Card>
 
-      {props.error && <p className="em-note err">{props.error}</p>}
+      {props.error && <p className="em-note err" role="alert">{props.error}</p>}
     </Stack>
   );
-}
-
-function ExternalAsrChannel({
-  external,
-  busy,
-  onSave,
-  onSaveKey,
-  onClearKey,
-}: {
-  external: ExternalAiSettings | null;
-  busy: boolean;
-  onSave: (patch: Partial<ExternalAiSettings>) => void;
-  onSaveKey: (key: string) => void;
-  onClearKey: () => void;
-}) {
-  const [apiKey, setApiKey] = useState("");
-  const [revealed, setRevealed] = useState(false);
-  const { draft, update, flush } = useDraftSave(
-    {
-      transcriptionBaseUrl: external?.transcriptionBaseUrl ?? "",
-      transcriptionModel: external?.transcriptionModel ?? "",
-      transcriptionProvider:
-        external && !["", "none"].includes(external.transcriptionProvider)
-          ? external.transcriptionProvider
-          : "",
-    },
-    (next) => {
-      if (!external) return;
-      const patch: Partial<ExternalAiSettings> = {};
-      if (
-        next.transcriptionBaseUrl.trim() !== external.transcriptionBaseUrl &&
-        looksLikeUrl(next.transcriptionBaseUrl)
-      ) {
-        patch.transcriptionBaseUrl = next.transcriptionBaseUrl.trim();
-      }
-      if (
-        next.transcriptionModel.trim() !== external.transcriptionModel &&
-        next.transcriptionModel.trim().length <= 160
-      ) {
-        patch.transcriptionModel = next.transcriptionModel.trim();
-      }
-      if (next.transcriptionProvider !== external.transcriptionProvider) {
-        patch.transcriptionProvider = next.transcriptionProvider;
-      }
-      if (Object.keys(patch).length > 0) onSave(patch);
-    },
-    null,
-  );
-
-  if (!external) return <p className="em-empty">正在读取第三方转写设置…</p>;
-
-  return (
-    <>
-      <p className="em-note warn">
-        选择第三方转写后，原始音频会上传给下方配置的服务商，直到你清除该配置或切回本机处理。
-      </p>
-      <p className="em-hint">
-        说话人标签取决于服务商返回能力；未返回时不会根据文本猜测。
-      </p>
-
-      <Field label="服务类型" hint="千问、智谱等服务商可使用 OpenAI 兼容地址。">
-        <select
-          className="em-select"
-          value={draft.transcriptionProvider}
-          onChange={(event) => update({ transcriptionProvider: event.target.value })}
-          onBlur={flush}
-        >
-          <option value="">请选择语音转文字服务</option>
-          <option value="openai-compatible">通用 OpenAI 兼容接口</option>
-          <option value="dashscope">阿里云百炼 / 千问</option>
-          <option value="zhipu">智谱 AI</option>
-        </select>
-      </Field>
-
-      <Field label="接口地址" hint="音频转写接口地址，只有本机地址允许用 http。">
-        <input
-          className="em-input"
-          value={draft.transcriptionBaseUrl}
-          placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1"
-          onChange={(event) => update({ transcriptionBaseUrl: event.target.value })}
-          onBlur={flush}
-        />
-      </Field>
-
-      <Field label="转写模型" hint="服务商文档里的模型 ID，例如 qwen3-asr-flash。">
-        <input
-          className="em-input"
-          value={draft.transcriptionModel}
-          placeholder="qwen3-asr-flash"
-          onChange={(event) => update({ transcriptionModel: event.target.value })}
-          onBlur={flush}
-        />
-      </Field>
-
-      <Field
-        label="语音转文字 API Key"
-        hint={
-          external.transcriptionHasApiKey
-            ? "已保存在 macOS 钥匙串里，不会回显。"
-            : "还没有配置。"
-        }
-      >
-        <div className="em-field-row">
-          <input
-            className="em-input"
-            type={revealed ? "text" : "password"}
-            value={apiKey}
-            autoComplete="new-password"
-            placeholder={
-              external.transcriptionHasApiKey ? "填写新 Key 可覆盖旧的" : "仅用于保存，不会回显"
-            }
-            onChange={(event) => setApiKey(event.target.value)}
-          />
-          <div className="em-card-actions">
-            <Button variant="quiet" onClick={() => setRevealed((value) => !value)}>
-              {revealed ? "隐藏" : "显示"}
-            </Button>
-            <Button
-              variant="ghost"
-              disabled={busy || !apiKey.trim()}
-              onClick={() => {
-                onSaveKey(apiKey.trim());
-                setApiKey("");
-              }}
-            >
-              保存
-            </Button>
-            <Button
-              variant="danger"
-              disabled={busy || !external.transcriptionHasApiKey}
-              onClick={onClearKey}
-            >
-              清除
-            </Button>
-          </div>
-        </div>
-      </Field>
-
-      <label className="em-check-row">
-        <input
-          type="checkbox"
-          checked={Boolean(external.audioUploadConsentAt)}
-          onChange={(event) =>
-            onSave({
-              audioUploadConsentAt: event.target.checked ? new Date().toISOString() : null,
-            })
-          }
-        />
-        <span>我已了解：第三方转写会把原始音频上传给我填写的服务商。</span>
-      </label>
-    </>
-  );
-}
-
-function ExternalChannel({
-  external,
-  busy,
-  testResult,
-  onSave,
-  onSaveKey,
-  onClearKey,
-  onTest,
-}: {
-  external: ExternalAiSettings | null;
-  busy: boolean;
-  testResult: ReactNode;
-  onSave: (patch: Partial<ExternalAiSettings>) => void;
-  onSaveKey: (key: string) => void;
-  onClearKey: () => void;
-  onTest: () => void;
-}) {
-  const [apiKey, setApiKey] = useState("");
-  const [revealed, setRevealed] = useState(false);
-  const { draft, update, flush } = useDraftSave(
-    { baseUrl: external?.baseUrl ?? "", model: external?.model ?? "" },
-    (next) => {
-      if (!external) return;
-      const patch: Partial<ExternalAiSettings> = {};
-      // 明显不成形的地址不写库：后端会拒绝，用户还会看到一个吓人的报错。
-      if (next.baseUrl.trim() !== external.baseUrl && looksLikeUrl(next.baseUrl)) {
-        patch.baseUrl = next.baseUrl.trim();
-      }
-      if (next.model.trim() !== external.model && next.model.trim().length <= 160) {
-        patch.model = next.model.trim();
-      }
-      if (Object.keys(patch).length > 0) onSave(patch);
-    },
-    // 地址和模型名只在失焦时落盘：敲到一半的地址不该被当成最终意图。
-    null,
-  );
-
-  if (!external) return <p className="em-empty">正在读取外部 AI 设置…</p>;
-
-  return (
-    <>
-      <p className="em-note">
-        开启后，逐字稿全文和现有结构化分析会发送给你配置的服务商。此设置只控制理解与整理；
-        音频是否上传由上方的转写通道决定。
-      </p>
-
-      <ToggleRow
-        label="启用理解与结构化整理"
-        checked={external.enabled}
-        onChange={(enabled) => onSave({ enabled })}
-      />
-
-      <Field label="接口地址" hint="OpenAI 兼容的 /v1 地址。只有本机地址允许用 http。">
-        <input
-          className="em-input"
-          value={draft.baseUrl}
-          placeholder="https://api.openai.com/v1"
-          onChange={(event) => update({ baseUrl: event.target.value })}
-          onBlur={flush}
-        />
-      </Field>
-
-      <Field label="模型名称" hint="服务商文档里的模型 ID，例如 gpt-4.1-mini。">
-        <input
-          className="em-input"
-          value={draft.model}
-          placeholder="gpt-4.1-mini"
-          onChange={(event) => update({ model: event.target.value })}
-          onBlur={flush}
-        />
-      </Field>
-
-      <Field
-        label="API Key"
-        hint={external.hasApiKey ? "已保存在 macOS 钥匙串里，不会回显。" : "还没有配置，启用前必须先填。"}
-      >
-        <div className="em-field-row">
-          <input
-            className="em-input"
-            type={revealed ? "text" : "password"}
-            value={apiKey}
-            autoComplete="new-password"
-            placeholder={external.hasApiKey ? "填写新 Key 可覆盖旧的" : "仅用于保存，不会回显"}
-            onChange={(event) => setApiKey(event.target.value)}
-          />
-          <div className="em-card-actions">
-            <Button variant="quiet" onClick={() => setRevealed((value) => !value)}>
-              {revealed ? "隐藏" : "显示"}
-            </Button>
-            <Button
-              variant="ghost"
-              disabled={busy || !apiKey.trim()}
-              onClick={() => {
-                onSaveKey(apiKey.trim());
-                setApiKey("");
-              }}
-            >
-              保存
-            </Button>
-            <Button variant="danger" disabled={busy || !external.hasApiKey} onClick={onClearKey}>
-              清除
-            </Button>
-            <Button variant="ghost" disabled={busy || !external.hasApiKey} onClick={onTest}>
-              {testResult ?? "验证"}
-            </Button>
-          </div>
-        </div>
-      </Field>
-
-      <label className="em-check-row">
-        <input
-          type="checkbox"
-          checked={Boolean(external.privacyConsentAt)}
-          onChange={(event) => onSave({ privacyConsentAt: event.target.checked ? new Date().toISOString() : null })}
-        />
-        <span>我已了解：启用后会发送选定记录的逐字稿全文和现有结构化分析，但不会发送音频。</span>
-      </label>
-    </>
-  );
-}
-
-function looksLikeUrl(value: string): boolean {
-  const trimmed = value.trim();
-  if (!/^https?:\/\//i.test(trimmed)) return false;
-  try {
-    new URL(trimmed);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function HfTokenInput({
@@ -702,47 +537,88 @@ function HfTokenInput({
 function summary(
   status: LocalAiStatus,
   engine: TranscriptionEngineStatus | null,
-  channel: "local" | "external",
+  transcriptionMode: "local" | "external",
+  analysisMode: "local" | "external",
   external: ExternalAiSettings | null,
+  catalog: ProviderCatalog | null,
 ): string {
-  if (channel === "external") {
-    const asrReady = Boolean(
-      external &&
+  const transcription = transcriptionMode === "local"
+    ? status.whisperAvailable
+      ? `${engine?.engine === "whisperx" ? "whisperX" : "内嵌 Whisper"} · ${status.whisperModelPath?.split("/").pop() ?? "已就绪"}`
+      : "本机转写待配置"
+    : external &&
         !["", "none"].includes(external.transcriptionProvider) &&
-        external.transcriptionBaseUrl.trim() &&
-        external.transcriptionModel.trim() &&
         external.transcriptionHasApiKey &&
-        external.audioUploadConsentAt,
-    );
-    const analysisIsReady = analysisReady(status, external);
-    const asr = asrReady
-      ? `${external?.transcriptionProvider ?? "第三方服务"} · ${external?.transcriptionModel || "待配置"}`
+        external.audioUploadConsentAt
+      ? `${providerLabel(catalog, external.transcriptionProvider)} · ${external.transcriptionModel || "待配置"}`
       : "第三方转写待配置";
-    const analysis = analysisIsReady
-      ? `外部模型 · ${external?.model || "待配置"}`
-      : "第三方理解待配置";
-    return `转写 ${asr} ｜ 分析 ${analysis} ｜ 索引 ${status.settings.embeddingModel}`;
-  }
-  const whisper = status.whisperAvailable
-    ? `${engine?.engine === "whisperx" ? "whisperX" : "内嵌 Whisper"} · ${status.whisperModelPath?.split("/").pop() ?? "已就绪"}`
-    : "还没有可用的转写模型";
-  const analysis = status.settings.analysisModel;
-  const ollama = status.ollamaAvailable ? "本机 Ollama" : "Ollama 未运行";
-  return `转写 ${whisper} ｜ 分析 ${ollama} · ${analysis} ｜ 索引 ${status.settings.embeddingModel}`;
+  const analysis = analysisMode === "local"
+    ? `${status.ollamaAvailable ? "本机 Ollama" : "Ollama 未运行"} · ${status.settings.analysisModel}`
+    : analysisReady(external)
+      ? `${providerLabel(catalog, external?.analysisProvider ?? "")} · ${external?.model || "待配置"}`
+      : "第三方分析待配置";
+  return `转写 ${transcription} ｜ 分析 ${analysis} ｜ 索引 ${status.settings.embeddingModel}`;
 }
 
-function analysisReady(status: LocalAiStatus, external: ExternalAiSettings | null): boolean {
-  // 与后端 analyze 的路由判定保持一致：云端就绪（启用 + Key + 同意 + 地址模型齐全）
-  // 或本机 Ollama 就绪，任一满足即「可用」。处理方式开关只决定这里展示哪套配置。
-  const cloudReady = Boolean(
+function analysisReady(external: ExternalAiSettings | null): boolean {
+  return Boolean(
     external?.enabled &&
       external.hasApiKey &&
       external.privacyConsentAt &&
       external.baseUrl.trim() &&
-      external.model.trim(),
+      external.model.trim() &&
+      external.analysisProvider.trim(),
   );
-  if (cloudReady) return true;
-  return status.ollamaAvailable && status.ollamaModels.some((model) => model.name === status.settings.analysisModel);
+}
+
+/** 卡片头的第三方六态药丸：与表单状态条同一推导函数、同一词表。 */
+function ExternalVerifyPill({
+  target,
+  settings,
+  health,
+  credentialRevision,
+  catalogVersion,
+  fallbackState,
+}: {
+  target: "analysis" | "transcription";
+  settings: ExternalAiSettings | null;
+  health: ProviderHealthSnapshot | null;
+  credentialRevision: number;
+  catalogVersion: number;
+  fallbackState: "unverified" | "unconfigured";
+}) {
+  if (!settings) return <StatusPill ok={null} />;
+  const state = deriveVerifyState({
+    hasCredentials: target === "analysis" ? settings.hasApiKey : settings.transcriptionHasApiKey,
+    providerId: target === "analysis" ? settings.analysisProvider : settings.transcriptionProvider,
+    baseUrl: target === "analysis" ? settings.baseUrl : settings.transcriptionBaseUrl,
+    model: target === "analysis" ? settings.model : settings.transcriptionModel,
+    health,
+    credentialRevision,
+    catalogVersion,
+    draftDeviation: false,
+    busy: false,
+  });
+  const description =
+    state === "verified"
+      ? verifiedDescription(health)
+      : state === "failed"
+        ? failedDescription(health)
+        : null;
+  // 卡片头窄：长描述只保留到冒号前。
+  return (
+    <VerifyStatusPill
+      state={state === "unverified" ? fallbackState : state}
+      description={description}
+    />
+  );
+}
+
+function providerLabel(catalog: ProviderCatalog | null, providerId: string): string {
+  return (
+    catalog?.providers.find((provider) => provider.id === providerId)?.label ??
+    (providerId && providerId !== "none" ? providerId : "第三方服务")
+  );
 }
 
 function preprocessorText(preprocessor: AudioPreprocessorStatus | null): string {

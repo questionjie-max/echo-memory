@@ -8,6 +8,11 @@ import type {
   DeleteRecordsResult,
   DiskSpaceStatus,
   ExternalAiSettings,
+  DiagnosisReport,
+  ProviderHealthSnapshot,
+  ProviderCatalog,
+  RemoteModelList,
+  SaveAndVerifyOutcome,
   GrowthGraph,
   IngestResult,
   KnowledgeAnswer,
@@ -477,6 +482,45 @@ export function updateExternalAiSettings(settings: ExternalAiSettings): Promise<
   return invoke<ExternalAiSettings>("update_external_ai_settings", { settings });
 }
 
+export function getProviderCatalog(): Promise<ProviderCatalog> {
+  return invoke<ProviderCatalog>("get_provider_catalog");
+}
+
+export function saveExternalCredentials(
+  target: "analysis" | "transcription",
+  providerId: string,
+  credentials: Record<string, string>,
+): Promise<ExternalAiSettings> {
+  return invoke<ExternalAiSettings>("save_external_credentials", {
+    target,
+    providerId,
+    credentials,
+  });
+}
+
+export function clearExternalCredentials(
+  target: "analysis" | "transcription",
+): Promise<ExternalAiSettings> {
+  return invoke<ExternalAiSettings>("clear_external_credentials", { target });
+}
+
+export function reuseExternalCredentials(
+  target: "analysis" | "transcription",
+): Promise<ExternalAiSettings> {
+  return invoke<ExternalAiSettings>("reuse_external_credentials", { target });
+}
+
+/** 仅在用户明确点击“显示”时取回当前槽位的凭据。 */
+export function revealExternalCredentials(
+  target: "analysis" | "transcription",
+  providerId: string,
+): Promise<Record<string, string>> {
+  return invoke<Record<string, string>>("reveal_external_credentials", {
+    target,
+    providerId,
+  });
+}
+
 export function setExternalAiApiKey(apiKey: string): Promise<ExternalAiSettings> {
   return invoke<ExternalAiSettings>("set_external_ai_api_key", { apiKey });
 }
@@ -495,6 +539,72 @@ export function clearExternalAsrApiKey(): Promise<ExternalAiSettings> {
 
 export function testExternalAiConnection(): Promise<void> {
   return invoke<void>("test_external_ai_connection");
+}
+
+/** 发送一段约 1 秒的测试音，真实验证第三方转写的凭据、地址和模型。 */
+export function testExternalAsrConnection(): Promise<void> {
+  return invoke<void>("test_external_asr_connection");
+}
+
+/** 用表单中的新 Key，或当前服务商的已保存 Key，拉取分组后的模型列表。 */
+export function listExternalModels(
+  target: "analysis" | "transcription",
+  providerId: string,
+  baseUrl: string,
+  apiKey: string | null,
+): Promise<RemoteModelList> {
+  return invoke<RemoteModelList>("list_external_models", {
+    target,
+    providerId,
+    baseUrl,
+    apiKey,
+  });
+}
+
+/** 草稿诊断：不落盘的真实小请求；通过时返回一次性验证票据。 */
+export function diagnoseExternalProvider(input: {
+  target: "analysis" | "transcription";
+  providerId: string;
+  baseUrl: string;
+  model: string;
+  credentials: Record<string, string>;
+}): Promise<DiagnosisReport> {
+  return invoke<DiagnosisReport>("diagnose_external_provider", input);
+}
+
+/** 保存并验证：先核销一次性票据再提交；验证失败原配置不变。 */
+export function saveAndVerifyProvider(args: {
+  target: "analysis" | "transcription";
+  providerId: string;
+  baseUrl: string;
+  model: string;
+  credentials: Record<string, string>;
+  privacyConsentAt: string | null;
+  audioUploadConsentAt: string | null;
+  enabled: boolean;
+  verificationToken: string;
+}): Promise<SaveAndVerifyOutcome> {
+  return invoke<SaveAndVerifyOutcome>("save_and_verify_provider", { args });
+}
+
+/** 验证当前已保存配置（结果写入健康快照，含失败）。 */
+export function verifySavedProvider(
+  target: "analysis" | "transcription",
+): Promise<DiagnosisReport> {
+  return invoke<DiagnosisReport>("verify_saved_provider", { target });
+}
+
+/** 健康快照（可能为 null = 尚未验证过）与凭据修订号。 */
+export function getProviderHealthStatus(
+  target: "analysis" | "transcription",
+): Promise<ProviderHealthSnapshot | null> {
+  return invoke<ProviderHealthSnapshot | null>("get_provider_health_status", { target });
+}
+
+export function getCredentialRevision(
+  target: "analysis" | "transcription",
+): Promise<number> {
+  return invoke<number>("get_credential_revision", { target });
 }
 
 /** 拉取服务商的 OpenAI 兼容模型列表（保存前使用；Key 只在内存中传递）。 */

@@ -358,7 +358,14 @@ int echo_recording_start(const char *path, const char *device_uid) {
             return ECHO_RECORDING_AUDIO_ERROR;
         }
 
-        AVAudioEngine *engine = [[AVAudioEngine alloc] init];
+        // 引擎安装与启动整段包 @try/@catch：AVAudioEngine 系列 API 在设备
+        // 格式异常等边界条件下会抛 NSException，异常穿过 C ABI 进入 Rust 时
+        // 无法被 catch_unwind 兜住（Rust 只挡得住 Rust panic），进程直接
+        // abort——2026-11-11 实机验证过这条路径会整体闪退。兜底后任何原生
+        // 异常都降级为 AUDIO_ERROR，应用存活并给出可行动错误。
+        AVAudioEngine *engine = nil;
+        @try {
+        engine = [[AVAudioEngine alloc] init];
         AVAudioInputNode *input = engine.inputNode;
         AudioUnit audio_unit = input.audioUnit;
         status = AudioUnitSetProperty(audio_unit,
@@ -372,7 +379,14 @@ int echo_recording_start(const char *path, const char *device_uid) {
             return ECHO_RECORDING_AUDIO_ERROR;
         }
 
-        AVAudioFormat *format = [input outputFormatForBus:0];
+        // 输入节点必须用 inputFormatForBus:0 取硬件格式。
+        // outputFormatForBus:0 返回的是引擎「期望交付」的格式（默认设备、
+        // 切换前的陈旧值），与切过来的设备真实格式不一致时，
+        // installTapOnBus 会抛 NSException（"Input HW format and tap format
+        // not matching" / "format.sampleRate == inputHWFormat.sampleRate"），
+        // 且该异常穿过 C ABI 会直接 abort 整个进程。2026-11-11 实机复现：
+        // 切换设备后 outputFormatForBus 报 44100Hz，硬件实为 48000Hz。
+        AVAudioFormat *format = [input inputFormatForBus:0];
         if (format == nil || format.sampleRate <= 0 || format.channelCount == 0) {
             ExtAudioFileDispose(file);
             return ECHO_RECORDING_AUDIO_ERROR;
@@ -423,6 +437,24 @@ int echo_recording_start(const char *path, const char *device_uid) {
         }
         echo_engine = engine;
         return ECHO_RECORDING_OK;
+        } @catch (NSException *exception) {
+            // 原生异常兜底：清理半初始化的引擎/文件，返回错误码而不是让进程 abort。
+            NSLog(@"[echo-memory] 录音启动被原生异常中断：%@：%@",
+                  exception.name, exception.reason);
+            if (engine != nil) {
+                @try {
+                    [engine.inputNode removeTapOnBus:0];
+                } @catch (NSException *ignored) {
+                }
+            }
+            // 异常可能发生在 echo_audio_file 赋值前或后，两个引用都要收尾。
+            ExtAudioFileRef open_file = echo_audio_file != NULL ? echo_audio_file : file;
+            if (open_file != NULL) {
+                ExtAudioFileDispose(open_file);
+            }
+            reset_recording_state();
+            return ECHO_RECORDING_AUDIO_ERROR;
+        }
     }
 }
 

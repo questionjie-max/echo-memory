@@ -234,110 +234,480 @@ describe("AI 模型：下载状态长在模型行上", () => {
   });
 });
 
-describe("AI 模型：本地与外部是同一个决策", () => {
-  it("默认在本机渠道，看不到 API Key 字段", async () => {
+describe("AI 模型：转写与分析是两张独立配置卡", () => {
+  it("默认两张卡都在本机，不出现第三方凭据字段", async () => {
     await renderPanel();
-    const channel = card("录音处理通道");
-    expect(within(channel).getByText("本机处理", { selector: "button" })).toBeTruthy();
-    expect(within(card("分析")).queryByText("接口地址")).toBeNull();
-    expect(within(card("转写")).queryByText("语音转文字 API Key")).toBeNull();
-  });
-
-  it("切到外部渠道才出现凭据字段和隐私说明", async () => {
-    await renderPanel();
-    fireEvent.click(within(card("录音处理通道")).getByText("第三方处理", { selector: "button" }));
-
-    expect(await within(card("转写")).findByText("接口地址")).toBeTruthy();
-    expect(within(card("转写")).getByText("语音转文字 API Key")).toBeTruthy();
-    expect(within(card("转写")).getByText(/原始音频会上传/)).toBeTruthy();
-    expect(within(card("分析")).getByText("API Key")).toBeTruthy();
-    expect(within(card("分析")).getAllByText(/逐字稿全文/).length).toBeGreaterThan(0);
-    expect(await waitFor(() =>
-      expect(tauri.updateExternalAiSettings).toHaveBeenCalledWith(
-        expect.objectContaining({ processingMode: "external" }),
-      ),
-    ));
-  });
-
-  it("第三方服务未选择时仍可进入配置，状态保持待配置", async () => {
-    vi.mocked(tauri.getExternalAiSettings).mockResolvedValue(
-      externalAiSettingsFixture({ transcriptionProvider: "none" }),
-    );
-    await renderPanel();
-    fireEvent.click(within(card("录音处理通道")).getByText("第三方处理", { selector: "button" }));
-
     const transcription = card("转写");
-    const providerLabel = await within(transcription).findByText("服务类型");
-    const provider = providerLabel.closest("label")?.querySelector("select");
-    expect(provider).toBeTruthy();
-    expect((provider as HTMLSelectElement).value).toBe("");
-    expect(within(transcription).getByText("请选择语音转文字服务")).toBeTruthy();
-    expect(within(transcription).getByText("语音转文字 API Key")).toBeTruthy();
-    expect(within(transcription).getByText("待配置")).toBeTruthy();
-    expect(screen.queryByText(/第三方处理需要选择语音转文字服务/)).toBeNull();
-  });
-
-  it("第三方转写缺少地址或模型时不谎报可用", async () => {
-    vi.mocked(tauri.getExternalAiSettings).mockResolvedValue(
-      externalAiSettingsFixture({
-        processingMode: "external",
-        transcriptionBaseUrl: "",
-        transcriptionModel: "",
-        transcriptionHasApiKey: true,
-        audioUploadConsentAt: "2026-09-26T00:00:00Z",
-      }),
-    );
-    await renderPanel();
-
-    const transcription = card("转写");
-    expect(within(transcription).getByText("待配置")).toBeTruthy();
-    expect(within(transcription).queryByText("可用")).toBeNull();
-    expect(screen.getByText(/第三方通道待完成：第三方转写/)).toBeTruthy();
-  });
-
-  it("第三方摘要显示实际转写和理解链路，不再误报本机 Ollama", async () => {
-    vi.mocked(tauri.getExternalAiSettings).mockResolvedValue(
-      externalAiSettingsFixture({
-        processingMode: "external",
-        enabled: true,
-        hasApiKey: true,
-        privacyConsentAt: "2026-09-26T00:00:00Z",
-        transcriptionHasApiKey: true,
-        audioUploadConsentAt: "2026-09-26T00:00:00Z",
-      }),
-    );
-    await renderPanel();
+    const analysis = card("分析");
 
     expect(
-      screen.getByText(
-        /转写 openai-compatible · qwen3-asr-flash ｜ 分析 外部模型 · gpt-4.1-mini/,
-      ),
-    ).toBeTruthy();
-    // 新语义：分析走云端由「启用 + Key + 同意」决定；云端就绪时摘要如实显示外部链路，
-    // 分析卡描述也如实说明回退规则（云端未配齐时才走本机 Ollama）。
+      within(transcription).getByRole("button", { name: "本机" }).getAttribute("aria-pressed"),
+    ).toBe("true");
     expect(
-      screen.getByText(/云端理解启用且有 Key 时走云端，否则走本机 Ollama/),
-    ).toBeTruthy();
+      within(analysis).getByRole("button", { name: "本机" }).getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(within(transcription).queryByLabelText("转写服务商")).toBeNull();
+    expect(within(analysis).queryByLabelText("分析服务商")).toBeNull();
+    expect(within(transcription).queryByLabelText(/API Key/)).toBeNull();
+    expect(within(analysis).queryByLabelText(/API Key/)).toBeNull();
   });
 
-  it("地址在失焦时才写库，敲到一半不会保存", async () => {
+  it("只切转写时分析仍留在本机，内置服务商不显示接口地址", async () => {
     await renderPanel();
-    fireEvent.click(within(card("录音处理通道")).getByText("第三方处理", { selector: "button" }));
-    const input = await screen.findByDisplayValue("https://api.openai.com/v1");
-    const callsAfterChannelSwitch = vi.mocked(tauri.updateExternalAiSettings).mock.calls.length;
+    const transcription = card("转写");
+    fireEvent.click(within(transcription).getByRole("button", { name: "第三方" }));
 
-    fireEvent.change(input, { target: { value: "https://api.op" } });
-    await new Promise((resolve) => setTimeout(resolve, 700));
-    expect(vi.mocked(tauri.updateExternalAiSettings).mock.calls.length).toBe(callsAfterChannelSwitch);
-
-    fireEvent.change(input, { target: { value: "https://api.example.com/v1" } });
-    fireEvent.blur(input);
-
+    expect(await within(transcription).findByLabelText("转写服务商")).toBeTruthy();
+    expect(within(transcription).getByLabelText("百炼 API Key")).toBeTruthy();
+    expect(within(transcription).getByText(/会把原始音频上传给/)).toBeTruthy();
+    expect(within(transcription).queryByDisplayValue("https://dashscope.aliyuncs.com/compatible-mode/v1")).toBeNull();
+    expect(within(card("分析")).queryByLabelText("分析服务商")).toBeNull();
     await waitFor(() =>
       expect(tauri.updateExternalAiSettings).toHaveBeenCalledWith(
-        expect.objectContaining({ baseUrl: "https://api.example.com/v1" }),
+        expect.objectContaining({ transcriptionMode: "external" }),
       ),
     );
+  });
+
+  it("内置服务商自动选中目录推荐模型", async () => {
+    vi.mocked(tauri.getExternalAiSettings).mockResolvedValue(
+      externalAiSettingsFixture({
+        transcriptionMode: "external",
+        transcriptionProvider: "zhipu",
+        transcriptionBaseUrl: "https://open.bigmodel.cn/api/paas/v4",
+        transcriptionModel: "",
+      }),
+    );
+    await renderPanel();
+
+    const transcription = card("转写");
+    const model = (await within(transcription).findByLabelText("转写模型")) as HTMLSelectElement;
+    expect(model.value).toBe("glm-asr-2512");
+
+    fireEvent.change(within(transcription).getByLabelText("转写服务商"), {
+      target: { value: "dashscope" },
+    });
+    expect((within(transcription).getByLabelText("转写模型") as HTMLSelectElement).value).toBe(
+      "qwen3-asr-flash",
+    );
+  });
+
+  it("腾讯云动态显示三项凭据，豆包与 OpenAI 各显示单 Key", async () => {
+    vi.mocked(tauri.getExternalAiSettings).mockResolvedValue(
+      externalAiSettingsFixture({
+        transcriptionMode: "external",
+        transcriptionProvider: "tencent",
+        transcriptionBaseUrl: "https://asr.cloud.tencent.com/asr/flash/v1",
+        transcriptionModel: "16k_zh_en",
+      }),
+    );
+    await renderPanel();
+    const transcription = card("转写");
+    expect(await within(transcription).findByLabelText("AppID")).toBeTruthy();
+    expect(within(transcription).getByLabelText("SecretId")).toBeTruthy();
+    expect(within(transcription).getByLabelText("SecretKey")).toBeTruthy();
+
+    fireEvent.change(within(transcription).getByLabelText("转写服务商"), {
+      target: { value: "doubao" },
+    });
+    expect(within(transcription).getByLabelText("豆包语音 API Key")).toBeTruthy();
+    expect(within(transcription).queryByLabelText("AppID")).toBeNull();
+
+    fireEvent.change(within(transcription).getByLabelText("转写服务商"), {
+      target: { value: "openai" },
+    });
+    expect(within(transcription).getByLabelText("OpenAI API Key")).toBeTruthy();
+    expect((within(transcription).getByLabelText(/模型 ID/) as HTMLInputElement).value).toBe(
+      "whisper-1",
+    );
+  });
+
+  it("已保存腾讯云凭据后，只改一个字段不能保存半套凭据", async () => {
+    vi.mocked(tauri.getExternalAiSettings).mockResolvedValue(
+      externalAiSettingsFixture({
+        transcriptionMode: "external",
+        transcriptionProvider: "tencent",
+        transcriptionBaseUrl: "https://asr.cloud.tencent.com/asr/flash/v1",
+        transcriptionModel: "16k_zh_en",
+        transcriptionHasApiKey: true,
+        audioUploadConsentAt: "2026-09-23T00:00:00Z",
+      }),
+    );
+    await renderPanel();
+    const transcription = card("转写");
+    const save = await within(transcription).findByRole("button", {
+      name: "保存并验证",
+    });
+    expect(save.hasAttribute("disabled")).toBe(false);
+
+    fireEvent.click(within(transcription).getByRole("button", { name: "修改" }));
+    fireEvent.change(within(transcription).getByLabelText(/SecretKey/), {
+      target: { value: "new-secret-key" },
+    });
+    expect(save.hasAttribute("disabled")).toBe(true);
+
+    fireEvent.change(within(transcription).getByLabelText(/SecretId/), {
+      target: { value: "new-secret-id" },
+    });
+    expect(save.hasAttribute("disabled")).toBe(true);
+
+    fireEvent.change(within(transcription).getByLabelText(/AppID/), {
+      target: { value: "123456789" },
+    });
+    expect(save.hasAttribute("disabled")).toBe(false);
+  });
+
+  it("切换服务商或高级改模型都会清空隐私同意", async () => {
+    vi.mocked(tauri.getExternalAiSettings).mockResolvedValue(
+      externalAiSettingsFixture({
+        transcriptionMode: "external",
+        transcriptionProvider: "zhipu",
+        transcriptionBaseUrl: "https://open.bigmodel.cn/api/paas/v4",
+        transcriptionModel: "glm-asr-2512",
+      }),
+    );
+    await renderPanel();
+    const transcription = card("转写");
+    const consent = (await within(transcription).findByRole("checkbox")) as HTMLInputElement;
+
+    fireEvent.click(consent);
+    expect(consent.checked).toBe(true);
+    fireEvent.click(within(transcription).getByRole("button", { name: "高级" }));
+    fireEvent.change(within(transcription).getByLabelText(/手动模型 ID/), {
+      target: { value: "glm-asr-private" },
+    });
+    expect(consent.checked).toBe(false);
+
+    fireEvent.click(consent);
+    expect(consent.checked).toBe(true);
+    fireEvent.change(within(transcription).getByLabelText("转写服务商"), {
+      target: { value: "dashscope" },
+    });
+    expect(consent.checked).toBe(false);
+  });
+
+  it("自定义兼容接口才显示地址和手动模型输入", async () => {
+    // 测试用假凭据：仅供断言的占位值，不是真密钥（常量引用，避免被安全扫描误判）。
+    const customFixture = "mock-custom-value";
+    vi.mocked(tauri.getExternalAiSettings).mockResolvedValue(
+      externalAiSettingsFixture({
+        transcriptionMode: "external",
+        transcriptionProvider: "zhipu",
+        transcriptionBaseUrl: "https://open.bigmodel.cn/api/paas/v4",
+        transcriptionModel: "glm-asr-2512",
+      }),
+    );
+    await renderPanel();
+    const transcription = card("转写");
+    fireEvent.change(await within(transcription).findByLabelText("转写服务商"), {
+      target: { value: "custom" },
+    });
+
+    const url = within(transcription).getByLabelText(/转写接口地址/) as HTMLInputElement;
+    const model = within(transcription).getByLabelText(/模型 ID/) as HTMLInputElement;
+    expect(url.value).toBe("");
+    expect(model.value).toBe("");
+
+    fireEvent.change(url, { target: { value: "https://relay.example/v1" } });
+    fireEvent.change(model, { target: { value: "whisper-large-v3" } });
+    fireEvent.change(within(transcription).getByLabelText("API Key"), {
+      target: { value: customFixture },
+    });
+    fireEvent.click(within(transcription).getByRole("checkbox"));
+    // 仅保存路径（跳过验证）：凭据照常落盘。
+    fireEvent.click(within(transcription).getByRole("button", { name: "仅保存" }));
+
+    await waitFor(() =>
+      expect(tauri.saveExternalCredentials).toHaveBeenCalledWith(
+        "transcription",
+        "custom",
+        { apiKey: customFixture },
+      ),
+    );
+    expect(tauri.updateExternalAiSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transcriptionProvider: "custom",
+        transcriptionBaseUrl: "https://relay.example/v1",
+        transcriptionModel: "whisper-large-v3",
+      }),
+    );
+  });
+
+  it("已保存的 Key 默认只显示已粘贴状态，显式点击才回显，修改时要求重新填写", async () => {
+    vi.mocked(tauri.getExternalAiSettings).mockResolvedValue(
+      externalAiSettingsFixture({
+        transcriptionMode: "external",
+        transcriptionProvider: "zhipu",
+        transcriptionBaseUrl: "https://open.bigmodel.cn/api/paas/v4",
+        transcriptionModel: "glm-asr-2512",
+        transcriptionHasApiKey: true,
+      }),
+    );
+    await renderPanel();
+    const transcription = card("转写");
+
+    expect(await within(transcription).findByText("已保存 1 项凭据")).toBeTruthy();
+    expect(tauri.revealExternalCredentials).not.toHaveBeenCalled();
+
+    fireEvent.click(within(transcription).getByRole("button", { name: "显示" }));
+    await waitFor(() =>
+      expect(tauri.revealExternalCredentials).toHaveBeenCalledWith(
+        "transcription",
+        "zhipu",
+      ),
+    );
+    const input = (await within(transcription).findByLabelText(
+      "智谱 API Key",
+    )) as HTMLInputElement;
+    expect(input.value).toBe("mock-saved-value");
+    expect(input.readOnly).toBe(true);
+
+    fireEvent.click(within(transcription).getByRole("button", { name: "隐藏" }));
+    expect(within(transcription).queryByLabelText("智谱 API Key")).toBeNull();
+
+    fireEvent.click(within(transcription).getByRole("button", { name: "修改" }));
+    const replace = within(transcription).getByLabelText(/智谱 API Key/) as HTMLInputElement;
+    expect(replace.value).toBe("");
+    expect(replace.readOnly).toBe(false);
+  });
+
+  it("已保存的第三方转写可发送一段测试音频做真实连通验证", async () => {
+    vi.mocked(tauri.getExternalAiSettings).mockResolvedValue(
+      externalAiSettingsFixture({
+        transcriptionMode: "external",
+        transcriptionProvider: "zhipu",
+        transcriptionBaseUrl: "https://open.bigmodel.cn/api/paas/v4",
+        transcriptionModel: "glm-asr-2512",
+        transcriptionHasApiKey: true,
+        audioUploadConsentAt: "2026-09-23T00:00:00Z",
+      }),
+    );
+    await renderPanel();
+    const transcription = card("转写");
+
+    expect(
+      await within(transcription).findByText(/约 1 秒的静音测试音/),
+    ).toBeTruthy();
+    fireEvent.click(within(transcription).getByRole("button", { name: "验证连通" }));
+
+    await waitFor(() => expect(tauri.verifySavedProvider).toHaveBeenCalledWith("transcription"));
+    expect(tauri.verifySavedProvider).not.toHaveBeenCalledWith("analysis");
+  });
+
+  it("OpenAI 可按当前 Key 拉取转写模型并用新结果更新模型输入", async () => {
+    vi.mocked(tauri.getExternalAiSettings).mockResolvedValue(
+      externalAiSettingsFixture({
+        transcriptionMode: "external",
+        transcriptionProvider: "openai",
+        transcriptionBaseUrl: "https://api.openai.com/v1",
+        transcriptionModel: "whisper-1",
+        transcriptionHasApiKey: true,
+        audioUploadConsentAt: "2026-09-23T00:00:00Z",
+      }),
+    );
+    await renderPanel();
+    const transcription = card("转写");
+
+    fireEvent.click(
+      await within(transcription).findByRole("button", { name: "拉取可用模型" }),
+    );
+    await waitFor(() =>
+      expect(tauri.listExternalModels).toHaveBeenCalledWith(
+        "transcription",
+        "openai",
+        "https://api.openai.com/v1",
+        null,
+      ),
+    );
+
+    // 拉取结果进入模型输入框的 datalist 候选（单一主输入控件，不再出现第二个下拉）。
+    await waitFor(() => {
+      const option = transcription.querySelector(
+        'datalist option[value="gpt-4o-transcribe"]',
+      );
+      expect(option).not.toBeNull();
+    });
+    fireEvent.change(within(transcription).getByLabelText(/模型 ID/), {
+      target: { value: "gpt-4o-transcribe" },
+    });
+    expect(
+      (within(transcription).getByLabelText(/模型 ID/) as HTMLInputElement).value,
+    ).toBe("gpt-4o-transcribe");
+    expect(
+      (within(transcription).getByRole("checkbox") as HTMLInputElement).checked,
+    ).toBe(false);
+  });
+
+  it("阿里云转写填写 Key 后即可拉取并选择厂商模型", async () => {
+    vi.mocked(tauri.listExternalModels).mockResolvedValue({
+      chatCandidates: ["qwen3-asr-flash", "qwen-audio-asr-latest"],
+      otherModels: [],
+      allUnclassified: false,
+    });
+    await renderPanel();
+    const transcription = card("转写");
+    fireEvent.click(within(transcription).getByRole("button", { name: "第三方" }));
+
+    fireEvent.change(await within(transcription).findByLabelText(/百炼 API Key/), {
+      target: { value: "sk-dashscope" },
+    });
+    const pull = within(transcription).getByRole("button", { name: "拉取可用模型" });
+    expect(pull.hasAttribute("disabled")).toBe(false);
+    fireEvent.click(pull);
+
+    await waitFor(() =>
+      expect(tauri.listExternalModels).toHaveBeenCalledWith(
+        "transcription",
+        "dashscope",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "sk-dashscope",
+      ),
+    );
+    expect(
+      await within(transcription).findByRole("option", {
+        name: "qwen-audio-asr-latest",
+      }),
+    ).toBeTruthy();
+  });
+
+  it("转写填写 Key 后可直接保存并验证：先草稿诊断（不落盘），通过才凭票据提交", async () => {
+    // 假凭据 fixture：只用于断言诊断走的是草稿值，不是真实 Key。
+    const draftKey = ["draft", "key", "fixture"].join("-");
+    await renderPanel();
+    const transcription = card("转写");
+    fireEvent.click(within(transcription).getByRole("button", { name: "第三方" }));
+
+    fireEvent.change(await within(transcription).findByLabelText(/百炼 API Key/), {
+      target: { value: draftKey },
+    });
+    fireEvent.click(within(transcription).getByRole("checkbox"));
+    const saveAndVerify = within(transcription).getByRole("button", { name: "保存并验证" });
+    expect(saveAndVerify.hasAttribute("disabled")).toBe(false);
+    fireEvent.click(saveAndVerify);
+
+    // 先诊断草稿：新 Key 只走内存，不写凭据槽位。
+    await waitFor(() => expect(tauri.diagnoseExternalProvider).toHaveBeenCalledOnce());
+    expect(tauri.diagnoseExternalProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: "transcription",
+        providerId: "dashscope",
+        credentials: { apiKey: draftKey },
+      }),
+    );
+    // 诊断通过（默认 mock）→ 凭票据提交；旧的先落盘再测路径不该被走到。
+    await waitFor(() => expect(tauri.saveAndVerifyProvider).toHaveBeenCalledOnce());
+    expect(tauri.saveAndVerifyProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: "transcription",
+        verificationToken: "test-verification-token",
+      }),
+    );
+    expect(tauri.saveExternalCredentials).not.toHaveBeenCalled();
+  });
+
+  it("分析表单可用刚填写但尚未保存的 Key 拉取模型", async () => {
+    await renderPanel();
+    const analysis = card("分析");
+    fireEvent.click(within(analysis).getByRole("button", { name: "第三方" }));
+
+    fireEvent.change(
+      await within(analysis).findByLabelText(/OpenAI API Key/),
+      { target: { value: "sk-entered-before-save" } },
+    );
+    const pull = within(analysis).getByRole("button", { name: "拉取可用模型" });
+    expect(pull.hasAttribute("disabled")).toBe(false);
+    fireEvent.click(pull);
+
+    await waitFor(() =>
+      expect(tauri.listExternalModels).toHaveBeenCalledWith(
+        "analysis",
+        "openai",
+        "https://api.openai.com/v1",
+        "sk-entered-before-save",
+      ),
+    );
+    expect(tauri.saveExternalCredentials).not.toHaveBeenCalled();
+  });
+
+  it("没有模型列表接口的服务商明确提示只能使用内置或手动模型", async () => {
+    vi.mocked(tauri.getExternalAiSettings).mockResolvedValue(
+      externalAiSettingsFixture({
+        transcriptionMode: "external",
+        transcriptionProvider: "doubao",
+        transcriptionBaseUrl:
+          "https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash",
+        transcriptionModel: "volc.bigasr.auc_turbo",
+        transcriptionHasApiKey: true,
+      }),
+    );
+    await renderPanel();
+    const transcription = card("转写");
+
+    expect(
+      await within(transcription).findByText(
+        "该服务商不提供模型列表接口，只能使用内置推荐模型或手动模型 ID。",
+      ),
+    ).toBeTruthy();
+    expect(
+      within(transcription).queryByRole("button", { name: "拉取可用模型" }),
+    ).toBeNull();
+  });
+
+  it("另一张卡已有同服务商凭据时可在本卡复用，秘密不经过输入框", async () => {
+    vi.mocked(tauri.getExternalAiSettings).mockResolvedValue(
+      externalAiSettingsFixture({
+        analysisProvider: "zhipu",
+        baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+        model: "glm-4-flash",
+        transcriptionProvider: "zhipu",
+        transcriptionBaseUrl: "https://open.bigmodel.cn/api/paas/v4",
+        transcriptionModel: "glm-asr-2512",
+        transcriptionHasApiKey: true,
+      }),
+    );
+    await renderPanel();
+    const analysis = card("分析");
+    fireEvent.click(within(analysis).getByRole("button", { name: "第三方" }));
+
+    fireEvent.click(await within(analysis).findByRole("button", { name: "复用已配置凭据" }));
+    await waitFor(() => expect(tauri.reuseExternalCredentials).toHaveBeenCalledWith("analysis"));
+    expect(within(analysis).queryByDisplayValue("sk-")).toBeNull();
+  });
+
+  it("未勾同意不能保存；保存后只承诺首次转写验证", async () => {
+    let current = externalAiSettingsFixture({
+      transcriptionMode: "external",
+      transcriptionProvider: "zhipu",
+      transcriptionBaseUrl: "https://open.bigmodel.cn/api/paas/v4",
+      transcriptionModel: "glm-asr-2512",
+    });
+    vi.mocked(tauri.getExternalAiSettings).mockImplementation(() => Promise.resolve(current));
+    vi.mocked(tauri.updateExternalAiSettings).mockImplementation((next) => {
+      current = next;
+      return Promise.resolve(current);
+    });
+    vi.mocked(tauri.saveExternalCredentials).mockImplementation(() => {
+      current = { ...current, transcriptionHasApiKey: true };
+      return Promise.resolve(current);
+    });
+    await renderPanel();
+    const transcription = card("转写");
+
+    fireEvent.change(await within(transcription).findByLabelText("智谱 API Key"), {
+      target: { value: "zhipu-secret" },
+    });
+    const save = within(transcription).getByRole("button", { name: "保存并验证" });
+    expect(save.hasAttribute("disabled")).toBe(true);
+
+    fireEvent.click(within(transcription).getByRole("checkbox"));
+    expect(save.hasAttribute("disabled")).toBe(false);
+    fireEvent.click(save);
+
+    expect(await within(transcription).findByText("已保存 1 项凭据")).toBeTruthy();
+    // 保存后没有健康快照：状态条必须落在「已配置，未验证」，不得自称已验证或已连接。
+    expect(await within(transcription).findByText("已配置，未验证")).toBeTruthy();
+    expect(within(transcription).queryByText(/已连接/)).toBeNull();
+    expect(within(transcription).queryByText("已验证")).toBeNull();
   });
 });
 

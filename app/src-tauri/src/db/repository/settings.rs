@@ -1,6 +1,10 @@
 use super::LibraryRepository;
 use crate::error::{AppError, AppResult};
-use crate::types::{AnalysisTemplate, ExternalAiSettings, KnowledgeSettings, TemplateSection};
+use crate::provider_catalog;
+use crate::types::{
+    AnalysisTemplate, ExternalAiSettings, KnowledgeSettings, ProviderHealthSnapshot,
+    TemplateSection,
+};
 use chrono::Utc;
 use rusqlite::{params, OptionalExtension, Row};
 use std::path::Path;
@@ -98,23 +102,81 @@ impl LibraryRepository {
         has_api_key: bool,
         transcription_has_api_key: bool,
     ) -> AppResult<ExternalAiSettings> {
+        let analysis_base_url = self.setting(
+            "external_ai_base_url",
+            "https://api.openai.com/v1",
+        )?;
+        let analysis_model = self.setting("external_ai_model", "gpt-4.1-mini")?;
+        let analysis_provider = provider_catalog::normalize_provider_id(
+            "analysis",
+            &self.setting("external_ai_provider", "")?,
+            &analysis_base_url,
+        );
+        let analysis = provider_catalog::resolve_config(
+            "analysis",
+            &analysis_provider,
+            &analysis_base_url,
+            &analysis_model,
+        )
+        .unwrap_or(provider_catalog::ResolvedProviderConfig {
+            provider_id: analysis_provider,
+            base_url: analysis_base_url,
+            model: analysis_model,
+        });
+        let transcription_provider_stored =
+            self.setting("cloud_transcription_provider", "openai-compatible")?;
+        let transcription_base_url = self.setting(
+            "cloud_transcription_base_url",
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        )?;
+        let transcription_model =
+            self.setting("cloud_transcription_model", "qwen3-asr-flash")?;
+        let transcription_provider = if transcription_provider_stored == "none" {
+            "none".to_owned()
+        } else {
+            provider_catalog::normalize_provider_id(
+                "transcription",
+                &transcription_provider_stored,
+                &transcription_base_url,
+            )
+        };
+        let transcription = if transcription_provider == "none" {
+            provider_catalog::ResolvedProviderConfig {
+                provider_id: transcription_provider,
+                base_url: transcription_base_url,
+                model: transcription_model,
+            }
+        } else {
+            provider_catalog::resolve_config(
+                "transcription",
+                &transcription_provider,
+                &transcription_base_url,
+                &transcription_model,
+            )
+            .unwrap_or(provider_catalog::ResolvedProviderConfig {
+                provider_id: transcription_provider,
+                base_url: transcription_base_url,
+                model: transcription_model,
+            })
+        };
+        let transcription_mode = self.setting(
+            "cloud_transcription_mode",
+            &self.setting("processing_mode", "local")?,
+        )?;
         Ok(ExternalAiSettings {
-            processing_mode: self.setting("processing_mode", "local")?,
+            transcription_mode,
             enabled: self.setting("external_ai_enabled", "false")? == "true",
-            base_url: self.setting("external_ai_base_url", "https://api.openai.com/v1")?,
-            model: self.setting("external_ai_model", "gpt-4.1-mini")?,
+            analysis_provider: analysis.provider_id,
+            base_url: analysis.base_url,
+            model: analysis.model,
             has_api_key,
             privacy_consent_at: match self.setting("external_ai_privacy_consent_at", "")? {
                 value if value.is_empty() => None,
                 value => Some(value),
             },
-            transcription_provider: self
-                .setting("cloud_transcription_provider", "openai-compatible")?,
-            transcription_base_url: self.setting(
-                "cloud_transcription_base_url",
-                "https://dashscope.aliyuncs.com/compatible-mode/v1",
-            )?,
-            transcription_model: self.setting("cloud_transcription_model", "qwen3-asr-flash")?,
+            transcription_provider: transcription.provider_id,
+            transcription_base_url: transcription.base_url,
+            transcription_model: transcription.model,
             transcription_has_api_key,
             audio_upload_consent_at: match self
                 .setting("cloud_audio_upload_consent_at", "")?
@@ -132,59 +194,315 @@ impl LibraryRepository {
         has_api_key: bool,
         transcription_has_api_key: bool,
     ) -> AppResult<ExternalAiSettings> {
-        if !matches!(settings.processing_mode.as_str(), "local" | "external") {
+        if !matches!(settings.transcription_mode.as_str(), "local" | "external") {
             return Err(AppError::Invalid("录音处理通道无效".to_owned()));
         }
-        let base_url = settings.base_url.trim().trim_end_matches('/');
-        let model = settings.model.trim();
-        if base_url.is_empty() || base_url.len() > 500 {
-            return Err(AppError::Invalid("外部 AI Base URL 无效".to_owned()));
-        }
+        let analysis_provider = provider_catalog::normalize_provider_id(
+            "analysis",
+            &settings.analysis_provider,
+            &settings.base_url,
+        );
+        let analysis = provider_catalog::resolve_config(
+            "analysis",
+            &analysis_provider,
+            &settings.base_url,
+            &settings.model,
+        )?;
+        let base_url = analysis.base_url.as_str();
         // 安全校验：解析真实 host 后判定（字符串前缀可被 userinfo/子域绕过，
         // 详见 memory.rs::validate_external_base_url）。
         crate::memory::validate_external_base_url(base_url)?;
-        if model.is_empty() || model.len() > 160 {
-            return Err(AppError::Invalid("外部 AI 模型名称无效".to_owned()));
-        }
         if settings.enabled && settings.privacy_consent_at.is_none() {
             return Err(AppError::Invalid(
                 "启用外部 AI 前必须确认文本发送说明".to_owned(),
             ));
         }
-        let transcription_base_url = settings.transcription_base_url.trim().trim_end_matches('/');
-        let transcription_model = settings.transcription_model.trim();
-        if transcription_base_url.is_empty() || transcription_base_url.len() > 500 {
-            return Err(AppError::Invalid("第三方语音转文字地址无效".to_owned()));
+        let requested_transcription_provider = settings.transcription_provider.trim();
+        let transcription_provider = if requested_transcription_provider == "none"
+            || requested_transcription_provider.is_empty()
+        {
+            "none".to_owned()
+        } else {
+            provider_catalog::normalize_provider_id(
+                "transcription",
+                requested_transcription_provider,
+                &settings.transcription_base_url,
+            )
+        };
+        let transcription = if transcription_provider == "none" {
+            provider_catalog::ResolvedProviderConfig {
+                provider_id: "none".to_owned(),
+                base_url: settings
+                    .transcription_base_url
+                    .trim()
+                    .trim_end_matches('/')
+                    .to_owned(),
+                model: settings.transcription_model.trim().to_owned(),
+            }
+        } else {
+            provider_catalog::resolve_config(
+                "transcription",
+                &transcription_provider,
+                &settings.transcription_base_url,
+                &settings.transcription_model,
+            )?
+        };
+        if transcription.provider_id != "none" {
+            crate::memory::validate_external_base_url(&transcription.base_url)?;
         }
-        crate::memory::validate_external_base_url(transcription_base_url)?;
-        if transcription_model.is_empty() || transcription_model.len() > 160 {
-            return Err(AppError::Invalid("第三方语音转文字模型名称无效".to_owned()));
-        }
+        let previous = self.external_ai_settings(false, false)?;
+        let analysis_target_changed = previous.analysis_provider != analysis.provider_id
+            || previous.base_url != analysis.base_url
+            || previous.model != analysis.model;
+        let transcription_target_changed =
+            previous.transcription_provider != transcription.provider_id
+                || previous.transcription_base_url != transcription.base_url
+                || previous.transcription_model != transcription.model;
+        let enabled = if analysis_target_changed {
+            false
+        } else {
+            settings.enabled
+        };
+        let privacy_consent = if analysis_target_changed {
+            ""
+        } else {
+            settings.privacy_consent_at.as_deref().unwrap_or("")
+        };
+        let audio_consent = if transcription_target_changed {
+            ""
+        } else {
+            settings.audio_upload_consent_at.as_deref().unwrap_or("")
+        };
         let mut connection = self.connect()?;
         let transaction = connection.transaction()?;
         let now = Utc::now().to_rfc3339();
-        let consent = settings.privacy_consent_at.as_deref().unwrap_or("");
-        let audio_consent = settings.audio_upload_consent_at.as_deref().unwrap_or("");
         for (key, value) in [
-            ("processing_mode", settings.processing_mode.as_str()),
+            (
+                "cloud_transcription_mode",
+                settings.transcription_mode.as_str(),
+            ),
             (
                 "external_ai_enabled",
-                if settings.enabled { "true" } else { "false" },
+                if enabled { "true" } else { "false" },
             ),
-            ("external_ai_base_url", base_url),
-            ("external_ai_model", model),
-            ("external_ai_privacy_consent_at", consent),
+            ("external_ai_provider", analysis.provider_id.as_str()),
+            ("external_ai_base_url", analysis.base_url.as_str()),
+            ("external_ai_model", analysis.model.as_str()),
+            ("external_ai_privacy_consent_at", privacy_consent),
             (
                 "cloud_transcription_provider",
-                settings.transcription_provider.as_str(),
+                transcription.provider_id.as_str(),
             ),
-            ("cloud_transcription_base_url", transcription_base_url),
-            ("cloud_transcription_model", transcription_model),
+            (
+                "cloud_transcription_base_url",
+                transcription.base_url.as_str(),
+            ),
+            (
+                "cloud_transcription_model",
+                transcription.model.as_str(),
+            ),
             ("cloud_audio_upload_consent_at", audio_consent),
         ] {
             transaction.execute(
                 "INSERT INTO app_settings (key, value, updated_at) VALUES (?1, ?2, ?3) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
                 params![key, value, now],
+            )?;
+        }
+        transaction.commit()?;
+        self.external_ai_settings(has_api_key, transcription_has_api_key)
+    }
+
+    // ---- 第三方连接健康快照与凭据修订号（Phase 0）----
+
+    fn revision_key(target: &str) -> AppResult<String> {
+        match target {
+            "analysis" | "transcription" => {
+                Ok(format!("external_ai_credential_revision.{target}"))
+            }
+            other => Err(AppError::Invalid(format!("凭据目标无效：{other}"))),
+        }
+    }
+
+    /// 当前凭据修订号（无凭据历史时为 0）。凭据任何写入都会使它递增，
+    /// 旧的健康快照随即失效。
+    pub fn credential_revision(&self, target: &str) -> AppResult<i64> {
+        let key = Self::revision_key(target)?;
+        self.setting(&key, "0")?
+            .trim()
+            .parse::<i64>()
+            .map_err(|_| AppError::Invalid("凭据修订号损坏".to_owned()))
+    }
+
+    /// 递增凭据修订号并返回新值。必须与凭据写入在同一次提交语义内调用。
+    pub fn bump_credential_revision(&self, target: &str) -> AppResult<i64> {
+        let key = Self::revision_key(target)?;
+        let next = self.credential_revision(target)? + 1;
+        let connection = self.connect()?;
+        connection.execute(
+            "INSERT INTO app_settings (key, value, updated_at) VALUES (?1, ?2, ?3) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            params![key, next.to_string(), Utc::now().to_rfc3339()],
+        )?;
+        Ok(next)
+    }
+
+    /// 读取某槽位的健康快照（最后两次验证中最新的一次，含 failed）。
+    pub fn provider_health(&self, target: &str) -> AppResult<Option<ProviderHealthSnapshot>> {
+        let connection = self.connect()?;
+        let mut statement = connection.prepare(
+            "SELECT target, provider_id, base_url, model, credential_revision, catalog_version, stage, status, error_code, verified_at FROM provider_health WHERE target = ?1",
+        )?;
+        let mut rows = statement.query(params![target])?;
+        Ok(match rows.next()? {
+            Some(row) => Some(ProviderHealthSnapshot {
+                target: row.get(0)?,
+                provider_id: row.get(1)?,
+                base_url: row.get(2)?,
+                model: row.get(3)?,
+                credential_revision: row.get(4)?,
+                catalog_version: row.get(5)?,
+                stage: row.get(6)?,
+                status: row.get(7)?,
+                error_code: row.get(8)?,
+                verified_at: row.get(9)?,
+            }),
+            None => None,
+        })
+    }
+
+    /// 写入健康快照（覆盖同一槽位旧值）。
+    pub fn save_provider_health(&self, snapshot: &ProviderHealthSnapshot) -> AppResult<()> {
+        let connection = self.connect()?;
+        connection.execute(
+            "INSERT INTO provider_health (target, provider_id, base_url, model, credential_revision, catalog_version, stage, status, error_code, verified_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) ON CONFLICT(target) DO UPDATE SET provider_id = excluded.provider_id, base_url = excluded.base_url, model = excluded.model, credential_revision = excluded.credential_revision, catalog_version = excluded.catalog_version, stage = excluded.stage, status = excluded.status, error_code = excluded.error_code, verified_at = excluded.verified_at",
+            params![
+                snapshot.target,
+                snapshot.provider_id,
+                snapshot.base_url,
+                snapshot.model,
+                snapshot.credential_revision,
+                snapshot.catalog_version,
+                snapshot.stage,
+                snapshot.status,
+                snapshot.error_code,
+                snapshot.verified_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// 「保存并验证」通过后的提交：配置 + 凭据修订号 + 健康快照在单个
+    /// SQLite 事务内落盘。与 `update_external_ai_settings` 的区别：
+    /// 服务商/地址/模型变更**不**重置同意与启用——变更已经过真实验证，
+    /// 重置反而会把用户放回「未启用」的半状态。规范化与安全校验同规。
+    pub fn commit_external_provider(
+        &self,
+        settings: &ExternalAiSettings,
+        has_api_key: bool,
+        transcription_has_api_key: bool,
+        bump_revision_for: Option<&str>,
+        health: Option<&ProviderHealthSnapshot>,
+    ) -> AppResult<ExternalAiSettings> {
+        if !matches!(settings.transcription_mode.as_str(), "local" | "external") {
+            return Err(AppError::Invalid("录音处理通道无效".to_owned()));
+        }
+        let analysis_provider = provider_catalog::normalize_provider_id(
+            "analysis",
+            &settings.analysis_provider,
+            &settings.base_url,
+        );
+        let analysis = provider_catalog::resolve_config(
+            "analysis",
+            &analysis_provider,
+            &settings.base_url,
+            &settings.model,
+        )?;
+        crate::memory::validate_external_base_url(&analysis.base_url)?;
+        let transcription_provider = provider_catalog::normalize_provider_id(
+            "transcription",
+            &settings.transcription_provider,
+            &settings.transcription_base_url,
+        );
+        let transcription = provider_catalog::resolve_config(
+            "transcription",
+            &transcription_provider,
+            &settings.transcription_base_url,
+            &settings.transcription_model,
+        )?;
+        crate::memory::validate_external_base_url(&transcription.base_url)?;
+
+        let mut connection = self.connect()?;
+        let transaction = connection.transaction()?;
+        let now = Utc::now().to_rfc3339();
+        for (key, value) in [
+            (
+                "cloud_transcription_mode",
+                settings.transcription_mode.as_str(),
+            ),
+            (
+                "external_ai_enabled",
+                if settings.enabled { "true" } else { "false" },
+            ),
+            ("external_ai_provider", analysis.provider_id.as_str()),
+            ("external_ai_base_url", analysis.base_url.as_str()),
+            ("external_ai_model", analysis.model.as_str()),
+            (
+                "external_ai_privacy_consent_at",
+                settings.privacy_consent_at.as_deref().unwrap_or(""),
+            ),
+            (
+                "cloud_transcription_provider",
+                transcription.provider_id.as_str(),
+            ),
+            (
+                "cloud_transcription_base_url",
+                transcription.base_url.as_str(),
+            ),
+            (
+                "cloud_transcription_model",
+                transcription.model.as_str(),
+            ),
+            (
+                "cloud_audio_upload_consent_at",
+                settings.audio_upload_consent_at.as_deref().unwrap_or(""),
+            ),
+        ] {
+            transaction.execute(
+                "INSERT INTO app_settings (key, value, updated_at) VALUES (?1, ?2, ?3) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+                params![key, value, now],
+            )?;
+        }
+        if let Some(target) = bump_revision_for {
+            let key = Self::revision_key(target)?;
+            let current: i64 = transaction
+                .query_row(
+                    "SELECT value FROM app_settings WHERE key = ?1",
+                    params![key],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?
+                .and_then(|value| value.trim().parse::<i64>().ok())
+                .unwrap_or(0);
+            let next = current + 1;
+            transaction.execute(
+                "INSERT INTO app_settings (key, value, updated_at) VALUES (?1, ?2, ?3) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+                params![key, next.to_string(), now],
+            )?;
+        }
+        if let Some(health) = health {
+            transaction.execute(
+                "INSERT INTO provider_health (target, provider_id, base_url, model, credential_revision, catalog_version, stage, status, error_code, verified_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) ON CONFLICT(target) DO UPDATE SET provider_id = excluded.provider_id, base_url = excluded.base_url, model = excluded.model, credential_revision = excluded.credential_revision, catalog_version = excluded.catalog_version, stage = excluded.stage, status = excluded.status, error_code = excluded.error_code, verified_at = excluded.verified_at",
+                params![
+                    health.target,
+                    health.provider_id,
+                    health.base_url,
+                    health.model,
+                    health.credential_revision,
+                    health.catalog_version,
+                    health.stage,
+                    health.status,
+                    health.error_code,
+                    health.verified_at,
+                ],
             )?;
         }
         transaction.commit()?;
@@ -350,25 +668,126 @@ mod tests {
     }
 
     #[test]
+    fn credential_revision_is_monotonic_per_target() {
+        let (repository, root) = temp_repository();
+        assert_eq!(repository.credential_revision("analysis").unwrap(), 0);
+        assert_eq!(repository.bump_credential_revision("analysis").unwrap(), 1);
+        assert_eq!(repository.bump_credential_revision("analysis").unwrap(), 2);
+        // 转写槽位独立计数。
+        assert_eq!(repository.credential_revision("transcription").unwrap(), 0);
+        assert_eq!(repository.bump_credential_revision("transcription").unwrap(), 1);
+        assert_eq!(repository.credential_revision("analysis").unwrap(), 2);
+        // 非法目标拒绝。
+        assert!(repository.bump_credential_revision("other").is_err());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn provider_health_snapshot_overwrites_and_fails_revision_match() {
+        let (repository, root) = temp_repository();
+        assert!(repository.provider_health("analysis").unwrap().is_none());
+
+        let mut snapshot = crate::types::ProviderHealthSnapshot {
+            target: "analysis".to_owned(),
+            provider_id: "dashscope".to_owned(),
+            base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1".to_owned(),
+            model: "qwen-turbo".to_owned(),
+            credential_revision: 1,
+            catalog_version: 1,
+            stage: "ok".to_owned(),
+            status: "passed".to_owned(),
+            error_code: None,
+            verified_at: "2026-11-11T00:00:00Z".to_owned(),
+        };
+        repository.save_provider_health(&snapshot).unwrap();
+        let saved = repository.provider_health("analysis").unwrap().unwrap();
+        assert_eq!(saved, snapshot);
+
+        // 失败结果也会覆盖（用户重启后能看到「验证失败」）。
+        snapshot.status = "failed".to_owned();
+        snapshot.error_code = Some("model_not_found".to_owned());
+        snapshot.credential_revision = 2;
+        repository.save_provider_health(&snapshot).unwrap();
+        let failed = repository.provider_health("analysis").unwrap().unwrap();
+        assert_eq!(failed.status, "failed");
+        assert_eq!(failed.error_code.as_deref(), Some("model_not_found"));
+        assert_eq!(failed.credential_revision, 2);
+
+        // 转写槽位互不干扰。
+        assert!(repository.provider_health("transcription").unwrap().is_none());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn commit_external_provider_writes_health_revision_matching_the_bump() {
+        let (repository, root) = temp_repository();
+        let mut settings = repository.external_ai_settings(false, false).unwrap();
+        settings.analysis_provider = "dashscope".to_owned();
+        settings.model = "qwen-turbo".to_owned();
+        settings.privacy_consent_at = Some("2026-11-11T00:00:00Z".to_owned());
+        settings.enabled = true;
+        // 快照的修订号必须与事务内 bump 后的真实值一致（当前 0 + 1），
+        // 否则「保存并验证」成功后指纹永不相配、「已验证」不可达。
+        let next_revision = repository.credential_revision("analysis").unwrap() + 1;
+        let health = crate::types::ProviderHealthSnapshot {
+            target: "analysis".to_owned(),
+            provider_id: "dashscope".to_owned(),
+            base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1".to_owned(),
+            model: "qwen-turbo".to_owned(),
+            credential_revision: next_revision,
+            catalog_version: 1,
+            stage: "ok".to_owned(),
+            status: "passed".to_owned(),
+            error_code: None,
+            verified_at: "2026-11-11T00:00:00Z".to_owned(),
+        };
+        repository
+            .commit_external_provider(&settings, true, false, Some("analysis"), Some(&health))
+            .unwrap();
+
+        let stored = repository.provider_health("analysis").unwrap().unwrap();
+        let revision = repository.credential_revision("analysis").unwrap();
+        assert_eq!(revision, 1, "事务内 bump 只发生一次");
+        assert_eq!(
+            stored.credential_revision, revision,
+            "快照修订号必须与凭据修订号一致，否则已验证态不可达"
+        );
+        assert_eq!(stored.status, "passed");
+        assert_eq!(stored.provider_id, "dashscope");
+
+        // 指纹全匹配：revision/catalog/provider/base_url/model 一致即「已验证」依据成立。
+        let reloaded = repository.external_ai_settings(true, false).unwrap();
+        assert_eq!(reloaded.analysis_provider, "dashscope");
+        assert_eq!(reloaded.model, "qwen-turbo");
+        assert_eq!(reloaded.privacy_consent_at.as_deref(), Some("2026-11-11T00:00:00Z"));
+        assert!(reloaded.enabled);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn processing_mode_and_independent_asr_settings_persist() {
         let (repository, root) = temp_repository();
         let defaults = repository.external_ai_settings(false, false).unwrap();
-        assert_eq!(defaults.processing_mode, "local");
+        assert_eq!(defaults.transcription_mode, "local");
         assert!(!defaults.transcription_has_api_key);
 
         let mut next = defaults;
-        next.processing_mode = "external".to_owned();
-        next.transcription_provider = "dashscope".to_owned();
+        next.transcription_mode = "external".to_owned();
+        next.transcription_provider = "custom".to_owned();
         next.transcription_base_url = "https://api.example.com/v1".to_owned();
         next.transcription_model = "asr-model".to_owned();
+        repository
+            .update_external_ai_settings(&next, false, true)
+            .unwrap();
+        let mut next = repository.external_ai_settings(false, true).unwrap();
         next.audio_upload_consent_at = Some("2026-09-25T00:00:00Z".to_owned());
         repository
             .update_external_ai_settings(&next, false, true)
             .unwrap();
 
         let saved = repository.external_ai_settings(false, true).unwrap();
-        assert_eq!(saved.processing_mode, "external");
-        assert_eq!(saved.transcription_provider, "dashscope");
+        assert_eq!(saved.transcription_mode, "external");
+        assert_eq!(saved.transcription_provider, "custom");
         assert_eq!(saved.transcription_base_url, "https://api.example.com/v1");
         assert_eq!(saved.transcription_model, "asr-model");
         assert!(saved.transcription_has_api_key);
@@ -378,7 +797,7 @@ mod tests {
         );
 
         let mut invalid = saved;
-        invalid.processing_mode = "unknown".to_owned();
+        invalid.transcription_mode = "unknown".to_owned();
         assert!(repository
             .update_external_ai_settings(&invalid, false, true)
             .is_err());
@@ -390,15 +809,103 @@ mod tests {
     fn external_mode_persists_before_asr_provider_is_selected() {
         let (repository, root) = temp_repository();
         let mut next = repository.external_ai_settings(false, false).unwrap();
-        next.processing_mode = "external".to_owned();
+        next.transcription_mode = "external".to_owned();
         next.transcription_provider = "none".to_owned();
 
         let saved = repository
             .update_external_ai_settings(&next, false, false)
             .unwrap();
 
-        assert_eq!(saved.processing_mode, "external");
+        assert_eq!(saved.transcription_mode, "external");
         assert_eq!(saved.transcription_provider, "none");
+        drop(repository);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn legacy_processing_mode_is_only_a_read_fallback() {
+        let (repository, root) = temp_repository();
+        repository
+            .set_setting_value("processing_mode", "external")
+            .unwrap();
+        let migrated = repository.external_ai_settings(false, false).unwrap();
+        assert_eq!(migrated.transcription_mode, "external");
+
+        let mut next = migrated;
+        next.transcription_mode = "local".to_owned();
+        repository
+            .update_external_ai_settings(&next, false, false)
+            .unwrap();
+        repository
+            .set_setting_value("processing_mode", "external")
+            .unwrap();
+        assert_eq!(
+            repository
+                .external_ai_settings(false, false)
+                .unwrap()
+                .transcription_mode,
+            "local",
+            "新字段写入后不得继续被旧 processing_mode 覆盖"
+        );
+        drop(repository);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn changing_analysis_target_clears_consent_and_disables_external_ai() {
+        let (repository, root) = temp_repository();
+        let mut next = repository.external_ai_settings(false, false).unwrap();
+        next.enabled = true;
+        next.privacy_consent_at = Some("2026-09-25T00:00:00Z".to_owned());
+        let saved = repository
+            .update_external_ai_settings(&next, true, false)
+            .unwrap();
+        assert!(saved.enabled);
+        assert!(saved.privacy_consent_at.is_some());
+
+        let mut changed = saved;
+        changed.analysis_provider = "custom".to_owned();
+        changed.base_url = "https://relay.example/v1".to_owned();
+        changed.model = "analysis-model".to_owned();
+        let saved = repository
+            .update_external_ai_settings(&changed, true, false)
+            .unwrap();
+        assert!(!saved.enabled);
+        assert!(saved.privacy_consent_at.is_none());
+        drop(repository);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn changing_transcription_target_clears_only_audio_consent() {
+        let (repository, root) = temp_repository();
+        let mut next = repository.external_ai_settings(false, false).unwrap();
+        next.enabled = true;
+        next.privacy_consent_at = Some("2026-09-25T00:00:00Z".to_owned());
+        next.transcription_mode = "external".to_owned();
+        next.transcription_provider = "custom".to_owned();
+        next.transcription_base_url = "https://asr.example/v1".to_owned();
+        next.transcription_model = "asr-model".to_owned();
+        repository
+            .update_external_ai_settings(&next, true, true)
+            .unwrap();
+        let mut next = repository.external_ai_settings(true, true).unwrap();
+        next.audio_upload_consent_at = Some("2026-09-25T00:00:00Z".to_owned());
+        let saved = repository
+            .update_external_ai_settings(&next, true, true)
+            .unwrap();
+        assert!(saved.audio_upload_consent_at.is_some());
+
+        let mut changed = saved;
+        changed.transcription_provider = "zhipu".to_owned();
+        changed.transcription_base_url = "https://open.bigmodel.cn/api/paas/v4".to_owned();
+        changed.transcription_model = "glm-asr-2512".to_owned();
+        let saved = repository
+            .update_external_ai_settings(&changed, true, true)
+            .unwrap();
+        assert!(saved.audio_upload_consent_at.is_none());
+        assert!(saved.privacy_consent_at.is_some());
+        assert!(saved.enabled);
         drop(repository);
         let _ = std::fs::remove_dir_all(root);
     }

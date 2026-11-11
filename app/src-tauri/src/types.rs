@@ -355,19 +355,51 @@ pub struct MemoryChunkRecord {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExternalAiSettings {
-    /// 录音处理总通道：本机完成，或交给第三方 ASR + 文本模型。
-    pub processing_mode: String,
+    /// 转写独立通道；旧 processing_mode 只用于读取迁移。
+    pub transcription_mode: String,
     pub enabled: bool,
+    /// 分析服务商目录 ID；地址和模型由目录解析。
+    pub analysis_provider: String,
     pub base_url: String,
     pub model: String,
     pub has_api_key: bool,
     pub privacy_consent_at: Option<String>,
-    /// 第三方 ASR 供应商标识；当前实现使用 OpenAI 兼容接口。
+    /// 第三方 ASR 服务商目录 ID。
     pub transcription_provider: String,
     pub transcription_base_url: String,
     pub transcription_model: String,
     pub transcription_has_api_key: bool,
     pub audio_upload_consent_at: Option<String>,
+}
+
+/// 第三方连接健康快照：最后一次真实验证的结果与配置指纹。
+/// 「已验证」只有在全部指纹字段与当前配置匹配时才成立。
+/// 全部字段非敏感：不含 Key、Secret 或其可反推材料。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderHealthSnapshot {
+    pub target: String,
+    pub provider_id: String,
+    pub base_url: String,
+    pub model: String,
+    pub credential_revision: i64,
+    pub catalog_version: u32,
+    pub stage: String,
+    pub status: String,
+    pub error_code: Option<String>,
+    pub verified_at: String,
+}
+
+/// 「保存并验证」的结果。partial=true 表示提交失败且回滚未完全成功，
+/// 前端必须重新读取后端真实状态，不得相信本地乐观状态。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveAndVerifyOutcome {
+    pub settings: ExternalAiSettings,
+    pub saved: Vec<String>,
+    pub rolled_back: Vec<String>,
+    pub partial: bool,
+    pub health: ProviderHealthSnapshot,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

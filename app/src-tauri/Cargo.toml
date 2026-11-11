@@ -43,6 +43,10 @@ uuid = { version = "1", features = ["v4", "serde"] }
 # 选型的时间库：时间统一存 UTC ISO-8601
 chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.10"
+# 腾讯 ASR 极速版要求 HMAC-SHA1 签名；豆包/阿里本地音频使用 base64。
+sha1 = "0.10"
+hmac = "0.12"
+base64 = "0.22"
 symphonia = { version = "0.5", features = ["aac", "mp3", "isomp4", "wav"] }
 ureq = { version = "2.10", features = ["json"] }
 # 选型的 URL 解析：外部 AI Base URL 的安全校验必须解析真实 host，
