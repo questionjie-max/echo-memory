@@ -5,7 +5,7 @@
 ## Download
 
 - `Echo-Memory_1.3.0_aarch64.dmg`（回声记忆 1.3.0）· macOS Apple Silicon
-- SHA-256: 待构建后回填
+- SHA-256: `ee74c9fe0085a31db13f46734a2973a974d882d04dc9bd0a7c42ebf7b10a5776`
 - Developer ID signed, Apple-notarized, stapled, and accepted by Gatekeeper.
 
 ## Highlights
@@ -38,5 +38,6 @@
 
 ## Verification status
 
-- 后端 `cargo test`：**325 passed / 1 ignored**（含 MCP 集成与真二进制黑盒探针）；前端 `vitest`：**165 passed / 22 个测试文件**；`tsc --noEmit`、vite build、`cargo build` 全部通过；`git diff --check` 干净。
+- 后端 `cargo test --features mcp-bin`：**381 passed / 21 ignored**（含 MCP 集成与真二进制黑盒探针；忽略项均需真实音频/模型/外部账号等环境）；前端 `vitest`：**165 passed / 22 个测试文件**；`tsc --noEmit`、vite build、`cargo build` 全部通过；`git diff --check` 干净。
+- 正式 DMG 通过 `hdiutil verify`、`codesign --verify --deep --strict`、`spctl`（`Notarized Developer ID`）与 `xcrun stapler validate`；Apple 公证 DMG `1552ce99-fa79-4ebb-8b23-65d7169eeaf0`、app `11886640-0e11-4e28-b9c1-448c83e52ccc` 均为 `Accepted`。
 - 新增覆盖：八类失败分类各自独立断言、草稿诊断零落盘（数据库快照比对）、一次性验证票据的生命周期（过期/复用/字段变化/跨 target）、健康快照与凭据修订号的指纹一致性、钥匙串「原生写入 → 命令行读回」闭环、录音引擎格式与异常兜底、前端六态推导优先级链、错误单一出口与可访问性语义。
