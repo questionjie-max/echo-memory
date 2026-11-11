@@ -1,206 +1,151 @@
 # Echo Memory / 回声记忆
 
+[![Latest release](https://img.shields.io/github/v/release/questionjie-max/echo-memory?label=release)](https://github.com/questionjie-max/echo-memory/releases/latest)
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 
-[中文文档](README.zh-CN.md) · [Download v1.2.0](https://github.com/questionjie-max/echo-memory/releases/latest) · [MCP reference](docs/mcp.md) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
+**No dedicated AI recorder required: turn audio from your phone, voice recorder, camera, or Mac — plus documents and AI chats — into traceable memory your agents can use.**
 
-**Turn your recordings and AI conversations into memory your agents can actually reuse.**
+<p align="center">
+  <img src="docs/images/recording-home.png" alt="Echo Memory home screen: recording library, transcripts, and knowledge index" width="900">
+</p>
 
-The decisions you made in this week's meetings and the conclusions you reached in AI chats are scattered across apps a week later — and every new AI session starts with you re-explaining your own context.
+[Download latest](https://github.com/questionjie-max/echo-memory/releases/latest) · [MCP reference](docs/mcp.md) · [中文](README.zh-CN.md) · [Contributing](CONTRIBUTING.md)
 
-Echo Memory collects three kinds of sources into one local library on your Mac:
+macOS Apple Silicon · Local-first · Apache-2.0
 
-- **Recordings** — one click records your Mac's microphone, a selected app's system audio, or both as one stereo track (stop and it transcribes and analyzes automatically); meetings, interviews, and voice memos are also supported (USB recorders import automatically)
-- **Documents** — Markdown, TXT, DOCX
-- **AI conversations** — local Claude Code / Codex sessions, ChatGPT / Claude export archives
+## The problem
 
-Transcription and analysis run on your machine by default (Whisper + Ollama — no cloud, no per-minute caps); you can also connect each one to your own third-party account when you want stronger results. Every conclusion can be clicked back to the exact words and timestamp it came from; citations are compared word for word against the transcript, and anything that does not match is dropped — fabricated citations are never shown. Only memories you have personally confirmed are exposed to your agents through read-only MCP — what they receive is not the AI's guess, it is the account you signed off on.
+Decisions made in meetings, conclusions from interviews, and ideas worked out in AI chats end up scattered across apps. A week later, you remember the conversation but cannot find the exact words, the evidence behind them, or what happened next.
 
-**⬇ [Download the signed and notarized macOS build](https://github.com/questionjie-max/echo-memory/releases/latest)** · macOS Apple Silicon · Apache-2.0
+Most note tools store files or produce one-off summaries. That leaves three gaps:
 
-## What it is not
+- **You cannot find it again**: content loses its source, and conclusions cannot return to the original words and timestamp.
+- **You cannot trust it**: AI summaries mix inference with fact, with no clear line between them.
+- **You cannot carry it forward**: every new AI session starts with you re-explaining your own context.
 
-It is not a meeting bot, not an always-on recorder, and not a team collaboration tool. It records only after you explicitly start it; it can capture the microphone, system audio from a selected app, or both, but it does not join meetings or run in the background. Audio stays local by default; it leaves your Mac only after you explicitly choose third-party transcription and confirm the audio-upload notice. Live preview text and provisional notes depend on local models; the full transcript and post-hoc minutes produced after stopping are authoritative. There is no Windows/mobile app and no cloud sync — these are trade-offs, not debts. It is a capture-plus-precipitation layer: record with one click in the app, or bring your own material — it makes sure that material stays usable by you and your agents later.
+Dedicated AI recorders also tend to lock capture, transcription, and analysis into one device and cloud, so changing hardware means changing the memory pipeline.
 
-## Three steps to start
+Echo Memory does not lock you to a recorder: audio from phones, voice recorders, cameras, or the Mac can enter one local library alongside documents and AI chats, with permissioned context exposed to your agents through read-only MCP.
 
-1. Download the DMG and drag the app into your Applications folder;
-2. Click "开始记录" on the home screen, choose microphone or system audio, and record a clip — or drag in an existing audio file;
-3. Ask knowledge chat about a conclusion from last week and see whether it can click back to the exact words.
+## What it does
 
-## FAQ
+- **Capture**: record your microphone, a selected app's system audio, or both as one dual-track recording in the app. Import `MP3` / `M4A` / `WAV` / `AAC` audio exported from phones, voice recorders, or cameras, plus `Markdown` / `TXT` / `DOCX` documents, ChatGPT / Claude exports, and local Claude Code / Codex sessions.
+- **Understand**: transcribe locally with Whisper and analyze with local Ollama by default, or connect your own third-party transcription and analysis providers independently. Get timestamps, optional speaker separation, chapters, decisions, action items, and open questions.
+- **Retrieve with evidence**: search across recordings, documents, and confirmed memories with full-text and vector retrieval. Citations open the originating record or audio, and quotes are compared word for word against the transcript; anything that does not match is not shown.
+- **Build long-term memory**: organize project knowledge, explore changes across records in a growth timeline, and generate versioned cognitive-evolution snapshots with evidence plus a first-person personal profile. New conclusions do not overwrite old judgments, and changes can be confirmed or rejected.
+- **Let agents use it**: a local, read-only MCP server gives authorized AI tools access to records, project context, action items, confirmed minutes, and confirmed memories.
+- **Keep control**: third-party processing is off by default, with separate consent for transcription and analysis; credentials stay in the macOS Keychain. Records can be exported, original files are never auto-deleted, and imported content stays outside MCP memory until you confirm it.
 
-- **Microphone permission denied?** Allow Echo Memory under "System Settings → Privacy & Security → Microphone".
-- **System audio unavailable?** Allow Echo Memory under "System Settings → Privacy & Security → Screen & System Audio Recording"; you can then record all system audio or only a selected app.
-- **No Ollama installed, analysis unavailable?** Clicking analysis opens the setup panel — prepare a local model or choose a third-party provider.
-- **Can a third party fully replace local?** Transcription and analysis can each use a third-party provider; knowledge indexing still needs local Ollama.
-- **Is there a Windows version?** No Windows/mobile app, no cloud sync, no automatic meeting joining.
+## Hardware-agnostic by design
 
-## Why it exists
+Dedicated AI recorders often bundle capture, storage, and analysis into one device and cloud. Echo Memory is the memory layer on your Mac; input can come from hardware you already use:
 
-People generate valuable context continuously: meetings, calls, customer feedback, voice notes, documents, AI conversations, decisions, and follow-up results. That context is usually scattered across tools and quickly loses its connection to time, evidence, and later outcomes.
+- **Record directly**: use the Mac microphone, a connected input device, or a selected app's system audio; the microphone and system audio can be combined into one dual-track recording.
+- **Bring files in**: audio exported from phones, voice recorders, or cameras can reach the Mac over USB, iCloud, AirDrop, or a saved file from a messaging app.
+- **Automate intake**: watch folders and USB volumes; once a file is stable, import it, transcribe it, and analyze it automatically.
+- **Use one pipeline**: no device-side AI, vendor client, or brand lock-in. Every recording follows the same evidence, knowledge-base, growth-timeline, and MCP path.
 
-Traditional tools mainly preserve files or produce one-off summaries. Echo Memory is designed around a longer loop:
+Intake is file-based today: Echo Memory does not pair with or control recorders, and it does not read device battery or status. That trade-off is what keeps it independent of vendor SDKs and device generations.
+
+## How it works
 
 ```text
-Capture -> Understand -> Connect -> Evolve -> Retrieve -> Feedback
+Capture → Understand → Connect → Evolve → Retrieve → Feedback
 ```
 
-The goal is not to save more notes. It is to preserve a person's experiences and reasoning as a durable, user-controlled context layer for future AI.
+- **Capture**: record a conversation, or bring in material you already have.
+- **Understand**: transcribe, separate speakers, and extract summaries, decisions, action items, and questions.
+- **Connect**: place the result in a project knowledge base and link it to related records and time.
+- **Evolve**: build cross-record snapshots that preserve how a view changed and which evidence caused it.
+- **Retrieve**: expose confirmed context to agents through MCP.
+- **Feedback**: confirm, reject, or correct so the next answer fits you better.
 
-## What the product already does
+## Interface
 
-### Capabilities from the 0.9 line
+Screenshots use synthetic demo data.
 
-- **Memories you confirmed are now retrievable**: knowledge chat runs hybrid retrieval over records *and* confirmed memory items, labels the two sources separately (资料原文 / 你的过往记忆), and memory citations jump back to the originating record or audio.
-- **AI conversations are a first-class input**: ChatGPT/Claude exports, conversational Markdown, and a local agent-session scanner (Claude Code, Codex) land as searchable records in their own lane — they stay out of the recording memory chain and out of the pending queue.
-- **A personal profile (L3)**: a cross-snapshot, first-person summary of your stances, preferences, trajectory, and what you are watching; exposed read-only to agents through the `get_my_context` MCP tool.
-- **Per-record analysis instructions**: type a supplementary request such as "keep only action items, grouped by owner" in the record's analysis panel. It outranks the template and is enforced deterministically, while verbatim-citation and safety rules still apply to every item.
-- **Chapters and verbatim quotes**: long recordings get 2–6 clickable chapters that seek the player, plus 0–5 quotes that must match the transcript word for word or they are dropped.
-- **The workspace groups content into 录音 / 文档 / AI 对话**: each group header collapses, shows its count and supported formats, and carries that category's import entry — the entry and the content live in the same place.
-- **Recording sources are explicit**: choose an input microphone, record system audio from one running app or all apps, or combine the microphone and selected app in one dual-track recording.
-- **Imported content has a confirmation gate**: imported documents and AI conversations stay provisional for MCP until you confirm them; withdrawing confirmation hides them again. Confirmed minutes can be retrieved by time range, and a single record can be exported as transcript + SRT + minutes + manifest.
-- **Storage is visible and cleanable**: a storage panel shows what the library occupies per category, clears regenerable intermediate files in one click, and a banner warns on low disk. Original audio is never auto-deleted.
-- **Bounded self-recovery**: transient transcription failures retry twice with backoff, jobs interrupted by an app quit resume on next launch, and `AAC` audio imports correctly.
-- **Release hygiene**: the release script audits the built app before notarization (sourcemaps, dev leftovers, developer paths, dev endpoints, required microphone entitlement), guarding against the class of leftover-artifact leaks and permission failures shipped builds get caught on.
+### Recording and analysis
 
-### Complete workflow
+![Echo Memory record detail: transcript, summary, key points, decisions, action items, and open questions](docs/images/record-analysis.png)
 
-- First-run onboarding: environment check, resumable local model downloads, and inbox setup; analysis models can be configured later in Settings without blocking first use.
-- In-app local recording: choose a microphone, capture system audio from all apps or one selected app, or combine both in one dual-track recording; live preview runs when local models are available, and stopping saves, transcribes, and analyzes. Unsealed recordings from a crashed session can be recovered or discarded.
-- Audio inbox: watch folders and USB recorders; new audio imports, transcribes, and analyzes automatically.
-- Personal hotword vocabulary injected into transcription, with optional local LLM correction that never overwrites the original transcript.
-- Cross-record action items and open questions dashboard with completion tracking and evidence jumps.
-- Assistant dock: chat with local (or optional external) models from any view — summarize the current record, create writing, or brainstorm.
-- AI template wizard: describe your needs in conversation; a local model generates the analysis template.
-- Output folder: analyses, transcripts, and AI drafts are written as standard Markdown into a folder of your choice (e.g. any Markdown notes folder).
-- Speaker diarization: optionally run the whisperX engine to separate "Speaker 1, Speaker 2…"; the embedded engine stays the zero-dependency default.
-- Speaker renaming: turn "Speaker 1" into a real name in the record detail, optionally adding it to the hotword vocabulary; action items and decisions carry the attributed owner.
-- The workspace groups records into 录音 / 文档 / AI 对话 with collapsible headers that double as the import entries for each category.
-- Imports `MP3`, `M4A`, `WAV`, and `AAC` audio with duplicate detection.
-- Imports `Markdown`, `TXT`, and `DOCX` documents into the same searchable library.
-- Imports AI conversation exports (ChatGPT / Claude) and local agent sessions (Claude Code, Codex) as their own content category: searchable, answerable, and kept outside the recording memory chain.
-- Transcribes audio locally with embedded Whisper or a local `whisper.cpp` command.
-- Transcription can independently use the local engine or a third party. Built-in catalog entries for Zhipu, Alibaba Cloud Model Studio, OpenAI, Tencent Cloud, and Doubao carry the endpoint, protocol, recommended model, and credential fields, so ordinary users only choose a provider, paste the requested credentials, and confirm the audio-upload notice. Tencent Cloud shows `AppID + SecretId + SecretKey`; the other built-ins show one API key.
-- Third-party transcription automatically chunks long recordings, reports segment progress, and resumes failed jobs. Completed segments are cached temporarily so a retry sends only missing chunks. Zhipu's per-request audio limit is very short, so long recordings make noticeably more requests; Tencent Cloud and Doubao cover roughly two hours per chunk. Provider timestamps and speakers are used directly; absent speaker data stays “unknown” instead of being guessed from text.
-- Uses local Ollama models for summaries, key points, decisions, action items, and open questions. A per-record supplementary instruction can override the template's structure for that analysis.
-- Analysis can independently use local Ollama or a third-party text model, subject to a distinct text-send consent. Built-in providers supply the endpoint and recommended model; only “Custom OpenAI-compatible endpoint” asks for a Base URL. When both cards use the same provider, saved credentials can be reused across them without sending the secret back to the interface.
-- Saved credentials show as “pasted” and stay hidden by default. Only “Show” retrieves them from the macOS Keychain; “Modify” requires the provider's complete credential set to be entered again. Both cards offer a real post-save connection test; the transcription test sends about one second of test audio and may incur a negligible charge.
-- Analysis providers, plus Zhipu, Model Studio, OpenAI, and custom OpenAI-compatible transcription endpoints, can fetch their current `/models` list using the Key in the form or the saved Key. The selected model still has to be saved explicitly. Tencent Cloud and Doubao transcription entries do not expose a unified model-list endpoint, so they continue to use the catalog model or a manual model ID under Advanced.
-- Adds navigable chapters and verbatim highlights to long recordings, with every item verified against the transcript.
-- Archives records from the single-record context menu, alongside moving, renaming, opening management, and deletion.
-- Preserves timestamped transcript evidence and lets users return from a conclusion to its source.
-- Organizes records into project knowledge libraries with local full-text and vector retrieval.
-- Answers questions across indexed audio, documents, and confirmed memories with openable citations and clearly separated sources.
-- Shows a day-based growth timeline across projects and records.
-- Generates versioned cognitive-evolution snapshots with reviewable evidence, narrative change summaries, and bulk confirmation, plus a first-person personal profile on top.
-- Shows per-category storage usage and clears regenerable intermediate files on demand; submitted transcription jobs retry transient failures with backoff and resume after an interrupted launch.
-- Exposes an opt-in, local, read-only MCP server for authorized AI tools.
-
-## What makes it different
-
-### Time is the backbone
-
-Memory is not a folder tree. Events, projects, people, questions, and decisions develop in parallel. Echo Memory keeps when something happened and how later information relates to it.
-
-### Evidence is more important than a summary
-
-Important conclusions should return to original transcript segments, timestamps, or document sources. AI inference is marked and reviewable instead of being presented as user-authored fact.
-
-### Memory keeps its history
-
-A changed opinion is not a database error. Versioned memory preserves what was believed before, what changed, and which evidence caused the change.
-
-### Memory is callable
-
-With user authorization, different AI tools can retrieve the context needed for a task through MCP without forcing the user to repeat the same background in every chat.
-
-## Current interface
-
-The screenshots use synthetic demonstration data.
-
-### Home recording card
-
-![Home recording card: one click to record your Mac's microphone](docs/images/recording-home.png)
-
-### Analysis setup panel
-
-![Analysis setup panel: local one-click prepare / cloud with an API key](docs/images/analysis-setup.png)
+Transcript, summary, key points, decisions, action items, and open questions appear on one page; every citation can jump back to the exact words and timestamp.
 
 ### Evidence-backed knowledge chat
 
-![Echo Memory knowledge chat](docs/images/knowledge-chat.png)
+![Echo Memory knowledge chat: citations return to the original record, with sources labeled separately](docs/images/knowledge-chat.png)
 
-### Growth timeline
+Answers search both source material and confirmed memories, label the two separately, and let every citation jump back to the original record or audio.
 
-![Echo Memory growth timeline](docs/images/growth-timeline.png)
+### Action dashboard
+
+![Echo Memory action dashboard: action items, completed work, and open questions across records](docs/images/action-dashboard.png)
+
+Collect action items, completed work, and open questions across records, then jump back to the source or mark an item complete.
 
 ### Cognitive evolution
 
-![Echo Memory cognitive evolution](docs/images/cognitive-evolution.png)
+![Echo Memory cognitive evolution: how views changed by topic, with evidence to confirm or reject each change](docs/images/cognitive-evolution.png)
 
-## Local-first and user-controlled
+See how views were added, revised, overturned, or merged across records; every change keeps its evidence and can be confirmed or rejected.
 
-Audio, the SQLite library, local transcription, local analysis, retrieval, and MCP remain on the Mac by default. External processing is opt-in.
+### Growth timeline
 
-Third-party processing is off by default. Transcription and analysis are two independent cards: transcription requires a provider, that provider's complete credential set, and separate audio-upload consent; analysis requires its own consent before transcript text is sent. Changing a provider or model clears the corresponding consent, and the service layer refuses to open a network connection when anything is missing. Built-in endpoints and protocols are fixed by the backend Provider Catalog and cannot be edited by the frontend; only a custom OpenAI-compatible endpoint may supply its own URL. The two channels keep credentials in separate macOS Keychain slots and show only a “pasted” state by default; the current credentials enter the webview only after an explicit “Show”, while cross-card reuse copies them inside Keychain.
+![Echo Memory growth timeline: changes across projects and records over time](docs/images/growth-timeline.png)
 
-The four new ASR protocols (Zhipu, Alibaba Cloud Model Studio, Tencent Cloud, and Doubao) are covered by local HTTP fixtures for headers, signatures, request bodies, response parsing, error redaction, long-audio chunking, and cache recovery. They have not yet been validated one by one with real provider accounts. Release notes must not call these protocols “verified” until that real-account validation is complete.
+See changes across projects and records over time instead of flattening memory into disconnected folders.
 
-Generated cross-record memory is versioned, linked to sources, and can be confirmed or rejected. It does not overwrite original recordings, transcripts, or single-record analysis.
+### Local and third-party model setup
 
-## MCP: one memory layer for many agents
+![Echo Memory analysis setup: prepare local Ollama or connect a third-party model provider](docs/images/analysis-setup.png)
 
-The current MCP server is local stdio, disabled by default, and read-only. It can search records, retrieve bounded transcript ranges, list projects, return project context, list action items, list confirmed minutes by time range, and read your confirmed personal profile (`get_my_context`). It does not open a public port or modify the library.
+Transcription and analysis can use local or third-party services independently; credentials stay in the macOS Keychain, and sending content externally requires separate consent.
 
-See the [MCP reference](docs/mcp.md) for tools and development configuration.
+## Quick start
 
-## Product principles
+1. Download the latest macOS build from [GitHub Releases](https://github.com/questionjie-max/echo-memory/releases/latest).
+2. Open the DMG and drag the app into Applications. First launch guides you through the environment check, local model setup, and inbox configuration.
+3. Click "开始记录" on the home screen and choose the microphone or system audio — or import an existing recording, document, or AI conversation.
 
-- **The user owns the memory:** data should remain exportable, correctable, deletable, and revocable.
-- **Original evidence outranks AI summaries:** important claims must remain traceable.
-- **Time and versions are preserved:** new conclusions do not erase old reasoning.
-- **High-impact automation is confirmable:** inferred relationships and changes must be reviewable.
-- **Agent access follows least privilege:** tools receive only the context required for the task.
-- **The system assists decisions, not replaces the user:** uncertainty and conflicting evidence should remain visible.
+For a fully local setup, prepare a local Whisper model and Ollama. Third-party transcription and analysis are optional enhancements; the local path works without them. To record system audio, grant access under "System Settings → Privacy & Security → Screen & System Audio Recording"; grant microphone access for microphone recording.
 
-## Current boundary and direction
+## Local-first and privacy
 
-The current release focuses on a single-user, single-device workflow. In-app recording supports the microphone, system audio from a selected app, or both as one dual-track recording. Live preview text and provisional live minutes are available when local models are configured; the full transcript and post-hoc minutes produced after stopping are authoritative. Automatic meeting joining, mobile or Windows apps, cloud sync, team collaboration, public APIs, and MCP writes are not provided.
+By default, original audio, the SQLite library, transcription, analysis, retrieval, and MCP all run on your Mac. Recording starts only when you explicitly start it: there is no automatic meeting joining and no background recording.
 
-The longer-term direction is to expand from traceable conversation memory into a personal memory infrastructure that can connect events, people, projects, questions, knowledge, decisions, and outcomes across time. That direction still requires product, privacy, and user-trust validation.
+- Third-party transcription and analysis are two independent opt-ins, each requiring consent to upload audio or send transcript text.
+- Provider credentials are stored in the macOS Keychain and are hidden in the interface by default.
+- MCP is disabled by default, runs locally over stdio, opens no public port, and cannot modify the library.
+- Imported documents and AI conversations enter MCP memory only after you confirm them; withdrawing confirmation hides them again.
 
-## Direction
+## MCP: one memory layer for your agents
 
-Echo Memory is not defined by transcription or meeting summaries. Those are input and processing capabilities.
+The MCP server can search records, read bounded transcript ranges, list projects and action items, return project context, list confirmed minutes by time range, and read your confirmed personal profile (`get_my_context`). Recording source text is readable within the authorized scope; cross-record memory items are returned only after confirmation.
 
-The long-term product has four connected layers:
+See the [MCP reference](docs/mcp.md) for the tool list and client configuration.
 
-1. **Personal Memory Layer**: shared, permissioned context so every AI does not need to learn the user from zero.
-2. **Cognitive Database**: evidence-backed records of knowledge, decisions, open questions, and how beliefs change.
-3. **Personal Memory OS**: one system for capture, understanding, organization, retrieval, and feedback.
+## Current scope
+
+Echo Memory is currently designed for a single user on a single device, and supports macOS Apple Silicon only. It is not a meeting bot or an always-on recorder.
+
+Automatic meeting joining, Windows or mobile apps, cloud sync, team collaboration, a public API, and MCP writes are not provided.
+
+## Long-term direction
+
+The goal is not to build a larger transcription tool or another recording device. It is to make the memory layer independent of specific hardware and grow traceable conversation memory into personal memory infrastructure:
+
+1. **Personal Memory Layer**: permissioned context so every AI does not need to learn you from zero.
+2. **Cognitive Database**: evidence-backed knowledge, decisions, questions, and how beliefs change.
+3. **Personal Memory OS**: one system for capturing, understanding, organizing, retrieving, and refining memory.
 4. **Digital Twin Database**: a long-term, correctable model of what a person experienced, knows, values, and how they make decisions.
 
-The digital-twin direction is a product vision, not a claim that the current release can fully model a person.
-
-
-## Repository layout
-
-- `app/` — the Tauri application. `app/src/` is the React frontend (components, hooks, shared utilities); `app/src-tauri/src/` is the Rust backend (commands, database layer, native bridge); `app/src-tauri/migrations/` holds the database migrations; `app/tests/ui/` and `app/src-tauri/tests/` hold the frontend and backend test suites.
-- `docs/` — product documentation: `docs/mcp.md` (MCP reference), `docs/macos-signing.md` (signing and notarization), `docs/analysis-quality.md`, `docs/plans/` (design and planning notes), `docs/release-notes-*.md` (per-release notes, including v1.0.0), and `docs/images/` (screenshots used by the READMEs).
-- `benchmarks/` — performance benchmarks and sample clips.
-- `.github/` — CI workflow (`workflows/ci.yml`) and the bug-report issue template.
-- Root files — `README.md` / `README.zh-CN.md` (this introduction), `LICENSE` (Apache-2.0), `CONTRIBUTING.md`, `SECURITY.md`, `CITATION.cff`.
+This is a long-term direction, not a claim that the current release can fully model a person.
 
 ## Requirements
 
-- macOS on Apple Silicon
+- macOS Apple Silicon
 - Node.js 22+, Rust stable, Cargo, and Xcode Command Line Tools
 - CMake for the first embedded Whisper build
-- A local Whisper `ggml-*.bin` model for transcription
-- Optional local `whisper-cli` / `WHISPER_CPP_BIN`
-- Optional local Ollama service and model for analysis
-- Optional `pip install whisperx` and a HuggingFace token (after accepting the pyannote model terms) for speaker diarization
+- Optional: a local Whisper `ggml-*.bin` model, Ollama, and `whisperX` with a HuggingFace token for speaker separation
 
 ## Run locally
 
@@ -226,13 +171,23 @@ cargo fmt --check
 cargo test --features mcp-bin
 ```
 
-## Project status
+## Repository layout
 
-Echo Memory v1.0.0 is the current public release. Download the latest build from [GitHub Releases](https://github.com/questionjie-max/echo-memory/releases). Source builds are supported. Distribution artifacts must be labeled truthfully according to their actual signing and Apple notarization status; this repository does not claim notarization unless the artifact passes the documented verification commands.
+- `app/`: the Tauri application. `app/src/` is the React frontend; `app/src-tauri/src/` is the Rust backend; `app/src-tauri/migrations/` holds database migrations.
+- `docs/`: product documentation, design notes, screenshots, and release notes.
+- `benchmarks/`: performance benchmarks and sample clips.
+- `.github/`: CI workflows and issue templates.
 
-Full v1.0.0 notes (highlights, verification status, distribution SHA-256 and notarization): [docs/release-notes-v1.0.0.md](docs/release-notes-v1.0.0.md) and the [v1.0.0 release page](https://github.com/questionjie-max/echo-memory/releases/tag/v1.0.0).
+## Versions and updates
 
-Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening an issue or pull request, and never attach real audio, transcripts, databases, credentials, or private customer material to a public issue. Security reports should follow [SECURITY.md](SECURITY.md).
+The README describes the long-term product, stable capabilities, and current scope. New features, fixes, compatibility changes, and verification results are recorded in [GitHub Releases](https://github.com/questionjie-max/echo-memory/releases); detailed notes live in `docs/release-notes-*.md`.
+
+- [Download the latest release](https://github.com/questionjie-max/echo-memory/releases/latest)
+- [Browse all releases](https://github.com/questionjie-max/echo-memory/releases)
+
+## Contributing
+
+Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first. Never attach real audio, transcripts, databases, credentials, or private customer material to a public issue. Report security issues privately as described in [SECURITY.md](SECURITY.md).
 
 ## License
 
