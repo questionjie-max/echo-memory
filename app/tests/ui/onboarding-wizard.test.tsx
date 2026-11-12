@@ -175,3 +175,13 @@ describe("首次启动引导", () => {
     expect(onFinished).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("v1.4 包3：向导黑话清零", () => {
+  it("首屏承诺句用「你电脑里的 AI 助手」口径，不再裸用 MCP 缩写", async () => {
+    renderWizard();
+    await screen.findByText(/让 AI 记得你经历过什么/);
+    const body = document.body.textContent ?? "";
+    expect(body).not.toContain("本地 MCP 提供给你的每一个 AI 助手");
+    expect(body).toContain("你电脑里的 AI 助手");
+  });
+});

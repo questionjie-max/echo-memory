@@ -319,9 +319,9 @@ function LocalOllamaTab({ onResume }: { onResume: () => void }) {
               download={downloads[local.settings.analysisModel]}
             />
             <ModelStatusRow
-              title={`嵌入模型 ${local.settings.embeddingModel}`}
+              title={`记忆检索引擎 ${local.settings.embeddingModel}`}
               installed={embeddingInstalled}
-              hint={modelSizeHint(local.settings.embeddingModel, "qwen3-embedding:0.6b", "约 639MB · 知识索引（跨记录问答 / 记忆生成）必需")}
+              hint={modelSizeHint(local.settings.embeddingModel, "qwen3-embedding:0.6b", "约 639MB · 问知识库（跨记录问答 / 记忆生成）必需；不影响导入和转写")}
               download={downloads[local.settings.embeddingModel]}
             />
           </>

@@ -716,7 +716,9 @@ describe("AI 模型：转写引擎", () => {
     await renderPanel();
     fireEvent.click(within(card("转写")).getByText(/whisperX/));
 
-    expect(await screen.findByText(/pip install whisperx/)).toBeTruthy();
+    // v1.4 包3：安装引导用人话（复制命令到终端 + 装不上也不影响默认转写），不再裸抛 pip
+    expect(await screen.findByText(/复制到「终端」App 里运行/)).toBeTruthy();
+    expect(screen.queryByText(/pip install whisperx/)).toBeNull();
     expect(screen.getByText("1. 安装并检测 WhisperX")).toBeTruthy();
     expect(screen.getByText("2. 授权三个模型")).toBeTruthy();
     expect(screen.getByText("3. 保存 HuggingFace Token")).toBeTruthy();

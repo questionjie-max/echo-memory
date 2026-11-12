@@ -285,12 +285,12 @@ export default function AiModelSettings(props: AiModelSettingsProps) {
                 <p className="em-hint">
                   {engine?.whisperxAvailable
                     ? "已检测到 whisperx，可继续下一步。"
-                    : "未检测到 whisperx，请先在终端安装。"}
+                    : "未检测到 whisperx。把下面这条命令复制到「终端」App 里运行即可，全程约几分钟，装好后回来点「重新检测」。"}
                 </p>
                 <code>uv tool install --python 3.11 whisperx</code>
                 <p className="em-hint">
-                  没有 uv 时先安装 uv，或在 Python 3.11/3.12 虚拟环境中使用
-                  <code>pip install whisperx</code>。
+                  上面的命令需要先装 uv（同样复制进终端运行：<code>curl -LsS https://astral.sh/uv/install.sh | sh</code>）。
+                  装不上也没关系，whisperX 是可选的实验功能，用默认内嵌引擎一样能转写，只是不区分说话人。
                 </p>
                 <div className="em-card-actions" style={{ marginTop: 8 }}>
                   {whisperxActive && (

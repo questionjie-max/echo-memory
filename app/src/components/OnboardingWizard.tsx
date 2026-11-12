@@ -150,7 +150,7 @@ export default function OnboardingWizard({ onFinished }: Props) {
               <h3>让 AI 记得你经历过什么</h3>
               <p className="em-hint">
                 回声记忆把你散落的录音、会议和文档，变成可追溯、可检索的个人长期记忆，
-                并通过本地 MCP 提供给你的每一个 AI 助手。
+                并把你确认过的内容提供给你电脑里的 AI 助手（通过本地 MCP 接口）。
               </p>
               <List>
                 <ListRow static state="done" title={PRIVACY_POSTURE.onboardingFirstItem} />

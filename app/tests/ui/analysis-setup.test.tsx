@@ -259,3 +259,14 @@ describe("分析设置发起面板", () => {
     expect(screen.getByTestId("ran-count").textContent).toBe("0");
   });
 });
+
+describe("v1.4 包3：本机配置黑话清零", () => {
+  it("嵌入模型行改称记忆检索口径，不再裸用「嵌入模型」", async () => {
+    renderHarness(true);
+    fireEvent.click(await screen.findByRole("button", { name: "触发" }));
+    const dialog = await screen.findByRole("dialog", { name: "分析设置" });
+    const body = dialog.textContent ?? "";
+    expect(body).toContain("记忆检索");
+    expect(body).not.toContain("嵌入模型");
+  });
+});

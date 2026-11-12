@@ -953,7 +953,7 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
                     value: "whisperx",
                     label: engineStatus?.whisperxAvailable ? "whisperX" : "whisperX（未安装）",
                     disabled: !engineStatus?.whisperxAvailable,
-                    hint: engineStatus?.whisperxAvailable ? "说话人分离" : "需要先 pip install whisperx",
+                    hint: engineStatus?.whisperxAvailable ? "说话人分离" : "尚未安装——按下方步骤安装即可，约几分钟",
                   },
                 ]}
               />

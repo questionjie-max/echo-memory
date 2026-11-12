@@ -316,3 +316,20 @@ describe("记录详情：导出反馈（v1.4 包2）", () => {
     expect(screen.queryByText(/已导出：/)).toBeNull();
   });
 });
+
+describe("记录详情：转写引擎文案（v1.4 包3）", () => {
+  it("whisperX 未安装时弹层文案不再出现 pip 指引（引导收敛到设置页）", async () => {
+    vi.mocked(tauri.getTranscriptionEngineStatus).mockResolvedValue(
+      engineStatusFixture({ whisperxAvailable: false }),
+    );
+    renderDetail();
+    await waitForAudioReady();
+    // 打开增强重新转写弹层
+    fireEvent.click(screen.getByText("操作"));
+    fireEvent.click(await screen.findByRole("button", { name: "增强重新转写…" }));
+    const body = document.body.textContent ?? "";
+    expect(body).not.toContain("pip install");
+    // hint 只在选中时渲染：未安装态改用按钮标签本身说清状态
+    expect(body).toContain("whisperX（未安装）");
+  });
+});
