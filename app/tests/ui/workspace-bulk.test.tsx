@@ -56,7 +56,7 @@ const records = [
 ];
 
 function renderPanel() {
-  return render(
+  const result = render(
     <RecordPanel
       projectId={null}
       unfiledOnly={false}
@@ -66,6 +66,9 @@ function renderPanel() {
       onPlay={() => undefined}
     />,
   );
+  // v1.4 包1：默认视图是「待处理」；这些测试操作的记录在新语义下属于「最近」视图。
+  fireEvent.click(screen.getByRole("button", { name: /最近/ }));
+  return result;
 }
 
 beforeEach(() => {

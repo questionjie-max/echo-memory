@@ -322,6 +322,8 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
   }
 
   const pending = useMemo(() => records.filter(isPending), [records]);
+  const unarchived = useMemo(() => records.filter(isUnarchived), [records]);
+  const [archiveTarget, setArchiveTarget] = useState("");
   const viewRecords = view === "pending"
     ? pending
     : view === "archived"
@@ -463,6 +465,30 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
         : "未归档";
       setNotice(`已将 ${moved} 条记录移动到「${target}」。`);
       setSelected(new Set());
+      await refresh();
+      onImported();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  /** v1.4 包1：把所有已加工完成、未归档的记录一键移到所选知识库。 */
+  async function archiveAllUnarchived() {
+    if (unarchived.length === 0 || bulkBusy) return;
+    setBulkBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const moved = await moveRecords(
+        unarchived.map((record) => record.id),
+        archiveTarget || null,
+      );
+      const target = archiveTarget
+        ? projects.find((project) => project.id === archiveTarget)?.name ?? "知识库"
+        : "未归档";
+      setNotice(`已将 ${moved} 条待归档记录移动到「${target}」。`);
       await refresh();
       onImported();
     } catch (reason) {
@@ -634,6 +660,32 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
         <button type="button" className={view === "pending" ? "selected" : ""} onClick={() => setView("pending")}>待处理 <span>{pending.length}</span></button>
         <button type="button" className={view === "recent" ? "selected" : ""} onClick={() => setView("recent")}>最近 <span>{records.length}</span></button>
         <button type="button" className={view === "archived" ? "selected" : ""} onClick={() => setView("archived")}>归档 <span>{archivedRecords.length}</span></button>
+        {unarchived.length > 0 && (
+          <div className="archive-shortcut" role="group" aria-label="一键归档">
+            <label className="bulk-move">
+              <span>归档到</span>
+              <select
+                value={archiveTarget}
+                onChange={(event) => setArchiveTarget(event.target.value)}
+                disabled={bulkBusy}
+                aria-label="归档目标知识库"
+              >
+                <option value="">未归档</option>
+                {projects.map((project) => (
+                  <option key={project.id} value={project.id}>{project.name}</option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => void archiveAllUnarchived()}
+              disabled={bulkBusy}
+            >
+              {bulkBusy ? "处理中…" : <>一键归档 <span>{unarchived.length}</span></>}
+            </button>
+          </div>
+        )}
       </div>
 
       {view !== "archived" && someSelected && (
@@ -860,7 +912,28 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
 function isPending(record: RecordBrief) {
   // AI 对话导入即入库可检索，没有「待处理」语义；留在待处理里会把这个队列彻底淹没。
   if (record.sourceType === "chat") return false;
-  return !record.hasTranscript || !record.hasAnalysis || !record.projectId;
+  // v1.4 包1：加工完成（有分析且非 stale/incomplete）即不算待处理——
+  // 未归档只是整理动作，不是加工动作；这些记录显示「待归档」徽标，
+  // 通过「已完成」视图与一键归档触达，不再让首屏红点永远清不掉。
+  if (
+    record.hasAnalysis &&
+    record.analysisStatus !== "stale" &&
+    record.analysisStatus !== "incomplete"
+  ) {
+    return false;
+  }
+  // 其余情况（没转写、待分析、分析失败、分析需要更新/不完整）都需要用户动作。
+  return true;
+}
+
+/** 已加工完成但还没归进任何知识库的记录（一键归档的作用对象）。 */
+function isUnarchived(record: RecordBrief) {
+  return (
+    record.sourceType !== "chat" &&
+    !record.archivedAt &&
+    !record.projectId &&
+    !isPending(record)
+  );
 }
 
 function statusLabel(record: RecordBrief) {

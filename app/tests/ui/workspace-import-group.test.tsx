@@ -51,7 +51,7 @@ function record(id: string, title: string, overrides: Partial<RecordBrief> = {})
 }
 
 function renderPanel() {
-  return render(
+  const result = render(
     <RecordPanel
       projectId={null}
       unfiledOnly={false}
@@ -61,6 +61,9 @@ function renderPanel() {
       onPlay={() => undefined}
     />,
   );
+  // v1.4 包1：默认视图是「待处理」；这些测试操作的记录在新语义下属于「最近」视图。
+  fireEvent.click(screen.getByRole("button", { name: /最近/ }));
+  return result;
 }
 
 const mixedRecords = [
@@ -164,7 +167,11 @@ describe("工作区内容分组", () => {
   it("AI 对话不进待处理队列，在最近里显示「对话档案」", async () => {
     vi.mocked(tauri.listRecords).mockResolvedValue(mixedRecords);
     renderPanel();
-    await screen.findByText("季度产品评审会议");
+    // renderPanel 默认切到「最近」；本测试先验证待处理视图的行为，切回去。
+    // v1.4 包1：mixedRecords 里的已分析记录不再进待处理，所以这里不等行出现，
+    // 只断言待处理视图不含对话组与对话行。
+    fireEvent.click(screen.getByRole("button", { name: /待处理/ }));
+    await screen.findByRole("button", { name: /待处理/ });
 
     // 待处理只可能是录音与文档：对话组不出现。
     expect(screen.queryByRole("button", { name: "AI 对话分组（2 条）" })).toBeNull();
@@ -183,6 +190,7 @@ describe("工作区内容分组", () => {
       record("a1", "已归档的访谈", { archivedAt: "2026-10-01T00:00:00.000Z" }),
     ]);
     renderPanel();
+    fireEvent.click(screen.getByRole("button", { name: /待处理/ }));
     // 待处理视图：录音 / 文档两组入口仍在，组内提示可从这里导入。
     expect(await screen.findByRole("button", { name: "选择音频" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "选择文档" })).toBeTruthy();
