@@ -23,7 +23,10 @@ vi.mock("@tauri-apps/api/event", () => ({
     });
   }),
 }));
-vi.mock("@tauri-apps/plugin-dialog", () => ({ save: () => Promise.resolve(null) }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  save: vi.fn(() => Promise.resolve(null)),
+  open: vi.fn(() => Promise.resolve(null)),
+}));
 vi.mock("../../src/lib/tauri");
 
 beforeAll(() => {
@@ -267,5 +270,49 @@ describe("记录详情：辅助信息", () => {
     expect(relatedDetails?.open).toBe(true);
     expect(await screen.findByText("另一条记录")).toBeTruthy();
     expect(screen.getByText("87% 相关")).toBeTruthy();
+  });
+});
+
+describe("记录详情：导出反馈（v1.4 包2）", () => {
+  async function renderAndOpenExportMenu(format: "md" | "txt" | "srt") {
+    vi.mocked(tauri.createExportTicket).mockResolvedValue("ticket-1");
+    vi.mocked(tauri.exportRecord).mockResolvedValue(undefined);
+    const { save } = await import("@tauri-apps/plugin-dialog");
+    vi.mocked(save).mockResolvedValue(`/tmp/产品评审.${format}`);
+    renderDetail();
+    await waitForAudioReady();
+    // 打开「操作」菜单（details/summary）并选择导出格式
+    const summary = screen.getByText("操作");
+    fireEvent.click(summary);
+    const exportButton = await screen.findByRole("button", {
+      name: format === "md" ? "导出 Markdown" : "导出 SRT 字幕",
+    });
+    fireEvent.click(exportButton);
+    await waitFor(() => expect(tauri.exportRecord).toHaveBeenCalled());
+    await waitFor(() => expect(save).toHaveBeenCalled());
+  }
+
+  it("导出 Markdown 成功后显示落盘路径提示", async () => {
+    await renderAndOpenExportMenu("md");
+    expect(await screen.findByText(/已导出：\/tmp\/产品评审\.md/)).toBeTruthy();
+    expect(screen.queryByText(/已导出：\/tmp\/产品评审\.srt/)).toBeNull();
+  });
+
+  it("导出 SRT 成功后同样显示提示（与导出包同风格）", async () => {
+    await renderAndOpenExportMenu("srt");
+    expect(await screen.findByText(/已导出：\/tmp\/产品评审\.srt/)).toBeTruthy();
+  });
+
+  it("导出被取消（未选路径）时不显示成功提示", async () => {
+    vi.mocked(tauri.createExportTicket).mockResolvedValue("ticket-1");
+    const { save } = await import("@tauri-apps/plugin-dialog");
+    vi.mocked(save).mockResolvedValue(null);
+    renderDetail();
+    await waitForAudioReady();
+    fireEvent.click(screen.getByText("操作"));
+    fireEvent.click(await screen.findByRole("button", { name: "导出 Markdown" }));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(tauri.exportRecord).not.toHaveBeenCalled();
+    expect(screen.queryByText(/已导出：/)).toBeNull();
   });
 });

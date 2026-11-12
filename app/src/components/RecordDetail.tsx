@@ -447,6 +447,9 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
     setError("");
     try {
       await exportRecord(record.id, destination, format, ticket);
+      // v1.4 包2：导出成功必须给落盘反馈（与导出包/产出到输出目录同风格），
+      // 否则用户不知道文件存到哪了。
+      setExportNotice(`已导出：${destination}`);
     } catch (reason) {
       setError(String(reason));
     } finally {
