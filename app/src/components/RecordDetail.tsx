@@ -3,6 +3,11 @@ import { save as saveDialog, open as openDirectory } from "@tauri-apps/plugin-di
 import { PauseIcon, PlayIcon, SkipBackIcon, SkipForwardIcon } from "./icons";
 import MinutesPanel from "./MinutesPanel";
 import { useEffect, useRef, useState } from "react";
+import {
+  estimateRemainingMs,
+  rememberProgress,
+  type ProgressPoint,
+} from "../lib/progress-estimate";
 import type { RecordNavigation } from "../App";
 import type {
   AnalysisContent,
@@ -75,6 +80,9 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
   const pendingSeekMs = useRef<number | null>(null);
   const pendingPlay = useRef(false);
   const completionNotified = useRef(false);
+  // v1.4 包4：本会话内见过「处理中」才允许完成通知；进度历史用于剩余时间估算。
+  const sawProcessing = useRef(false);
+  const progressHistory = useRef<ProgressPoint[]>([]);
   const loadRequestId = useRef(0);
   const [currentRecord, setCurrentRecord] = useState(record);
 
@@ -188,6 +196,8 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
   const [engineStatus, setEngineStatus] = useState<TranscriptionEngineStatus | null>(null);
   const [correcting, setCorrecting] = useState(false);
   const [exportNotice, setExportNotice] = useState<string | null>(null);
+  // v1.4 包4：长任务完成通知（转写/分析从处理中变为完成时提示一次）。
+  const [doneNotice, setDoneNotice] = useState<string | null>(null);
   const [retranscribeLanguage, setRetranscribeLanguage] = useState("zh");
   const [retranscribeModelPath, setRetranscribeModelPath] = useState("");
   // 文字类来源（文档导入 / AI 对话导入）没有音频：走纯文本分支，隐藏播放与转写操作。
@@ -224,9 +234,25 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
 
     if (latest) {
       setCurrentRecord(latest);
-      if (!isProcessing(latest.status) && !completionNotified.current) {
-        completionNotified.current = true;
-        onChanged(latest);
+      if (isProcessing(latest.status)) {
+        // v1.4 包4：记录进度点，用于估算「预计还剩约 X 分钟」。
+        sawProcessing.current = true;
+        rememberProgress(latest.progressCurrent, Date.now(), progressHistory.current);
+      } else {
+        // 只有在本会话里真的见过「处理中」→ 完成，才通知；打开旧记录不弹。
+        if (sawProcessing.current && !completionNotified.current) {
+          completionNotified.current = true;
+          setDoneNotice(
+            latest.status === "failed"
+              ? `「${latest.title}」处理失败，可重试`
+              : `「${latest.title}」处理完成`,
+          );
+        }
+        if (!isProcessing(latest.status) && !completionNotified.current) {
+          completionNotified.current = true;
+          onChanged(latest);
+        }
+        progressHistory.current = [];
       }
     }
     if (items) {
@@ -770,10 +796,19 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
 
       {isProcessing(currentRecord.status) && (
         <div className="processing-progress" role="status">
-          <div><strong>{processingStageText(currentRecord.processingStage, isDocument)}</strong><span>{progressText(currentRecord)}</span></div>
+          <div>
+            <strong>{processingStageText(currentRecord.processingStage, isDocument)}</strong>
+            <span>{progressText(currentRecord)}</span>
+            {/* v1.4 包4：进度点足够时显示预计剩余时间，长录音等待不再抓瞎 */}
+            {remainingLabel(currentRecord, progressHistory.current) && (
+              <span className="progress-eta">{remainingLabel(currentRecord, progressHistory.current)}</span>
+            )}
+          </div>
           <div className="progress-track"><span style={{ width: `${processingPercent(currentRecord)}%` }} /></div>
         </div>
       )}
+
+      {doneNotice && <p className="inline-notice" role="status">{doneNotice}</p>}
 
       <div className="detail-tabs" role="tablist" aria-label={isDocument ? "文档内容" : "录音内容"}>
         <button type="button" role="tab" aria-selected={activeTab === "transcript"} className={activeTab === "transcript" ? "selected" : ""} onClick={() => setActiveTab("transcript")}>{isDocument ? "文档正文" : "逐字稿"}</button>
@@ -1212,6 +1247,15 @@ function progressText(record: RecordBrief) {
 function processingPercent(record: RecordBrief) {
   if (record.progressTotal <= 0) return 12;
   return Math.max(4, Math.min(100, Math.round(record.progressCurrent / record.progressTotal * 100)));
+}
+
+/** v1.4 包4：剩余时间的用户文案（估算不足两分钟显示「不到 2 分钟」，否则按分钟取整）。 */
+function remainingLabel(record: RecordBrief, history: ProgressPoint[]) {
+  const remaining = estimateRemainingMs(history, record.progressCurrent, record.progressTotal);
+  if (remaining == null || remaining <= 0) return "";
+  if (remaining < 120_000) return "预计还剩不到 2 分钟";
+  const minutes = Math.round(remaining / 60_000);
+  return `预计还剩约 ${minutes} 分钟`;
 }
 
 function SpeakerRow({ recordId, speaker, onRenamed }: { recordId: string; speaker: SpeakerSummary; onRenamed: () => void }) {

@@ -157,6 +157,23 @@ describe("待处理语义（v1.4 包1）", () => {
     expect(screen.queryByRole("button", { name: /一键归档/ })).toBeNull();
   });
 
+  it("未选择归档目标库时按钮禁用且不会触发移动（评审 P2 守卫锁定）", async () => {
+    vi.mocked(tauri.listRecords).mockResolvedValue([
+      record("r1", "季度产品评审"),
+    ]);
+    renderPanel();
+
+    const entry = await screen.findByRole("button", { name: /一键归档/ });
+    expect(entry.hasAttribute("disabled")).toBe(true);
+    fireEvent.click(entry);
+    expect(tauri.moveRecords).not.toHaveBeenCalled();
+    // 选择目标库后按钮可用
+    fireEvent.change(screen.getByLabelText("归档目标知识库"), {
+      target: { value: "p1" },
+    });
+    expect(screen.getByRole("button", { name: /一键归档/ }).hasAttribute("disabled")).toBe(false);
+  });
+
   it("对话档案永不进待处理", async () => {
     vi.mocked(tauri.listRecords).mockResolvedValue([
       // 已过导入确认门的 chat 记录：类目徽标「对话档案」，绝不进待处理队列

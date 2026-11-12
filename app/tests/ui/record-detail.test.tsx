@@ -333,3 +333,80 @@ describe("记录详情：转写引擎文案（v1.4 包3）", () => {
     expect(body).toContain("whisperX（未安装）");
   });
 });
+
+describe("记录详情：预计剩余时间与完成通知（v1.4 包4）", () => {
+  function processingRecord(current: number): RecordBrief {
+    return recordFixture({
+      status: "transcribing",
+      processingStage: "transcribing",
+      progressCurrent: current,
+      progressTotal: 12,
+    });
+  }
+
+  it("两次进度事件后显示预计剩余时间", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-11-12T10:00:00Z"));
+      // 进度点 1：(0, 10:00)；之后 10:03 到 3、10:06 到 6 → 60s/块
+      vi.mocked(tauri.getRecord).mockResolvedValue(processingRecord(0));
+      renderDetail();
+      await waitForAudioReady();
+
+      // 每次先改 mock（下一次 load 读到的状态）再发事件
+      vi.mocked(tauri.getRecord).mockResolvedValue(processingRecord(3));
+      act(() => {
+        vi.setSystemTime(new Date("2026-11-12T10:03:00Z"));
+        emit("processing-progress", { recordId: "record-1" });
+      }); // 进度点 2：(3, 10:03) → 60s/块
+      await waitFor(() => {
+        const stage = screen.getByText("正在本机转写", { exact: true });
+        expect(stage.parentElement?.textContent).toContain("4 / 12");
+      });
+
+      vi.mocked(tauri.getRecord).mockResolvedValue(processingRecord(6));
+      act(() => {
+        vi.setSystemTime(new Date("2026-11-12T10:06:00Z"));
+        emit("processing-progress", { recordId: "record-1" });
+      }); // 进度点 3：(6, 10:06)；剩 5 块 × 60s = 约 5 分钟
+      await waitFor(() =>
+        expect(screen.getByText(/预计还剩约/).textContent).toContain("5 分钟"),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("本会话内从处理中变为完成时提示一次；打开旧记录不误报", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-11-12T10:00:00Z"));
+      vi.mocked(tauri.getRecord).mockResolvedValue(processingRecord(2));
+      renderDetail();
+      await waitForAudioReady();
+      expect(screen.queryByText(/处理完成/)).toBeNull();
+
+      act(() => {
+        emit("processing-progress", { recordId: "record-1" });
+      });
+      vi.mocked(tauri.getRecord).mockResolvedValue(recordFixture({ status: "completed", hasAnalysis: true }));
+      act(() => {
+        emit("processing-progress", { recordId: "record-1" });
+      });
+      expect(await screen.findByText(/处理完成/)).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("打开一个本就完成的记录不弹完成通知", async () => {
+    vi.mocked(tauri.getRecord).mockResolvedValue(
+      recordFixture({ status: "completed", hasAnalysis: true }),
+    );
+    renderDetail();
+    await waitForAudioReady();
+    // 等一拍确保没有异步通知出现
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(screen.queryByText(/处理完成/)).toBeNull();
+  });
+});

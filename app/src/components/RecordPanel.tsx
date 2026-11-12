@@ -484,11 +484,9 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
     try {
       const moved = await moveRecords(
         unarchived.map((record) => record.id),
-        archiveTarget || null,
+        archiveTarget,
       );
-      const target = archiveTarget
-        ? projects.find((project) => project.id === archiveTarget)?.name ?? "知识库"
-        : "未归档";
+      const target = projects.find((project) => project.id === archiveTarget)?.name ?? "知识库";
       setNotice(`已将 ${moved} 条待归档记录移动到「${target}」。`);
       await refresh();
       onImported();
