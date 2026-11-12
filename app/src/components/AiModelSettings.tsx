@@ -289,7 +289,8 @@ export default function AiModelSettings(props: AiModelSettingsProps) {
                 </p>
                 <code>uv tool install --python 3.11 whisperx</code>
                 <p className="em-hint">
-                  上面的命令需要先装 uv（同样复制进终端运行：<code>curl -LsS https://astral.sh/uv/install.sh | sh</code>）。
+                  上面的命令需要先装 uv（uv 官方安装器，复制进终端运行：
+                  <code>curl -LsS https://astral.sh/uv/install.sh | sh</code>）。
                   装不上也没关系，whisperX 是可选的实验功能，用默认内嵌引擎一样能转写，只是不区分说话人。
                 </p>
                 <div className="em-card-actions" style={{ marginTop: 8 }}>
@@ -480,7 +481,7 @@ export default function AiModelSettings(props: AiModelSettingsProps) {
         <OllamaModelList
           models={status.ollamaModels}
           selected={status.settings.embeddingModel}
-          suggestions={[{ name: status.settings.embeddingModel, hint: "当前的嵌入模型" }]}
+          suggestions={[{ name: status.settings.embeddingModel, hint: "当前的记忆检索引擎" }]}
           download={embeddingDownload}
           available={status.ollamaAvailable}
           role="embedding"
@@ -489,7 +490,7 @@ export default function AiModelSettings(props: AiModelSettingsProps) {
           onCancel={props.onCancelDownload}
         />
         <div className="em-card-foot">
-          <span className="em-hint">换嵌入模型会让已有索引失效，需要重建。</span>
+          <span className="em-hint">换记忆检索引擎会让已有索引失效，需要重建。</span>
           <Button onClick={props.onOpenKnowledge}>去重建索引</Button>
         </div>
       </Card>

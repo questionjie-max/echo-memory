@@ -606,8 +606,8 @@ function CloudKeyTab({ onResume }: { onResume: () => void }) {
   return (
     <>
       <p className="em-note">
-        云端只覆盖分析（理解整理）；知识索引（向量嵌入）仍需本机 Ollama，
-        只配云端时跨记录问答/记忆生成仍会提示缺嵌入模型。
+        云端只覆盖分析（理解整理）；记忆检索引擎（问知识库用）仍需本机 Ollama，
+        只配云端时跨记录问答/记忆生成仍会提示缺少它。
       </p>
       <ProviderConnectionForm
         target="analysis"

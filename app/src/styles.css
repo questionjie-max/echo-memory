@@ -605,6 +605,10 @@ input::placeholder, textarea::placeholder { color: var(--em-ink-4); }
 .record-check { display: grid; place-items: center; flex: 0 0 auto; width: 18px; align-self: stretch; cursor: pointer; }
 .record-check input { width: 13px; height: 13px; margin: 0; accent-color: var(--em-accent); cursor: pointer; }
 .bulk-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin: 0 0 10px; padding: 8px 10px; border: 1px solid var(--em-accent-border); border-radius: var(--em-r-sm); background: var(--em-accent-soft); }
+/* v1.4 包1：一键归档——独立于视图分段条的窄条，860×600 下可换行不溢出。 */
+.archive-shortcut { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin: 0 0 10px; padding: 6px 10px; border: 1px dashed var(--em-accent-border); border-radius: var(--em-r-sm); background: var(--em-accent-soft); }
+.archive-hint { color: var(--em-accent-ink); font-size: 11px; font-weight: 650; }
+.archive-shortcut .secondary-button { padding: 4px 10px; font-size: 10px; }
 .bulk-count { color: var(--em-accent-ink); font-size: 11px; font-weight: 650; }
 .bulk-move { display: inline-flex; align-items: center; gap: 5px; color: var(--em-ink-3); font-size: 10px; }
 .bulk-move select { max-width: 108px; padding: 3px 6px; border: 1px solid var(--em-input-border); border-radius: 6px; background: var(--em-input-bg); color: var(--em-ink-2); font-size: 10px; }

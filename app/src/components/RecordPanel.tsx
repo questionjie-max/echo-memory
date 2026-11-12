@@ -476,7 +476,8 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
 
   /** v1.4 包1：把所有已加工完成、未归档的记录一键移到所选知识库。 */
   async function archiveAllUnarchived() {
-    if (unarchived.length === 0 || bulkBusy) return;
+    // 未选目标库时是 no-op（还会误导用户「已移动到未归档」），直接拒绝。
+    if (unarchived.length === 0 || bulkBusy || !archiveTarget) return;
     setBulkBusy(true);
     setError("");
     setNotice("");
@@ -660,33 +661,36 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
         <button type="button" className={view === "pending" ? "selected" : ""} onClick={() => setView("pending")}>待处理 <span>{pending.length}</span></button>
         <button type="button" className={view === "recent" ? "selected" : ""} onClick={() => setView("recent")}>最近 <span>{records.length}</span></button>
         <button type="button" className={view === "archived" ? "selected" : ""} onClick={() => setView("archived")}>归档 <span>{archivedRecords.length}</span></button>
-        {unarchived.length > 0 && (
-          <div className="archive-shortcut" role="group" aria-label="一键归档">
-            <label className="bulk-move">
-              <span>归档到</span>
-              <select
-                value={archiveTarget}
-                onChange={(event) => setArchiveTarget(event.target.value)}
-                disabled={bulkBusy}
-                aria-label="归档目标知识库"
-              >
-                <option value="">未归档</option>
-                {projects.map((project) => (
-                  <option key={project.id} value={project.id}>{project.name}</option>
-                ))}
-              </select>
-            </label>
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={() => void archiveAllUnarchived()}
-              disabled={bulkBusy}
-            >
-              {bulkBusy ? "处理中…" : <>一键归档 <span>{unarchived.length}</span></>}
-            </button>
-          </div>
-        )}
       </div>
+
+      {unarchived.length > 0 && (
+        <div className="archive-shortcut" role="group" aria-label="一键归档">
+          <span className="archive-hint">待归档 {unarchived.length} 条</span>
+          <label className="bulk-move">
+            <span>归档到</span>
+            <select
+              value={archiveTarget}
+              onChange={(event) => setArchiveTarget(event.target.value)}
+              disabled={bulkBusy}
+              aria-label="归档目标知识库"
+            >
+              <option value="">选择知识库…</option>
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>{project.name}</option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => void archiveAllUnarchived()}
+            disabled={bulkBusy || !archiveTarget}
+            title={archiveTarget ? undefined : "先选择要归档到的知识库"}
+          >
+            {bulkBusy ? "处理中…" : <>一键归档 <span>{unarchived.length}</span></>}
+          </button>
+        </div>
+      )}
 
       {view !== "archived" && someSelected && (
         <div className="bulk-bar" role="group" aria-label="批量操作">
