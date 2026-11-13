@@ -1012,6 +1012,47 @@ pub fn export_knowledge_base(
     .map_err(|error| error.to_frontend())
 }
 
+/// v1.4 包7：批量导出包——对多条记录逐条调用单条导出包逻辑（同一目录下
+/// 每条记录一个子文件夹）。单条失败不中断整体，结果如实回报成功/跳过明细。
+/// 与单条导出共用一次性票据门（只有走过保存对话框的导出才签发）。
+#[tauri::command]
+pub fn export_record_packages(
+    state: State<AppState>,
+    record_ids: Vec<String>,
+    destination_path: String,
+    ticket: String,
+) -> Result<crate::types::BulkExportResult, String> {
+    if record_ids.is_empty() {
+        return Err("请先选择要导出的记录".to_owned());
+    }
+    if record_ids.len() > 100 {
+        return Err("一次最多导出 100 条记录，请分批选择".to_owned());
+    }
+    if !crate::state::consume_export_ticket(&ticket) {
+        return Err("导出未经验证，请重新通过导出对话框操作".to_owned());
+    }
+    let destination = PathBuf::from(destination_path);
+    let mut exported = Vec::new();
+    let mut skipped = Vec::new();
+    for record_id in &record_ids {
+        match crate::export::export_record_package(&state.library, record_id, &destination) {
+            Ok(folder) => exported.push(crate::types::ExportedPackage {
+                record_id: record_id.clone(),
+                folder: folder.to_string_lossy().to_string(),
+            }),
+            Err(error) => skipped.push(crate::types::SkippedPackage {
+                record_id: record_id.clone(),
+                reason: error.to_frontend(),
+            }),
+        }
+    }
+    Ok(crate::types::BulkExportResult {
+        exported,
+        skipped,
+        destination: destination.to_string_lossy().to_string(),
+    })
+}
+
 /// 前端在弹出保存对话框前调用，拿到一次性导出票据。
 #[tauri::command]
 pub fn create_export_ticket() -> String {

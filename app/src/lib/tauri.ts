@@ -4,6 +4,7 @@ import type {
   AgentSessionSelection,
   AnalysisTemplate,
   AudioPreprocessorStatus,
+  BulkExportResult,
   ChatImportOutcome,
   DeleteRecordsResult,
   DiskSpaceStatus,
@@ -133,6 +134,19 @@ export function setRecordImportConfirmed(recordId: string, confirmed: boolean): 
 /** 块7：导出包——单条记录全量交付（逐字稿 md+srt + 纪要 + manifest）。 */
 export function exportRecordPackage(recordId: string, destinationPath: string, ticket: string): Promise<string> {
   return invoke<string>("export_record_package", { recordId, destinationPath, ticket });
+}
+
+/** v1.4 包7：批量导出包——每条记录一个子文件夹；单条失败不中断，如实回报。 */
+export function exportRecordPackages(
+  recordIds: string[],
+  destinationPath: string,
+  ticket: string,
+): Promise<BulkExportResult> {
+  return invoke<BulkExportResult>("export_record_packages", {
+    recordIds,
+    destinationPath,
+    ticket,
+  });
 }
 
 export function getRecord(id: string): Promise<RecordBrief> {

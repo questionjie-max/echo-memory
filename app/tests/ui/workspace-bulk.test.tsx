@@ -18,7 +18,7 @@ vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => false }));
 vi.mock("@tauri-apps/api/event", () => ({
   listen: () => Promise.resolve(() => undefined),
 }));
-vi.mock("@tauri-apps/plugin-dialog", () => ({ open: () => Promise.resolve(null) }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn(() => Promise.resolve(null)) }));
 vi.mock("@tauri-apps/api/webviewWindow", () => ({
   getCurrentWebviewWindow: () => ({ onDragDropEvent: () => Promise.resolve(() => undefined) }),
 }));
@@ -260,5 +260,98 @@ describe("工作区批量管理", () => {
 
     await screen.findByText("已删除 1 条记录，但有 1 个文件遗留。");
     await waitFor(() => expect(screen.queryByText("已选 1 条")).toBeNull());
+  });
+});
+
+describe("v1.4 包7：批量导出包", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(tauri.getInboxStatus).mockResolvedValue({
+      watchFolders: [],
+      usbDetection: false,
+      counts: { pending: 0, imported: 0, failed: 0 },
+      seen: 0,
+    });
+    vi.mocked(tauri.listProjects).mockResolvedValue([]);
+    vi.mocked(tauri.listArchivedRecords).mockResolvedValue([]);
+    vi.mocked(tauri.listAnalysisTemplates).mockResolvedValue([]);
+    vi.mocked(tauri.getMcpStatus).mockResolvedValue({
+      enabled: false,
+      authorizedScope: "",
+      executableAvailable: true,
+      executablePath: null,
+      recentCalls: [],
+    });
+    vi.mocked(tauri.listRecords).mockResolvedValue(records);
+    vi.mocked(tauri.createExportTicket).mockResolvedValue("ticket-bulk");
+    vi.mocked(tauri.exportRecordPackages).mockResolvedValue({
+      exported: [
+        { recordId: "r1", folder: "/tmp/out/导出包-季度产品评审" },
+        { recordId: "r2", folder: "/tmp/out/导出包-客户访谈" },
+      ],
+      skipped: [{ recordId: "r3", reason: "该记录还没有逐字稿，无法导出包" }],
+      destination: "/tmp/out",
+    });
+  });
+
+  it("选中记录后批量条出现导出包入口，点击后先领票据再选文件夹", async () => {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    vi.mocked(open).mockResolvedValue("/tmp/out");
+    renderPanel();
+
+    // 切到「最近」并勾选两条（复选框按渲染行序，取前两个）
+    fireEvent.click(screen.getByRole("button", { name: /最近/ }));
+    await screen.findByText("季度产品评审");
+    const boxes = screen.getAllByRole("checkbox");
+    fireEvent.click(boxes[0]);
+    fireEvent.click(boxes[1]);
+    fireEvent.click(screen.getByRole("button", { name: "导出包" }));
+
+    await waitFor(() => expect(tauri.createExportTicket).toHaveBeenCalled());
+    await waitFor(() => expect(open).toHaveBeenCalled());
+    await waitFor(() => {
+      const call = vi.mocked(tauri.exportRecordPackages).mock.calls[0];
+      expect(call[0]).toHaveLength(2); // 勾了两条
+      expect(call[1]).toBe("/tmp/out");
+      expect(call[2]).toBe("ticket-bulk");
+    });
+    // 回报：成功 N 条 + 跳过 M 条及原因方向
+    expect(await screen.findByText(/已导出 2 条/)).toBeTruthy();
+    expect(screen.getByText(/1 条跳过/)).toBeTruthy();
+    // 导出后清空勾选
+    expect(screen.queryByRole("button", { name: "导出包" })).toBeNull();
+  });
+
+  it("用户取消文件夹选择时不发起导出", async () => {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    vi.mocked(open).mockResolvedValue(null);
+    renderPanel();
+
+    fireEvent.click(screen.getByRole("button", { name: /最近/ }));
+    await screen.findByText("季度产品评审");
+    fireEvent.click(screen.getAllByRole("checkbox")[0]);
+    fireEvent.click(screen.getByRole("button", { name: "导出包" }));
+
+    await waitFor(() => expect(open).toHaveBeenCalled());
+    expect(tauri.exportRecordPackages).not.toHaveBeenCalled();
+  });
+
+  it("全部成功时不显示跳过提示", async () => {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    vi.mocked(open).mockResolvedValue("/tmp/out");
+    vi.mocked(tauri.exportRecordPackages).mockResolvedValue({
+      exported: [{ recordId: "r1", folder: "/tmp/out/导出包-季度产品评审" }],
+      skipped: [],
+      destination: "/tmp/out",
+    });
+    renderPanel();
+
+    fireEvent.click(screen.getByRole("button", { name: /最近/ }));
+    await screen.findByText("季度产品评审");
+    fireEvent.click(screen.getAllByRole("checkbox")[0]);
+    fireEvent.click(screen.getByRole("button", { name: "导出包" }));
+
+    expect(await screen.findByText(/已导出 1 条/)).toBeTruthy();
+    expect(screen.queryByText(/跳过/)).toBeNull();
   });
 });

@@ -5,7 +5,9 @@ import { listen } from "@tauri-apps/api/event";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { DiskSpaceStatus, InboxStatus, Project, RecordBrief, RecordStatus } from "../shared/types";
 import {
+  createExportTicket,
   deleteRecords,
+  exportRecordPackages,
   getDiskSpaceStatus,
   importAudio,
   listArchivedRecords,
@@ -524,6 +526,37 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
     }
   }
 
+  /** v1.4 包7：批量导出包——选目标文件夹后逐条导出，每条记录一个子文件夹。 */
+  async function applyBulkExport() {
+    if (selectedIds.length === 0 || bulkBusy) return;
+    setBulkBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      // 先领票据再弹对话框：与单条导出同一道一次性门。
+      const ticket = await createExportTicket();
+      const destination = await open({
+        directory: true,
+        multiple: false,
+        title: `选择 ${selectedIds.length} 条记录导出包的位置`,
+      });
+      if (typeof destination !== "string") return;
+      const result = await exportRecordPackages(selectedIds, destination, ticket);
+      const ok = result.exported.length;
+      const skipped = result.skipped.length;
+      setNotice(
+        skipped > 0
+          ? `已导出 ${ok} 条到「${result.destination}」；${skipped} 条跳过（如没有逐字稿）。`
+          : `已导出 ${ok} 条到「${result.destination}」，每条记录一个文件夹。`,
+      );
+      setSelected(new Set());
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
   function openRecordMenu(record: RecordBrief, x: number, y: number) {
     setRecordMenu({
       record,
@@ -709,6 +742,10 @@ export default function RecordPanel({ projectId, unfiledOnly, onImported, select
           </label>
           <button type="button" className="secondary-button" onClick={() => void applyMove()} disabled={bulkBusy}>
             {bulkBusy ? "处理中…" : "移动"}
+          </button>
+          {/* v1.4 包7：批量导出（选中记录的「拿稿子」快车道） */}
+          <button type="button" className="secondary-button" onClick={() => void applyBulkExport()} disabled={bulkBusy}>
+            {bulkBusy ? "导出中…" : "导出包"}
           </button>
           <button type="button" className="danger-button" onClick={() => void applyDelete()} disabled={bulkBusy}>
             删除

@@ -92,6 +92,7 @@ pub fn run() {
             commands::set_record_archived,
             commands::set_record_import_confirmed,
             commands::export_record_package,
+            commands::export_record_packages,
             commands::search_records,
             commands::get_knowledge_overview,
             commands::get_knowledge_index_status,

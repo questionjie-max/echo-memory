@@ -681,6 +681,23 @@ export interface SaveAndVerifyOutcome {
   health: ProviderHealthSnapshot;
 }
 
+/** v1.4 包7：批量导出结果——成功与跳过逐条如实回报。 */
+export interface BulkExportResult {
+  exported: ExportedPackage[];
+  skipped: SkippedPackage[];
+  destination: string;
+}
+
+export interface ExportedPackage {
+  recordId: string;
+  folder: string;
+}
+
+export interface SkippedPackage {
+  recordId: string;
+  reason: string;
+}
+
 /** 远端模型分组：分析首选 chat 候选，其余进「其他模型」折叠组。 */
 export interface RemoteModelList {
   chatCandidates: string[];

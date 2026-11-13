@@ -402,6 +402,29 @@ pub struct SaveAndVerifyOutcome {
     pub health: ProviderHealthSnapshot,
 }
 
+/// v1.4 包7：批量导出结果——成功与跳过逐条如实回报。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkExportResult {
+    pub exported: Vec<ExportedPackage>,
+    pub skipped: Vec<SkippedPackage>,
+    pub destination: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportedPackage {
+    pub record_id: String,
+    pub folder: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkippedPackage {
+    pub record_id: String,
+    pub reason: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum MemoryViewKind {
