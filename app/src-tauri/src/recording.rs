@@ -394,6 +394,45 @@ pub struct CapturedRecording {
 #[derive(Clone, Default)]
 pub struct RecordingController {
     active: Arc<Mutex<Option<ActiveRecording>>>,
+    /// v1.4 包5：录音中打的标记（相对录音开始的毫秒、不含暂停时间、升序）。
+    /// 录音停止并入库后由 ingest 转移到 records.marks_json；
+    /// 会话失败/取消时随清理丢弃（标记跟录音走，录音丢了标记没有意义）。
+    pending_marks: Arc<Mutex<std::collections::HashMap<String, Vec<i64>>>>,
+}
+
+impl RecordingController {
+    /// 录中打点：记录当前录音位置（不含暂停时段）。没有进行中的录音时报错。
+    pub fn mark(&self) -> AppResult<Vec<i64>> {
+        let (session_id, relative_ms) = {
+            let active = self
+                .active
+                .lock()
+                .map_err(|_| AppError::Invalid("录音状态锁不可用".to_owned()))?;
+            let current = active
+                .as_ref()
+                .ok_or_else(|| AppError::Invalid("当前没有正在进行的录音".to_owned()))?;
+            let elapsed_ms = self.elapsed_for(current).as_millis() as i64;
+            let relative_ms = (elapsed_ms - self.paused_millis(current)).clamp(0, i64::MAX);
+            (current.session_id.clone(), relative_ms)
+        };
+        let mut marks = self
+            .pending_marks
+            .lock()
+            .map_err(|_| AppError::Invalid("录音标记锁不可用".to_owned()))?;
+        let list = marks.entry(session_id).or_default();
+        list.push(relative_ms);
+        list.sort_unstable();
+        list.dedup();
+        Ok(list.clone())
+    }
+
+    /// 取走某次录音会话的全部标记（取出即删除）；没有标记返回空。
+    fn take_pending_marks(&self, session_id: &str) -> Vec<i64> {
+        self.pending_marks
+            .lock()
+            .map(|mut marks| marks.remove(session_id).unwrap_or_default())
+            .unwrap_or_default()
+    }
 }
 
 fn validated_inflight_path(library: &ManagedLibrary, relative: &str) -> AppResult<PathBuf> {
@@ -622,6 +661,8 @@ impl RecordingController {
         )?;
         if bytes <= 44 || !finished.file_path.is_file() {
             let message = "录音已停止，但没有保存有效音频";
+            // 录音没入库：标记随之丢弃。
+            let _ = self.take_pending_marks(&finished.session_id);
             let _ = library.repository().update_recording_session_status(
                 &finished.session_id,
                 "failed",
@@ -662,6 +703,8 @@ impl RecordingController {
         ) {
             Ok(result) => result,
             Err(error) => {
+                // 录音没入库：标记随之丢弃（HashMap 防泄漏）。
+                let _ = self.take_pending_marks(&captured.session_id);
                 let _ = library.repository().update_recording_session_status(
                     &captured.session_id,
                     "failed",
@@ -676,6 +719,14 @@ impl RecordingController {
         library
             .repository()
             .complete_recording_session(&captured.session_id, &ingest.record_id)?;
+        // v1.4 包5：录音中打的标记转移到正式记录（空标记不写库）。
+        let marks = self.take_pending_marks(&captured.session_id);
+        if !marks.is_empty() {
+            if let Err(error) = library.repository().save_record_marks(&ingest.record_id, &marks) {
+                // 标记是增强信息：落库失败不吞掉录音结果，如实记日志。
+                eprintln!("录音标记保存失败（record={}）：{error}", ingest.record_id);
+            }
+        }
         if let Some(parent) = captured.file_path.parent() {
             let _ = fs::remove_dir_all(parent);
         }

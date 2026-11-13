@@ -12,4 +12,8 @@
 
 int echo_keychain_set(const char *service, const char *account, const char *password);
 
+// 读取条目（输出缓冲区由调用方提供，buffer_len 含 NUL 的容量）。
+// 返回值：0 成功（password_out 已写入 NUL 结尾的值）；1 参数无效；2 查询失败/不存在。
+int echo_keychain_get(const char *service, const char *account, char *password_out, unsigned long buffer_len);
+
 #endif

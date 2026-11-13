@@ -172,6 +172,8 @@ pub fn run() {
             commands::verify_saved_provider,
             commands::get_provider_health_status,
             commands::get_credential_revision,
+            commands::mark_recording,
+            commands::get_record_marks,
             commands::get_local_timeline,
             commands::get_local_growth_graph,
             commands::generate_memory_snapshot,

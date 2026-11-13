@@ -40,6 +40,7 @@ import {
   listRecoverableRecordings,
   listMicrophoneDevices,
   listSystemAudioApplications,
+  markRecording,
   microphonePermission,
   pauseRecording,
   pauseSystemRecording,
@@ -160,6 +161,8 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
   const [sysPermission, setSysPermission] = useState<SystemAudioPermission>("undetermined");
   const [recoverable, setRecoverable] = useState<RecoverableRecording[]>([]);
   const [busy, setBusy] = useState(false);
+  // v1.4 包5：本次录音已打的标记（相对录音开始的毫秒），录中显示数量，随会话清零。
+  const [micMarks, setMicMarks] = useState<number[]>([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [captureSource, setCaptureSource] = useState<CaptureSource>("microphone");
@@ -466,6 +469,7 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
       // sysState 置 active，不清会让 UI 停在幽灵「正在记录（双路）」。
       setSysState(null);
       setDualActive(false);
+      setMicMarks([]); // v1.4 包5：会话结束，标记计数清零（标记已随记录入库）
       setNotice(`已保存“${result.title}”，正在准备本机转写。`);
       onImported();
       try {
@@ -510,6 +514,7 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
       }
       setSysState(null);
       setDualActive(false);
+      setMicMarks([]); // v1.4 包5：放弃录音，标记一并丢弃
       pollGeneration.current += 1;
       setNotice("已放弃本次录音。");
       onImported();
@@ -776,6 +781,19 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
             </div>
           )}
           <div className="recording-entry-actions">
+            {/* v1.4 包5：录中打点——讲得好的地方点一下，事后回听可直达 */}
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => {
+                void markRecording()
+                  .then((marks) => setMicMarks(marks))
+                  .catch((reason) => setError(String(reason)));
+              }}
+              disabled={busy || state?.status !== "recording"}
+            >
+              标记一下{micMarks.length > 0 ? `（${micMarks.length}）` : ""}
+            </button>
             <button type="button" className="secondary-button" onClick={() => void pauseOrResume()} disabled={busy}>
               {state?.status === "paused" ? "继续" : "暂停"}
             </button>

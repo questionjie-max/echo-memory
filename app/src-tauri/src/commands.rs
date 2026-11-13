@@ -2982,6 +2982,25 @@ pub async fn test_external_asr_connection(state: State<'_, AppState>) -> Result<
     .map_err(|_| "第三方转写连通测试后台任务异常，请重试".to_owned())?
 }
 
+/// v1.4 包5：录音中打点——记录当前录音位置（不含暂停），返回已打点清单。
+#[tauri::command]
+pub fn mark_recording(state: State<AppState>) -> Result<Vec<i64>, String> {
+    state
+        .recording
+        .mark()
+        .map_err(|error| error.to_frontend())
+}
+
+/// v1.4 包5：读取某条记录的打点标记（相对录音开始的毫秒升序）。
+#[tauri::command]
+pub fn get_record_marks(state: State<AppState>, recordId: String) -> Result<Vec<i64>, String> {
+    state
+        .library
+        .repository()
+        .get_record_marks(&recordId)
+        .map_err(|error| error.to_frontend())
+}
+
 pub(crate) fn test_external_ai_connection_blocking(state: &AppState) -> Result<(), String> {
     let settings =
         require_external_ai_consent(&state.library).map_err(|error| error.to_frontend())?;

@@ -28,6 +28,7 @@ import {
   createExportTicket,
   getLocalAiStatus,
   getRecord,
+  getRecordMarks,
   latestAnalysis,
   listProjects,
   listAnalysisTemplates,
@@ -198,6 +199,8 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
   const [exportNotice, setExportNotice] = useState<string | null>(null);
   // v1.4 包4：长任务完成通知（转写/分析从处理中变为完成时提示一次）。
   const [doneNotice, setDoneNotice] = useState<string | null>(null);
+  // v1.4 包5：录音打点标记（相对录音开始的毫秒升序），点击跳转播放位置。
+  const [marks, setMarks] = useState<number[]>([]);
   const [retranscribeLanguage, setRetranscribeLanguage] = useState("zh");
   const [retranscribeModelPath, setRetranscribeModelPath] = useState("");
   // 文字类来源（文档导入 / AI 对话导入）没有音频：走纯文本分支，隐藏播放与转写操作。
@@ -311,6 +314,15 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
     instructionPrefilled.current = false;
     setRetranscribeOpen(false);
     completionNotified.current = false;
+    sawProcessing.current = false;
+    progressHistory.current = [];
+    // v1.4 包5：拉取录音打点（录音类才有；读取失败不影响详情加载）
+    setMarks([]);
+    if (record.sourceType !== "document") {
+      void getRecordMarks(record.id)
+        .then((values) => setMarks(values))
+        .catch(() => setMarks([]));
+    }
     void load();
     return () => {
       loadRequestId.current += 1;
@@ -809,6 +821,18 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
       )}
 
       {doneNotice && <p className="inline-notice" role="status">{doneNotice}</p>}
+
+      {/* v1.4 包5：录音打点——录音中点的标记，点击跳到那一刻 */}
+      {!isDocument && !isProcessing(currentRecord.status) && marks.length > 0 && (
+        <div className="record-marks" role="group" aria-label="录音标记">
+          <span className="record-marks-label">标记</span>
+          {marks.map((ms) => (
+            <button key={ms} type="button" className="record-mark-chip" onClick={() => seek(ms, true)}>
+              ⚑ {formatTime(ms)}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="detail-tabs" role="tablist" aria-label={isDocument ? "文档内容" : "录音内容"}>
         <button type="button" role="tab" aria-selected={activeTab === "transcript"} className={activeTab === "transcript" ? "selected" : ""} onClick={() => setActiveTab("transcript")}>{isDocument ? "文档正文" : "逐字稿"}</button>

@@ -686,6 +686,10 @@ input::placeholder, textarea::placeholder { color: var(--em-ink-4); }
 .processing-progress strong { color: var(--em-accent-ink); font-weight: 650; }
 /* v1.4 包4：预计剩余时间——紧跟进度文本的小字提示。 */
 .processing-progress .progress-eta { color: var(--em-ink-2); font-size: 10px; font-weight: 650; }
+/* v1.4 包5：录音打点标记条。 */
+.record-marks { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 0 16px 4px; }
+.record-marks-label { color: var(--em-ink-3); font-size: 10px; font-weight: 650; }
+.record-mark-chip { display: inline-flex; align-items: center; gap: 3px; padding: 3px 9px; border: 1px solid var(--em-accent-border); border-radius: var(--em-r-pill); background: var(--em-accent-soft); color: var(--em-accent-ink); cursor: pointer; font-size: 10px; font-weight: 620; }
 .detail-tabs { display: flex; gap: 18px; padding: 0 16px; border-bottom: 1px solid var(--em-hairline); }
 .detail-tabs button { position: relative; padding: 8px 1px 9px; border: 0; background: transparent; color: var(--em-ink-3); cursor: pointer; font-size: 12px; font-weight: 650; }
 .detail-tabs button.selected { color: var(--em-ink); }

@@ -666,4 +666,120 @@ impl LibraryRepository {
             import_confirmed_at: row.get(18)?,
         })
     }
+
+    /// v1.4 包5：保存录音打点标记（相对录音开始的毫秒升序列表）。
+    /// marks 为空时清除该记录的标记（删除记录的级联由 records 表删除覆盖）。
+    pub fn save_record_marks(&self, record_id: &str, marks: &[i64]) -> AppResult<()> {
+        let mut sorted = marks.to_vec();
+        sorted.sort_unstable();
+        let json = if sorted.is_empty() {
+            None
+        } else {
+            Some(serde_json::to_string(&sorted).map_err(|error| {
+                AppError::Invalid(format!("录音标记序列化失败：{error}"))
+            })?)
+        };
+        self.connect()?.execute(
+            "UPDATE records SET marks_json = ?2 WHERE id = ?1",
+            params![record_id, json],
+        )?;
+        Ok(())
+    }
+
+    /// v1.4 包5：读取录音打点标记；从未打过标记（NULL）按空数组处理。
+    pub fn get_record_marks(&self, record_id: &str) -> AppResult<Vec<i64>> {
+        let json: Option<String> = self
+            .connect()?
+            .query_row(
+                "SELECT marks_json FROM records WHERE id = ?1",
+                params![record_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
+        let marks: Vec<i64> = json
+            .and_then(|value| serde_json::from_str(&value).ok())
+            .unwrap_or_default();
+        Ok(marks)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    fn temp_repository() -> (LibraryRepository, std::path::PathBuf) {
+        let root = std::env::temp_dir().join(format!("record-marks-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        (
+            LibraryRepository::new(root.join("library.db")).unwrap(),
+            root,
+        )
+    }
+
+    fn seeded_record(repository: &LibraryRepository, root: &std::path::Path, title: &str) -> crate::types::RecordBrief {
+        let dir = root.join("audio");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("sample.wav");
+        std::fs::write(&path, [0_u8; 1024]).unwrap();
+        let hash = format!("{:x}", md5_of_title(title));
+        repository
+            .create_record(title, None, &path, &hash, 60_000)
+            .unwrap()
+    }
+
+    /// 测试辅助：从标题生成稳定 hash（无 md5 依赖，任何确定性函数都行）。
+    fn md5_of_title(title: &str) -> u64 {
+        title.bytes().fold(0xcbf29ce484222325_u64, |acc, byte| {
+            (acc ^ byte as u64).wrapping_mul(0x100000001b3)
+        })
+    }
+
+    #[test]
+    fn record_marks_round_trip_and_default_empty() {
+        let (repository, root) = temp_repository();
+        let record = seeded_record(&repository, &root, "带标记的录音");
+
+        // 未打标记：空数组
+        assert!(repository.get_record_marks(&record.id).unwrap().is_empty());
+
+        // 乱序写入 → 读取时升序
+        repository
+            .save_record_marks(&record.id, &[62_000, 15_000, 30_000])
+            .unwrap();
+        assert_eq!(
+            repository.get_record_marks(&record.id).unwrap(),
+            vec![15_000, 30_000, 62_000]
+        );
+
+        // 覆盖保存
+        repository.save_record_marks(&record.id, &[5_000]).unwrap();
+        assert_eq!(repository.get_record_marks(&record.id).unwrap(), vec![5_000]);
+
+        // 清空
+        repository.save_record_marks(&record.id, &[]).unwrap();
+        assert!(repository.get_record_marks(&record.id).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn marks_survive_record_reload_and_vanish_with_record() {
+        let (repository, root) = temp_repository();
+        let record = seeded_record(&repository, &root, "标记随记录");
+        repository
+            .save_record_marks(&record.id, &[1_000, 2_000])
+            .unwrap();
+        assert_eq!(
+            repository.get_record_marks(&record.id).unwrap(),
+            vec![1_000, 2_000]
+        );
+
+        // 记录删除 → 标记一起消失（marks_json 在 records 行内；
+        // 读取语义：记录不存在与未打标同样返回空数组）
+        repository.delete_record(&record.id).unwrap();
+        let marks = repository.get_record_marks(&record.id).unwrap();
+        assert!(marks.is_empty(), "记录删除后标记必须清空，实际：{marks:?}");
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

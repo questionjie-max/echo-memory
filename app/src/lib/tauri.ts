@@ -340,6 +340,16 @@ export function getRecordingState(): Promise<RecordingState> {
   return invoke<RecordingState>("get_recording_state");
 }
 
+/** v1.4 包5：录音中打点——记录当前录音位置（不含暂停），返回已打点清单。 */
+export function markRecording(): Promise<number[]> {
+  return invoke<number[]>("mark_recording");
+}
+
+/** v1.4 包5：读取某条记录的打点标记（相对录音开始的毫秒升序）。 */
+export function getRecordMarks(recordId: string): Promise<number[]> {
+  return invoke<number[]>("get_record_marks", { recordId });
+}
+
 export function listRecoverableRecordings(): Promise<RecoverableRecording[]> {
   return invoke<RecoverableRecording[]>("list_recoverable_recordings");
 }

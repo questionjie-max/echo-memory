@@ -61,3 +61,30 @@ int echo_keychain_set(const char *service, const char *account, const char *pass
     }
     return 0;
 }
+
+int echo_keychain_get(const char *service, const char *account, char *password_out, unsigned long buffer_len) {
+    if (service == NULL || account == NULL || password_out == NULL || buffer_len == 0) {
+        return 1;
+    }
+    NSString *service_string = [NSString stringWithUTF8String:service];
+    NSString *account_string = [NSString stringWithUTF8String:account];
+    if (service_string == nil || account_string == nil) {
+        return 1;
+    }
+    NSMutableDictionary *query = echo_keychain_query(service_string, account_string);
+    query[(__bridge id)kSecReturnData] = @YES;
+    query[(__bridge id)kSecMatchLimit] = (__bridge id)kSecMatchLimitOne;
+    CFTypeRef found = NULL;
+    OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &found);
+    if (status != errSecSuccess || found == NULL) {
+        return 2;
+    }
+    NSData *stored = (__bridge_transfer NSData *)found;
+    unsigned long needed = stored.length + 1;
+    if (needed > buffer_len) {
+        return 1; // 调用方缓冲区不足
+    }
+    memcpy(password_out, stored.bytes, stored.length);
+    password_out[stored.length] = '\0';
+    return 0;
+}
