@@ -114,6 +114,7 @@ beforeEach(() => {
   vi.mocked(tauri.listAnalysisTemplates).mockResolvedValue([]);
   vi.mocked(tauri.getLocalAiStatus).mockResolvedValue(localAiStatusFixture());
   vi.mocked(tauri.recordAudioPath).mockResolvedValue("/library/audio/record-1.m4a");
+  vi.mocked(tauri.getRecordMarks).mockResolvedValue([]);
 });
 
 describe("记录详情：事件刷新与轮询边界", () => {
