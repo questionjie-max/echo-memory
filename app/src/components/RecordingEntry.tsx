@@ -119,6 +119,17 @@ const DUAL_CAPTURE_NOTICE = [
   "如果录的是会议，请确认你已告知参会者或有权录制。",
 ].join("\n\n");
 
+/**
+ * v1.4 包6：本次应用会话内已确认过的隐私告知。
+ * 只存在内存里：重启应用后恢复逐次提醒（隐私红线不放松）。
+ * key 是「来源+应用」：换来源或换录制的应用都要重新确认。
+ */
+const sessionConfirmedNotices = new Set<string>();
+
+function noticeSessionKey(kind: "system" | "dual", applicationName: string | null): string {
+  return `${kind}:${applicationName ?? "any"}`;
+}
+
 function systemCaptureNotice(applicationName: string | null): string {
   if (applicationName) {
     return [
@@ -402,7 +413,12 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
     }
     // 隐私红线：没有确认过显性告知，就不开始录系统声。
     // confirmed=true 是后端的硬性参数：没走确认框后端直接拒绝。
-    if (!(await confirmAction(systemCaptureNotice(selectedApplicationName)))) return;
+    // v1.4 包6：本次会话已确认过同一来源+应用时不再重复弹窗（重启恢复逐次提醒）。
+    const noticeKey = noticeSessionKey("system", selectedApplicationName);
+    if (!sessionConfirmedNotices.has(noticeKey)) {
+      if (!(await confirmAction(systemCaptureNotice(selectedApplicationName)))) return;
+      sessionConfirmedNotices.add(noticeKey);
+    }
     setSysState(await startSystemRecording(projectId, true, applicationBundleId || null));
   }
 
@@ -415,7 +431,12 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
         await beginSystem();
       } else if (captureSource === "both") {
         // 双路的隐私红线：与系统声同款显性确认，确认后才带 confirmed=true。
-        if (!(await confirmAction(dualCaptureNotice(selectedApplicationName)))) return;
+        // v1.4 包6：本次会话已确认过同一来源+应用时不再重复弹窗（重启恢复逐次提醒）。
+        const dualKey = noticeSessionKey("dual", selectedApplicationName);
+        if (!sessionConfirmedNotices.has(dualKey)) {
+          if (!(await confirmAction(dualCaptureNotice(selectedApplicationName)))) return;
+          sessionConfirmedNotices.add(dualKey);
+        }
         setDualActive(true);
         setMicState(await startRecording(
           projectId,

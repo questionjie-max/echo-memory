@@ -411,3 +411,20 @@ describe("记录详情：预计剩余时间与完成通知（v1.4 包4）", () =
     expect(screen.queryByText(/处理完成/)).toBeNull();
   });
 });
+
+describe("记录详情：分析按钮禁用原因（v1.4 包6）", () => {
+  it("没有逐字稿时按钮旁说明原因，而不是只给一个灰按钮", async () => {
+    vi.mocked(tauri.getRecord).mockResolvedValue(
+      recordFixture({ status: "completed", hasTranscript: false, hasAnalysis: false }),
+    );
+    vi.mocked(tauri.listTranscriptBlocks).mockResolvedValue([]);
+    renderDetail();
+    await waitForAudioReady();
+    // 分析控制区在「内容分析」tab 下
+    fireEvent.click(screen.getByRole("tab", { name: "内容分析" }));
+    expect(await screen.findByText("还没有逐字稿，先完成转写")).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "开始分析" }).hasAttribute("disabled"),
+    ).toBe(true);
+  });
+});

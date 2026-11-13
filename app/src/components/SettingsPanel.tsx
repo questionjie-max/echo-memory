@@ -547,16 +547,42 @@ export default function SettingsPanel({ open: visible, onClose, onOpenKnowledge 
   }
 
   async function submitHotword() {
-    const term = hotwordInput.trim();
-    if (!term) return;
-    try {
-      await addHotword(term);
-      setHotwordInput("");
-      await loadHotwords();
-      show("saved", "已添加");
-      setError("");
-    } catch (reason) {
-      setError(String(reason));
+    // v1.4 包6：支持多行粘贴批量导入——每行一个热词，输入内去重，
+    // 逐个调用既有 addHotword（后端接口不变，无新增依赖面）。
+    const terms = hotwordInput
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+    const unique = Array.from(new Set(terms));
+    if (unique.length === 0) return;
+    if (unique.length === 1) {
+      try {
+        await addHotword(unique[0]);
+        setHotwordInput("");
+        await loadHotwords();
+        show("saved", "已添加");
+        setError("");
+      } catch (reason) {
+        setError(String(reason));
+      }
+      return;
+    }
+    let added = 0;
+    let failed = 0;
+    for (const term of unique) {
+      try {
+        await addHotword(term);
+        added += 1;
+      } catch {
+        failed += 1;
+      }
+    }
+    setHotwordInput("");
+    await loadHotwords();
+    if (failed > 0) {
+      setError(`已添加 ${added} 个热词，${failed} 个失败，请重试失败项。`);
+    } else {
+      show("saved", `已添加 ${added} 个热词`);
     }
   }
 
@@ -800,13 +826,19 @@ export default function SettingsPanel({ open: visible, onClose, onOpenKnowledge 
               status={<Pill>{hotwords.length} 个</Pill>}
             >
               <div className="em-field-row">
-                <input
-                  className="em-input"
+                {/* v1.4 包6：textarea 而非 input——批量粘贴多行是核心场景，
+                    单行 input 会吞掉换行（jsdom 与浏览器同行为） */}
+                <textarea
+                  className="em-input em-hotword-input"
+                  rows={hotwordInput.includes("\n") ? 3 : 1}
                   value={hotwordInput}
-                  placeholder="输入热词后回车"
+                  placeholder="输入热词后回车；也可一次粘贴多行，每行一个"
                   onChange={(event) => setHotwordInput(event.target.value)}
                   onKeyDown={(event) => {
-                    if (event.key === "Enter" && !event.nativeEvent.isComposing) void submitHotword();
+                    if (event.key === "Enter" && !event.nativeEvent.isComposing && !event.shiftKey) {
+                      event.preventDefault();
+                      void submitHotword();
+                    }
                   }}
                 />
                 <Button variant="primary" disabled={!hotwordInput.trim()} onClick={() => void submitHotword()}>

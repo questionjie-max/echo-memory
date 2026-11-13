@@ -895,9 +895,13 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
                     {templates.map((template) => <option value={template.id} key={template.id}>{template.name}</option>)}
                   </select>
                 </label>
-                <button type="button" className="primary-button" disabled={busy || segments.length === 0 || isProcessing(currentRecord.status)} onClick={() => void startAnalysis()}>
+                <button type="button" className="primary-button" disabled={busy || segments.length === 0 || isProcessing(currentRecord.status)} onClick={() => void startAnalysis()} title={analysisDisabledReason(currentRecord, segments.length)}>
                   {currentRecord.status === "analyzing" ? "分析中…" : analysis ? "重新分析" : "开始分析"}
                 </button>
+                {/* v1.4 包6：按钮禁用时说清为什么（走查发现用户对着灰按钮猜） */}
+                {analysisDisabledReason(currentRecord, segments.length) && (
+                  <p className="em-hint" role="status">{analysisDisabledReason(currentRecord, segments.length)}</p>
+                )}
               </div>
             </div>
             <label className="analysis-instruction">
@@ -1266,6 +1270,13 @@ function processingStageText(stage: string | null, documentMode = false) {
 
 function progressText(record: RecordBrief) {
   return record.progressTotal > 1 ? `${Math.min(record.progressCurrent + 1, record.progressTotal)} / ${record.progressTotal}` : "";
+}
+
+/** v1.4 包6：分析按钮禁用原因——没有原因返回空字符串。 */
+function analysisDisabledReason(record: RecordBrief, segmentCount: number): string {
+  if (isProcessing(record.status)) return "录音正在处理，处理完成后即可分析";
+  if (segmentCount === 0) return "还没有逐字稿，先完成转写";
+  return "";
 }
 
 function processingPercent(record: RecordBrief) {

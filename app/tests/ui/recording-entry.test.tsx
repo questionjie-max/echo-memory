@@ -254,3 +254,45 @@ describe("本地记录模块", () => {
     confirmSpy.mockRestore();
   });
 });
+
+describe("v1.4 包6：隐私告知的会话记忆", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(tauri.getRecordingState).mockResolvedValue(recordingState());
+    vi.mocked(tauri.microphonePermission).mockResolvedValue("granted");
+    vi.mocked(tauri.listMicrophoneDevices).mockResolvedValue([]);
+    vi.mocked(tauri.listSystemAudioApplications).mockResolvedValue([]);
+    vi.mocked(tauri.listRecoverableRecordings).mockResolvedValue([]);
+    vi.mocked(tauri.recordingLevels).mockResolvedValue(activeState("recording"));
+    vi.mocked(tauri.isDualRecording).mockResolvedValue(false);
+    vi.mocked(tauri.systemAudioPermission).mockResolvedValue("granted");
+    vi.mocked(tauri.requestSystemAudioPermission).mockResolvedValue("granted");
+    vi.mocked(tauri.startSystemRecording).mockResolvedValue(activeState("recording"));
+    vi.mocked(tauri.stopSystemRecording).mockResolvedValue({
+      sessionId: "session-1",
+      recordId: "record-1",
+      durationMs: 12_000,
+      title: "本地录音 2026-10-16 18-00",
+    });
+  });
+
+  it("同一来源第二次录音不再重复弹窗；换来源/换应用要重新确认", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<RecordingEntry projectId={null} onImported={() => undefined} />);
+    fireEvent.click(await screen.findByRole("tab", { name: "系统声音" }));
+
+    // 第一次：弹窗确认并开始
+    fireEvent.click(await screen.findByRole("button", { name: "开始录系统声音" }));
+    await waitFor(() => expect(confirmSpy).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(tauri.startSystemRecording).toHaveBeenCalledTimes(1));
+    // 停掉再来
+    fireEvent.click(await screen.findByRole("button", { name: /停止/ }));
+    await waitFor(() => expect(tauri.stopSystemRecording).toHaveBeenCalled());
+
+    // 第二次同一来源：不再弹窗
+    fireEvent.click(await screen.findByRole("button", { name: "开始录系统声音" }));
+    await waitFor(() => expect(tauri.startSystemRecording).toHaveBeenCalledTimes(2));
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    confirmSpy.mockRestore();
+  });
+});

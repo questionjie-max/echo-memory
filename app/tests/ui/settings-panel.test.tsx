@@ -96,3 +96,67 @@ describe("SettingsPanel 数据加载（0.4.2 回归防护）", () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled());
   });
 });
+
+describe("v1.4 包6：词汇库批量导入", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    setupSettingsMocks(tauri);
+  });
+
+  async function openHotwordsTab() {
+    render(<SettingsPanel open onClose={() => undefined} />);
+    await screen.findByText("AI 模型", { selector: "button" });
+    fireEvent.click(screen.getByText("词汇库", { selector: "button" }));
+    await screen.findByPlaceholderText(/输入热词/);
+  }
+
+  it("多行粘贴一次导入：每行一个热词，逐条添加", async () => {
+    await openHotwordsTab();
+    fireEvent.change(screen.getByPlaceholderText(/输入热词/), {
+      target: { value: "通义听悟\n语音识别\n\n会议纪要" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "添加" }));
+    await waitFor(() =>
+      expect(tauri.addHotword).toHaveBeenCalledWith("通义听悟"),
+    );
+    expect(tauri.addHotword).toHaveBeenCalledWith("语音识别");
+    expect(tauri.addHotword).toHaveBeenCalledWith("会议纪要");
+    // 空行被跳过，不重复添加同一个词
+    expect(tauri.addHotword).toHaveBeenCalledTimes(3);
+  });
+
+  it("单行输入仍然可以一次添加一个", async () => {
+    await openHotwordsTab();
+    fireEvent.change(screen.getByPlaceholderText(/输入热词/), {
+      target: { value: "回声记忆" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "添加" }));
+    await waitFor(() =>
+      expect(tauri.addHotword).toHaveBeenCalledWith("回声记忆"),
+    );
+    expect(tauri.addHotword).toHaveBeenCalledTimes(1);
+  });
+
+  it("重复粘贴同一个词只导入一次（输入内去重）", async () => {
+    await openHotwordsTab();
+    fireEvent.change(screen.getByPlaceholderText(/输入热词/), {
+      target: { value: "回声记忆\n回声记忆" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "添加" }));
+    await waitFor(() =>
+      expect(tauri.addHotword).toHaveBeenCalledTimes(1),
+    );
+  });
+
+  it("批量导入给出明确反馈：添加了几个", async () => {
+    await openHotwordsTab();
+    fireEvent.change(screen.getByPlaceholderText(/输入热词/), {
+      target: { value: "热词甲\n热词乙" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "添加" }));
+    await waitFor(() => expect(tauri.addHotword).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText(/已添加 2 个热词/)).toBeTruthy();
+    // 输入框清空
+    expect((screen.getByPlaceholderText(/输入热词/) as HTMLInputElement).value).toBe("");
+  });
+});
