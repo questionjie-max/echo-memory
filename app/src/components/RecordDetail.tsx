@@ -245,11 +245,15 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
         // 只有在本会话里真的见过「处理中」→ 完成，才通知；打开旧记录不弹。
         if (sawProcessing.current && !completionNotified.current) {
           completionNotified.current = true;
-          setDoneNotice(
-            latest.status === "failed"
-              ? `「${latest.title}」处理失败，可重试`
-              : `「${latest.title}」处理完成`,
-          );
+          const message = latest.status === "failed"
+            ? `「${latest.title}」处理失败，可重试`
+            : `「${latest.title}」处理完成`;
+          setDoneNotice(message);
+          // v1.4 第二轮评审：完成提示 8 秒后自动消失，切记录/重处理时先清零，
+          // 避免跨记录串显（App 不重挂载 RecordDetail）。
+          window.setTimeout(() => {
+            setDoneNotice((current) => (current === message ? null : current));
+          }, 8_000);
         }
         if (!isProcessing(latest.status) && !completionNotified.current) {
           completionNotified.current = true;
@@ -316,6 +320,7 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
     completionNotified.current = false;
     sawProcessing.current = false;
     progressHistory.current = [];
+    setDoneNotice(null); // v1.4 第二轮评审：切记录时清掉上一条的完成提示
     // v1.4 包5：拉取录音打点（录音类才有；读取失败不影响详情加载）
     setMarks([]);
     if (record.sourceType !== "document") {

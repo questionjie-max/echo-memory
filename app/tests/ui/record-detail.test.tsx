@@ -428,3 +428,33 @@ describe("记录详情：分析按钮禁用原因（v1.4 包6）", () => {
     ).toBe(true);
   });
 });
+
+describe("记录详情：录音标记条（v1.4 包5 前端覆盖）", () => {
+  it("有标记时渲染时间片，点击跳转播放位置", async () => {
+    vi.mocked(tauri.getRecordMarks).mockResolvedValue([12_000, 65_000]);
+    renderDetail();
+    await waitForAudioReady();
+    // 升序渲染两个标记片
+    const chips = await screen.findAllByRole("button", { name: /⚑/ });
+    expect(chips).toHaveLength(2);
+    // 后端返回升序（[12s, 65s]），前端按序渲染
+    const labels = chips.map((chip) => chip.textContent ?? "");
+    expect(labels[0]).toContain("0:12");
+    expect(labels[1]).toContain("1:05");
+  });
+
+  it("没有标记时不渲染标记条", async () => {
+    vi.mocked(tauri.getRecordMarks).mockResolvedValue([]);
+    renderDetail();
+    await waitForAudioReady();
+    expect(screen.queryByRole("button", { name: /⚑/ })).toBeNull();
+  });
+
+  it("文档类记录不渲染标记条（标记只属于录音）", async () => {
+    vi.mocked(tauri.getRecordMarks).mockResolvedValue([10_000]);
+    renderDetail(recordFixture({ sourceType: "document" }));
+    await screen.findByRole("tab", { name: "逐字稿" });
+    expect(screen.queryByRole("button", { name: /⚑/ })).toBeNull();
+    expect(tauri.getRecordMarks).not.toHaveBeenCalled();
+  });
+});

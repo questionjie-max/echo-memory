@@ -296,3 +296,48 @@ describe("v1.4 包6：隐私告知的会话记忆", () => {
     confirmSpy.mockRestore();
   });
 });
+
+describe("v1.4 包5 评审修复：标记按钮的可用边界", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(tauri.getRecordingState).mockResolvedValue(recordingState());
+    vi.mocked(tauri.microphonePermission).mockResolvedValue("granted");
+    vi.mocked(tauri.listMicrophoneDevices).mockResolvedValue([]);
+    vi.mocked(tauri.listSystemAudioApplications).mockResolvedValue([]);
+    vi.mocked(tauri.listRecoverableRecordings).mockResolvedValue([]);
+    vi.mocked(tauri.recordingLevels).mockResolvedValue(activeState("recording"));
+    vi.mocked(tauri.isDualRecording).mockResolvedValue(false);
+    vi.mocked(tauri.systemAudioPermission).mockResolvedValue("granted");
+    vi.mocked(tauri.requestSystemAudioPermission).mockResolvedValue("granted");
+    vi.mocked(tauri.startSystemRecording).mockResolvedValue(activeState("recording"));
+    vi.mocked(tauri.markRecording).mockResolvedValue([]);
+  });
+
+  it("系统声单独录制时标记按钮禁用（mark_recording 走麦克风会话，点了必败）", async () => {
+    // 系统声尚未开始：按钮在，点击后进入系统录音态
+    vi.mocked(tauri.getSystemRecordingState).mockResolvedValue(recordingState());
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<RecordingEntry projectId={null} onImported={() => undefined} />);
+    fireEvent.click(await screen.findByRole("tab", { name: "系统声音" }));
+    await screen.findByRole("button", { name: "开始录系统声音" });
+    fireEvent.click(screen.getByRole("button", { name: "开始录系统声音" }));
+    // 开始后系统声进入录音态：标记按钮必须禁用（麦克风会话不存在）
+    vi.mocked(tauri.getSystemRecordingState).mockResolvedValue(activeState("recording"));
+    const markButton = await screen.findByRole("button", { name: /标记一下/ });
+    await waitFor(() => expect(markButton.hasAttribute("disabled")).toBe(true));
+    fireEvent.click(markButton);
+    expect(tauri.markRecording).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
+  });
+
+  it("麦克风录音中标记按钮可用，点击调用 mark_recording 并显示计数", async () => {
+    vi.mocked(tauri.getRecordingState).mockResolvedValue(activeState("recording"));
+    vi.mocked(tauri.markRecording).mockResolvedValue([3_000]);
+    render(<RecordingEntry projectId={null} onImported={() => undefined} />);
+    const markButton = await screen.findByRole("button", { name: /标记一下/ });
+    await waitFor(() => expect(markButton.hasAttribute("disabled")).toBe(false));
+    fireEvent.click(markButton);
+    await waitFor(() => expect(tauri.markRecording).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole("button", { name: "标记一下（1）" })).toBeTruthy();
+  });
+});

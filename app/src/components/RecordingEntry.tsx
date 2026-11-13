@@ -811,7 +811,7 @@ export default function RecordingEntry({ projectId, onImported, refreshKey }: Pr
                   .then((marks) => setMicMarks(marks))
                   .catch((reason) => setError(String(reason)));
               }}
-              disabled={busy || state?.status !== "recording"}
+              disabled={busy || !micActive || state?.status !== "recording"}
             >
               标记一下{micMarks.length > 0 ? `（${micMarks.length}）` : ""}
             </button>

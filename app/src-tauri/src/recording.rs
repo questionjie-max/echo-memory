@@ -411,9 +411,12 @@ impl RecordingController {
             let current = active
                 .as_ref()
                 .ok_or_else(|| AppError::Invalid("当前没有正在进行的录音".to_owned()))?;
-            let elapsed_ms = self.elapsed_for(current).as_millis() as i64;
-            let relative_ms = (elapsed_ms - self.paused_millis(current)).clamp(0, i64::MAX);
-            (current.session_id.clone(), relative_ms)
+            // elapsed_for 返回的已是扣除暂停的净录音时长（原生引擎 pause 会
+            // 停掉 tap 写盘，音频文件时长=净时长，记录 duration_ms 同口径）——
+            // 这里**不能再减一次** paused_millis，否则标记时间轴整体前移暂停
+            // 时长，seek 落点静默失准（2026-11-12 评审实锤的双重扣除 bug）。
+            let relative_ms = self.elapsed_for(current).as_millis() as i64;
+            (current.session_id.clone(), relative_ms.clamp(0, i64::MAX))
         };
         let mut marks = self
             .pending_marks
@@ -1324,5 +1327,58 @@ mod tests {
         let elapsed = controller.elapsed_for(&active);
         assert!(elapsed >= Duration::from_millis(800));
         assert!(elapsed < Duration::from_secs(2));
+    }
+
+    fn active_recording(started_ago: Duration, paused_total: Duration, paused_ago: Option<Duration>) -> ActiveRecording {
+        ActiveRecording {
+            session_id: "session-marks-1".to_owned(),
+            project_id: None,
+            file_path: PathBuf::from("capture.wav"),
+            title: "测试录音".to_owned(),
+            started_at: Instant::now() - started_ago,
+            paused_at: paused_ago.map(|ago| Instant::now() - ago),
+            paused_total,
+            last_checkpoint: Instant::now(),
+        }
+    }
+
+    /// 回归（2026-11-12 评审）：mark() 曾经在 elapsed_for（已扣暂停）之后
+    /// 又减一次 paused_millis，暂停过的录音标记整体前移暂停时长。
+    /// 正确口径：标记 = elapsed_for = 净录音时长（音频文件/记录 duration 同口径）。
+    #[test]
+    fn mark_uses_net_elapsed_without_double_deducting_pause() {
+        // 录制 10 秒，其中暂停了 4 秒（已结束的暂停）→ 净时长约 6 秒
+        let controller = RecordingController::default();
+        let active = active_recording(
+            Duration::from_secs(10),
+            Duration::from_secs(4),
+            None,
+        );
+        *controller.active.lock().unwrap() = Some(active);
+        let marks = controller.mark().unwrap();
+        assert_eq!(marks, vec![6_000], "标记必须是净时长，不能再扣一次暂停");
+
+        // 再次打点：时间推进，标记保持升序
+        let active2 = active_recording(
+            Duration::from_secs(12),
+            Duration::from_secs(4),
+            None,
+        );
+        *controller.active.lock().unwrap() = Some(active2);
+        let marks = controller.mark().unwrap();
+        assert_eq!(marks, vec![6_000, 8_000]);
+    }
+
+    #[test]
+    fn mark_rejects_without_active_recording() {
+        let controller = RecordingController::default();
+        assert!(controller.mark().is_err());
+    }
+
+    #[test]
+    fn take_pending_marks_is_one_shot_and_empty_for_unknown_session() {
+        let controller = RecordingController::default();
+        // 未知会话：空
+        assert!(controller.take_pending_marks("unknown").is_empty());
     }
 }
