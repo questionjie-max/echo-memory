@@ -3042,22 +3042,36 @@ pub fn get_record_marks(state: State<AppState>, recordId: String) -> Result<Vec<
         .map_err(|error| error.to_frontend())
 }
 
-/// v1.4 包8：生成口播稿改写——把逐字稿口语转书面，保留口播语气。
-///
+/// v1.4 包8/9：生成记录产物（口播稿/show notes/社媒文案）的通用实现。
 /// 通道选择与既有分析一致：已启用且同意的外部 AI 优先，否则本机 Ollama；
-/// 未配置任何模型时如实报错而不是伪造。改写只读取逐字稿，不发送录音音频；
-/// 产物落 record_artifacts（重新生成覆盖，不堆积历史）。
-#[tauri::command]
-pub fn rewrite_record_script(
-    state: State<AppState>,
-    record_id: String,
+/// 未配置任何模型时如实报错而不是伪造。生成只读取逐字稿，不发送录音音频；
+/// 产物落 record_artifacts（同一 kind 重新生成覆盖，不堆积历史）。
+fn generate_record_artifact(
+    state: &AppState,
+    record_id: &str,
+    kind: &str,
 ) -> Result<crate::types::RecordArtifact, String> {
+    let (system_prompt, empty_error) = match kind {
+        "script" => (
+            SCRIPT_SYSTEM_PROMPT,
+            "该记录还没有逐字稿，无法改写口播稿",
+        ),
+        "show_notes" => (
+            SHOW_NOTES_SYSTEM_PROMPT,
+            "该记录还没有逐字稿，无法生成节目简介",
+        ),
+        "social_post" => (
+            SOCIAL_POST_SYSTEM_PROMPT,
+            "该记录还没有逐字稿，无法生成社媒文案",
+        ),
+        other => return Err(format!("不支持的产物类型：{other}")),
+    };
     let repository = state.library.repository();
     let segments = repository
-        .list_transcript_segments(&record_id)
+        .list_transcript_segments(record_id)
         .map_err(|error| error.to_frontend())?;
     if segments.is_empty() {
-        return Err("该记录还没有逐字稿，无法改写口播稿".to_owned());
+        return Err(empty_error.to_owned());
     }
     let transcript = segments
         .iter()
@@ -3085,7 +3099,7 @@ pub fn rewrite_record_script(
         let client = OpenAiCompatibleClient::new(&settings.base_url, &settings.model, &api_key)
             .map_err(|error| error.to_frontend())?;
         let content = client
-            .complete_text(SCRIPT_SYSTEM_PROMPT, &transcript)
+            .complete_text(system_prompt, &transcript)
             .map_err(|error| error.to_frontend())?;
         (
             "external-openai-compatible".to_owned(),
@@ -3100,7 +3114,7 @@ pub fn rewrite_record_script(
             .map_err(|error| error.to_frontend())?;
         let content = adapter
             .chat(
-                SCRIPT_SYSTEM_PROMPT,
+                system_prompt,
                 &[crate::analysis::ChatMessage {
                     role: "user".to_owned(),
                     content: transcript,
@@ -3113,8 +3127,35 @@ pub fn rewrite_record_script(
     };
 
     repository
-        .save_record_artifact(&record_id, "script", &content, &provider, &model)
+        .save_record_artifact(record_id, kind, &content, &provider, &model)
         .map_err(|error| error.to_frontend())
+}
+
+/// v1.4 包8：生成口播稿改写——把逐字稿口语转书面，保留口播语气。
+#[tauri::command]
+pub fn rewrite_record_script(
+    state: State<AppState>,
+    record_id: String,
+) -> Result<crate::types::RecordArtifact, String> {
+    generate_record_artifact(&state, &record_id, "script")
+}
+
+/// v1.4 包9：生成节目简介（show notes）。
+#[tauri::command]
+pub fn generate_show_notes(
+    state: State<AppState>,
+    record_id: String,
+) -> Result<crate::types::RecordArtifact, String> {
+    generate_record_artifact(&state, &record_id, "show_notes")
+}
+
+/// v1.4 包9：生成社媒文案。
+#[tauri::command]
+pub fn generate_social_post(
+    state: State<AppState>,
+    record_id: String,
+) -> Result<crate::types::RecordArtifact, String> {
+    generate_record_artifact(&state, &record_id, "social_post")
 }
 
 /// v1.4 包8：列出某条记录的产物。
@@ -3131,6 +3172,10 @@ pub fn list_record_artifacts(
 }
 
 const SCRIPT_SYSTEM_PROMPT: &str = "你是一位资深的口播稿编辑。把下面的口语转写改写成一份顺口、有节奏感的口播稿：保留讲者的原意和个人语气，去掉口头禅、重复和自我纠正，长句拆短，段落之间空行。只输出改写后的稿子本身，不要解释、不要标题、不要加前言后语。";
+
+const SHOW_NOTES_SYSTEM_PROMPT: &str = "你是播客/课程运营。根据下面的内容写一份节目简介（show notes）：3-5 句话概括本期亮点，再加 4-6 条带时间点的要点清单（用 [分:秒] 标注）。语言自然，适合放在播放器简介区。只输出简介本身，不要解释。";
+
+const SOCIAL_POST_SYSTEM_PROMPT: &str = "你是社媒运营。根据下面的内容写一条适合发朋友圈/小红书/微博的短文：开头一句钩子，中间 2-3 个要点或金句，结尾一个互动提问。带 3-5 个相关话题标签。语气真实不像广告。只输出文案本身，不要解释。";
 
 pub(crate) fn test_external_ai_connection_blocking(state: &AppState) -> Result<(), String> {
     let settings =

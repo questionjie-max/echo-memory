@@ -176,6 +176,8 @@ pub fn run() {
             commands::mark_recording,
             commands::get_record_marks,
             commands::rewrite_record_script,
+            commands::generate_show_notes,
+            commands::generate_social_post,
             commands::list_record_artifacts,
             commands::get_local_timeline,
             commands::get_local_growth_graph,

@@ -31,6 +31,8 @@ import {
   getRecord,
   getRecordMarks,
   rewriteRecordScript,
+  generateShowNotes,
+  generateSocialPost,
   listRecordArtifacts,
   latestAnalysis,
   listProjects,
@@ -207,6 +209,8 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
   // v1.4 包8：记录产物（口播稿/show notes/社媒文案）。
   const [artifacts, setArtifacts] = useState<RecordArtifact[]>([]);
   const [rewriting, setRewriting] = useState(false);
+  // v1.4 包9：正在生成的产物类型（null = 无）。
+  const [generating, setGenerating] = useState<"show_notes" | "social_post" | null>(null);
   const [retranscribeLanguage, setRetranscribeLanguage] = useState("zh");
   const [retranscribeModelPath, setRetranscribeModelPath] = useState("");
   // 文字类来源（文档导入 / AI 对话导入）没有音频：走纯文本分支，隐藏播放与转写操作。
@@ -440,6 +444,24 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
       setError(String(reason));
     } finally {
       setRewriting(false);
+    }
+  }
+
+  /** v1.4 包9：一稿多出——show notes / 社媒文案。 */
+  async function generateArtifact(
+    kind: "show_notes" | "social_post",
+    action: (recordId: string) => Promise<RecordArtifact>,
+  ) {
+    setGenerating(kind);
+    setError("");
+    try {
+      const artifact = await action(record.id);
+      setArtifacts((current) => [artifact, ...current.filter((item) => item.kind !== kind)]);
+      setActiveTab("artifacts");
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setGenerating(null);
     }
   }
 
@@ -957,6 +979,25 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
                   title={segments.length === 0 ? "还没有逐字稿，先完成转写" : "把逐字稿改写成顺口的口播稿"}
                 >
                   {rewriting ? "改写中…" : "改写成口播稿"}
+                </button>
+                {/* v1.4 包9：一稿多出——节目简介 / 社媒文案 */}
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={busy || segments.length === 0 || generating !== null}
+                  onClick={() => void generateArtifact("show_notes", generateShowNotes)}
+                  title={segments.length === 0 ? "还没有逐字稿，先完成转写" : "生成本期节目简介（show notes）"}
+                >
+                  {generating === "show_notes" ? "生成中…" : "节目简介"}
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={busy || segments.length === 0 || generating !== null}
+                  onClick={() => void generateArtifact("social_post", generateSocialPost)}
+                  title={segments.length === 0 ? "还没有逐字稿，先完成转写" : "生成一条社媒文案"}
+                >
+                  {generating === "social_post" ? "生成中…" : "社媒文案"}
                 </button>
               </div>
             </div>

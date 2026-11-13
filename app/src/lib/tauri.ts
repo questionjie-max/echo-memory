@@ -370,6 +370,16 @@ export function rewriteRecordScript(recordId: string): Promise<RecordArtifact> {
   return invoke<RecordArtifact>("rewrite_record_script", { recordId });
 }
 
+/** v1.4 包9：生成节目简介（show notes）。 */
+export function generateShowNotes(recordId: string): Promise<RecordArtifact> {
+  return invoke<RecordArtifact>("generate_show_notes", { recordId });
+}
+
+/** v1.4 包9：生成社媒文案。 */
+export function generateSocialPost(recordId: string): Promise<RecordArtifact> {
+  return invoke<RecordArtifact>("generate_social_post", { recordId });
+}
+
 /** v1.4 包8：列出某条记录的产物（口播稿/show notes/社媒文案）。 */
 export function listRecordArtifacts(recordId: string): Promise<RecordArtifact[]> {
   return invoke<RecordArtifact[]>("list_record_artifacts", { recordId });

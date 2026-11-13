@@ -530,3 +530,101 @@ describe("记录详情：口播稿改写（v1.4 包8）", () => {
     expect(await screen.findByText("旧版稿子。")).toBeTruthy();
   });
 });
+
+describe("记录详情：一稿多出（v1.4 包9）", () => {
+  const transcriptBlocks = [
+    {
+      id: "b1",
+      startMs: 0,
+      endMs: 6_000,
+      segmentIds: ["s1"],
+      segments: [
+        {
+          id: "s1",
+          startMs: 0,
+          endMs: 6_000,
+          speakerLabel: "说话人 1",
+          originalText: "今天讲口播稿的三个要点",
+        },
+      ],
+    },
+  ];
+
+  it("节目简介按钮生成并落库展示", async () => {
+    vi.mocked(tauri.listTranscriptBlocks).mockResolvedValue(transcriptBlocks);
+    vi.mocked(tauri.generateShowNotes).mockResolvedValue({
+      id: "a2",
+      recordId: "record-1",
+      kind: "show_notes",
+      title: "节目简介",
+      content: "本期聊口播稿的三个要点。",
+      provider: "ollama",
+      model: "qwen2.5:7b",
+      createdAt: "2026-11-12T10:05:00.000Z",
+    });
+    renderDetail();
+    await waitForAudioReady();
+
+    fireEvent.click(screen.getByRole("tab", { name: "内容分析" }));
+    fireEvent.click(screen.getByRole("button", { name: "节目简介" }));
+
+    await waitFor(() => expect(tauri.generateShowNotes).toHaveBeenCalledWith("record-1"));
+    expect(await screen.findByText("本期聊口播稿的三个要点。")).toBeTruthy();
+    // 产物 tab 计数为 1
+    expect(screen.getByRole("tab", { name: "口播稿" })).toBeTruthy();
+  });
+
+  it("社媒文案按钮生成并落库展示", async () => {
+    vi.mocked(tauri.listTranscriptBlocks).mockResolvedValue(transcriptBlocks);
+    vi.mocked(tauri.generateSocialPost).mockResolvedValue({
+      id: "a3",
+      recordId: "record-1",
+      kind: "social_post",
+      title: "社媒文案",
+      content: "为什么你的口播稿总是念不顺？",
+      provider: "ollama",
+      model: "qwen2.5:7b",
+      createdAt: "2026-11-12T10:06:00.000Z",
+    });
+    renderDetail();
+    await waitForAudioReady();
+
+    fireEvent.click(screen.getByRole("tab", { name: "内容分析" }));
+    fireEvent.click(screen.getByRole("button", { name: "社媒文案" }));
+
+    await waitFor(() => expect(tauri.generateSocialPost).toHaveBeenCalledWith("record-1"));
+    expect(await screen.findByText("为什么你的口播稿总是念不顺？")).toBeTruthy();
+  });
+
+  it("两种产物与口播稿可同时在 tab 展示（计数正确）", async () => {
+    vi.mocked(tauri.listTranscriptBlocks).mockResolvedValue(transcriptBlocks);
+    vi.mocked(tauri.listRecordArtifacts).mockResolvedValue([
+      {
+        id: "a1",
+        recordId: "record-1",
+        kind: "script",
+        title: "口播稿",
+        content: "稿子。",
+        provider: "ollama",
+        model: "qwen2.5:7b",
+        createdAt: "2026-11-12T09:00:00.000Z",
+      },
+      {
+        id: "a3",
+        recordId: "record-1",
+        kind: "social_post",
+        title: "社媒文案",
+        content: "文案。",
+        provider: "ollama",
+        model: "qwen2.5:7b",
+        createdAt: "2026-11-12T09:30:00.000Z",
+      },
+    ]);
+    renderDetail();
+    await waitForAudioReady();
+
+    fireEvent.click(screen.getByRole("tab", { name: "口播稿（2）" }));
+    expect(await screen.findByText("稿子。")).toBeTruthy();
+    expect(screen.getByText("文案。")).toBeTruthy();
+  });
+});
