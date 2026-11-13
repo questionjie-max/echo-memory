@@ -754,6 +754,9 @@ impl RecordingController {
         let paused_ms = self.paused_millis(current);
         native::cancel()?;
         active.take();
+        // v1.4 终审：取消录音时丢弃本次会话的标记（录音都没了，标记没有意义，
+        // 也防 mark-then-cancel 循环在 HashMap 里累积）。
+        let _ = self.take_pending_marks(&session_id);
         if let Err(error) = library.repository().update_recording_session_status(
             &session_id,
             "canceled",

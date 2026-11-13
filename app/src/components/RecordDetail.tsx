@@ -331,6 +331,7 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
     sawProcessing.current = false;
     progressHistory.current = [];
     setDoneNotice(null); // v1.4 第二轮评审：切记录时清掉上一条的完成提示
+    setExportNotice(null); // v1.4 终审：导出提示同理，防跨记录残留
     // v1.4 包5：拉取录音打点（录音类才有；读取失败不影响详情加载）
     setMarks([]);
     if (record.sourceType !== "document") {
@@ -894,7 +895,7 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
           <button type="button" role="tab" aria-selected={activeTab === "minutes"} className={activeTab === "minutes" ? "selected" : ""} onClick={() => setActiveTab("minutes")}>会议纪要</button>
         )}
         {artifacts.length > 0 && (
-          <button type="button" role="tab" aria-selected={activeTab === "artifacts"} className={activeTab === "artifacts" ? "selected" : ""} onClick={() => setActiveTab("artifacts")}>口播稿{artifacts.length > 1 ? `（${artifacts.length}）` : ""}</button>
+          <button type="button" role="tab" aria-selected={activeTab === "artifacts"} className={activeTab === "artifacts" ? "selected" : ""} onClick={() => setActiveTab("artifacts")}>改写稿{artifacts.length > 1 ? `（${artifacts.length}）` : ""}</button>
         )}
       </div>
 
@@ -970,15 +971,15 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
                 {analysisDisabledReason(currentRecord, segments.length) && (
                   <p className="em-hint" role="status">{analysisDisabledReason(currentRecord, segments.length)}</p>
                 )}
-                {/* v1.4 包8：口播稿改写——逐字稿口语转书面 */}
+                {/* v1.4 包8：逐字稿口语转书面——场景中性（课/访谈/会议通用） */}
                 <button
                   type="button"
                   className="secondary-button"
                   disabled={busy || segments.length === 0 || rewriting}
                   onClick={() => void rewriteScript()}
-                  title={segments.length === 0 ? "还没有逐字稿，先完成转写" : "把逐字稿改写成顺口的口播稿"}
+                  title={segments.length === 0 ? "还没有逐字稿，先完成转写" : "把逐字稿改写成顺口的书面稿"}
                 >
-                  {rewriting ? "改写中…" : "改写成口播稿"}
+                  {rewriting ? "改写中…" : "改写成稿"}
                 </button>
                 {/* v1.4 包9：一稿多出——节目简介 / 社媒文案 */}
                 <button

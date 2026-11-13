@@ -856,7 +856,7 @@ mod tests {
         let artifact = repository
             .save_record_artifact(&record.id, "script", "第一版口播稿", "ollama", "qwen2.5:7b")
             .unwrap();
-        assert_eq!(artifact.title, "口播稿");
+        assert_eq!(artifact.title, "改写稿");
         let list = repository.list_record_artifacts(&record.id).unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].content, "第一版口播稿");

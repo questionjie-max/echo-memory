@@ -3054,7 +3054,7 @@ fn generate_record_artifact(
     let (system_prompt, empty_error) = match kind {
         "script" => (
             SCRIPT_SYSTEM_PROMPT,
-            "该记录还没有逐字稿，无法改写口播稿",
+            "该记录还没有逐字稿，无法改写成稿",
         ),
         "show_notes" => (
             SHOW_NOTES_SYSTEM_PROMPT,
@@ -3133,29 +3133,46 @@ fn generate_record_artifact(
 
 /// v1.4 包8：生成口播稿改写——把逐字稿口语转书面，保留口播语气。
 #[tauri::command]
-pub fn rewrite_record_script(
-    state: State<AppState>,
+pub async fn rewrite_record_script(
+    state: State<'_, AppState>,
     record_id: String,
 ) -> Result<crate::types::RecordArtifact, String> {
-    generate_record_artifact(&state, &record_id, "script")
+    // 生成是几十秒级的 LLM 调用：必须 async + spawn_blocking，
+    // 同步命令会阻塞 Tauri 主线程导致界面冻结（commands.rs 顶部约定）。
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        generate_record_artifact(&state, &record_id, "script")
+    })
+    .await
+    .map_err(|_| "改写稿生成任务异常，请重试".to_owned())?
 }
 
 /// v1.4 包9：生成节目简介（show notes）。
 #[tauri::command]
-pub fn generate_show_notes(
-    state: State<AppState>,
+pub async fn generate_show_notes(
+    state: State<'_, AppState>,
     record_id: String,
 ) -> Result<crate::types::RecordArtifact, String> {
-    generate_record_artifact(&state, &record_id, "show_notes")
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        generate_record_artifact(&state, &record_id, "show_notes")
+    })
+    .await
+    .map_err(|_| "节目简介生成任务异常，请重试".to_owned())?
 }
 
 /// v1.4 包9：生成社媒文案。
 #[tauri::command]
-pub fn generate_social_post(
-    state: State<AppState>,
+pub async fn generate_social_post(
+    state: State<'_, AppState>,
     record_id: String,
 ) -> Result<crate::types::RecordArtifact, String> {
-    generate_record_artifact(&state, &record_id, "social_post")
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        generate_record_artifact(&state, &record_id, "social_post")
+    })
+    .await
+    .map_err(|_| "社媒文案生成任务异常，请重试".to_owned())?
 }
 
 /// v1.4 包8：列出某条记录的产物。
@@ -3171,7 +3188,7 @@ pub fn list_record_artifacts(
         .map_err(|error| error.to_frontend())
 }
 
-const SCRIPT_SYSTEM_PROMPT: &str = "你是一位资深的口播稿编辑。把下面的口语转写改写成一份顺口、有节奏感的口播稿：保留讲者的原意和个人语气，去掉口头禅、重复和自我纠正，长句拆短，段落之间空行。只输出改写后的稿子本身，不要解释、不要标题、不要加前言后语。";
+const SCRIPT_SYSTEM_PROMPT: &str = "你是一位资深的内容编辑。把下面的口语转写改写成一份顺口、有节奏感的书面稿：保留讲者的原意和个人语气，去掉口头禅、重复和自我纠正，长句拆短，段落之间空行。只输出改写后的稿子本身，不要解释、不要标题、不要加前言后语。";
 
 const SHOW_NOTES_SYSTEM_PROMPT: &str = "你是播客/课程运营。根据下面的内容写一份节目简介（show notes）：3-5 句话概括本期亮点，再加 4-6 条带时间点的要点清单（用 [分:秒] 标注）。语言自然，适合放在播放器简介区。只输出简介本身，不要解释。";
 

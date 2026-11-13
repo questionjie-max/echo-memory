@@ -1,4 +1,4 @@
--- v1.3 包8：记录产物——口播稿改写 / show notes / 社媒文案等派生内容。
+-- v1.4 包8：记录产物——口播稿改写 / show notes / 社媒文案等派生内容。
 -- 只加表（外键级联教训：绝不重建父表）；record 删除时产物随行删除。
 -- 产物全部由用户显式触发生成；provider/model 如实记录，Key 等敏感信息绝不入库。
 CREATE TABLE IF NOT EXISTS record_artifacts (

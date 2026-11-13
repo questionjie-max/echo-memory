@@ -493,7 +493,7 @@ describe("记录详情：口播稿改写（v1.4 包8）", () => {
     await waitForAudioReady();
 
     fireEvent.click(screen.getByRole("tab", { name: "内容分析" }));
-    fireEvent.click(screen.getByRole("button", { name: "改写成口播稿" }));
+    fireEvent.click(screen.getByRole("button", { name: "改写成稿" }));
 
     await waitFor(() => expect(tauri.rewriteRecordScript).toHaveBeenCalledWith("record-1"));
     // 自动切到产物 tab 并展示内容与来源模型
@@ -507,7 +507,7 @@ describe("记录详情：口播稿改写（v1.4 包8）", () => {
     await waitForAudioReady();
     fireEvent.click(screen.getByRole("tab", { name: "内容分析" }));
     expect(
-      screen.getByRole("button", { name: "改写成口播稿" }).hasAttribute("disabled"),
+      screen.getByRole("button", { name: "改写成稿" }).hasAttribute("disabled"),
     ).toBe(true);
   });
 
@@ -526,7 +526,7 @@ describe("记录详情：口播稿改写（v1.4 包8）", () => {
     ]);
     renderDetail();
     await waitForAudioReady();
-    fireEvent.click(screen.getByRole("tab", { name: "口播稿" }));
+    fireEvent.click(screen.getByRole("tab", { name: "改写稿" }));
     expect(await screen.findByText("旧版稿子。")).toBeTruthy();
   });
 });
@@ -571,7 +571,7 @@ describe("记录详情：一稿多出（v1.4 包9）", () => {
     await waitFor(() => expect(tauri.generateShowNotes).toHaveBeenCalledWith("record-1"));
     expect(await screen.findByText("本期聊口播稿的三个要点。")).toBeTruthy();
     // 产物 tab 计数为 1
-    expect(screen.getByRole("tab", { name: "口播稿" })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "改写稿" })).toBeTruthy();
   });
 
   it("社媒文案按钮生成并落库展示", async () => {
@@ -623,7 +623,7 @@ describe("记录详情：一稿多出（v1.4 包9）", () => {
     renderDetail();
     await waitForAudioReady();
 
-    fireEvent.click(screen.getByRole("tab", { name: "口播稿（2）" }));
+    fireEvent.click(screen.getByRole("tab", { name: "改写稿（2）" }));
     expect(await screen.findByText("稿子。")).toBeTruthy();
     expect(screen.getByText("文案。")).toBeTruthy();
   });

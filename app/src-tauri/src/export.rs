@@ -21,10 +21,12 @@ pub fn export_record(
     atomic_write(destination, content.as_bytes())?;
     Ok(destination.to_path_buf())
 }
+
 /// 渲染单条记录的 Markdown 全文（含逐字稿与分析），供产出文件夹复用。
 pub fn record_markdown(library: &ManagedLibrary, record_id: &str) -> AppResult<String> {
     render_record(library, record_id, "md")
 }
+
 pub fn export_knowledge_base(
     library: &ManagedLibrary,
     project_id: Option<&str>,
@@ -41,11 +43,14 @@ pub fn export_knowledge_base(
     if let Err(error) = result {
         let _ = fs::remove_dir_all(&temporary);
         return Err(error);
-    }    if let Err(error) = fs::rename(&temporary, &folder_name) {
+    }
+    if let Err(error) = fs::rename(&temporary, &folder_name) {
         let _ = fs::remove_dir_all(&temporary);
         return Err(error.into());
-    }    Ok(folder_name)
+    }
+    Ok(folder_name)
 }
+
 fn export_knowledge_base_into(
     library: &ManagedLibrary,
     project_id: Option<&str>,
@@ -75,22 +80,29 @@ fn export_knowledge_base_into(
             index.push_str(&format!("- [{}]({})\n", record.title, file_name));
         } else {
             index.push_str(&format!("- {}: {}\n", record.title, file_name));
-        }    }    atomic_write(
+        }
+    }
+    atomic_write(
         &destination.join(format!("索引.{format}")),
         index.as_bytes(),
     )?;
     Ok(())
 }
+
 fn available_export_folder(parent: &Path, base_name: &str) -> PathBuf {
     let direct = parent.join(base_name);
     if !direct.exists() {
         return direct;
-    }    for suffix in 2..10_000 {
+    }
+    for suffix in 2..10_000 {
         let candidate = parent.join(format!("{base_name} {suffix}"));
         if !candidate.exists() {
             return candidate;
-        }    }    parent.join(format!("{base_name}-{}", Uuid::new_v4()))
+        }
+    }
+    parent.join(format!("{base_name}-{}", Uuid::new_v4()))
 }
+
 fn render_record(library: &ManagedLibrary, record_id: &str, format: &str) -> AppResult<String> {
     let repository = library.repository();
     let record = repository.get_record(record_id)?;
@@ -114,8 +126,10 @@ fn render_record(library: &ManagedLibrary, record_id: &str, format: &str) -> App
             render_markdown(&record, &segments, analysis.as_ref(), minutes.as_ref())
         } else {
             render_text(&record, &segments, analysis.as_ref(), minutes.as_ref())
-        }    })
+        }
+    })
 }
+
 fn render_markdown(
     record: &RecordBrief,
     segments: &[TranscriptSegment],
@@ -131,7 +145,8 @@ fn render_markdown(
     );
     if let Some(minutes) = minutes {
         append_minutes_markdown(&mut output, minutes);
-    }    if let Some(analysis) = analysis {
+    }
+    if let Some(analysis) = analysis {
         output.push_str("## 摘要\n\n");
         output.push_str(&analysis.summary);
         output.push_str("\n\n");
@@ -142,8 +157,10 @@ fn render_markdown(
         append_markdown_items(&mut output, "未解决问题", &analysis.open_questions);
         for section in &analysis.custom_sections {
             append_custom_markdown(&mut output, section);
-        }        append_markdown_highlights(&mut output, &analysis.highlights);
-    }    output.push_str("## 逐字稿\n\n");
+        }
+        append_markdown_highlights(&mut output, &analysis.highlights);
+    }
+    output.push_str("## 逐字稿\n\n");
     for block in build_blocks(segments) {
         output.push_str(&format!(
             "**{} · {}**  \n{}\n\n",
@@ -151,8 +168,10 @@ fn render_markdown(
             block.speaker_label.as_deref().unwrap_or("说话人未知"),
             block.text
         ));
-    }    output
+    }
+    output
 }
+
 fn render_text(
     record: &RecordBrief,
     segments: &[TranscriptSegment],
@@ -171,6 +190,7 @@ fn render_text(
         .collect::<Vec<_>>()
         .join("\n")
 }
+
 /// 纪要段（块9）：与纪要面板同一数据源，结论/待办逐条带时间戳。
 fn append_minutes_markdown(output: &mut String, document: &crate::minutes::MinutesDocument) {
     if document.topics.is_empty()
@@ -179,7 +199,8 @@ fn append_minutes_markdown(output: &mut String, document: &crate::minutes::Minut
         && document.glossary.is_empty()
     {
         return;
-    }    output.push_str("## 会议纪要\n\n");
+    }
+    output.push_str("## 会议纪要\n\n");
     if !document.topics.is_empty() {
         output.push_str("### 议题\n\n");
         for topic in &document.topics {
@@ -192,14 +213,17 @@ fn append_minutes_markdown(output: &mut String, document: &crate::minutes::Minut
                     .unwrap_or_else(|| "—".to_owned()),
                 topic.summary.trim()
             ));
-        }        output.push('\n');
-    }    for (title, items) in [
+        }
+        output.push('\n');
+    }
+    for (title, items) in [
         ("结论", &document.conclusions),
         ("待办", &document.action_items),
     ] {
         if items.is_empty() {
             continue;
-        }        output.push_str(&format!("### {title}\n\n"));
+        }
+        output.push_str(&format!("### {title}\n\n"));
         for item in items {
             output.push_str(&format!(
                 "- {}（{}）\n",
@@ -212,10 +236,14 @@ fn append_minutes_markdown(output: &mut String, document: &crate::minutes::Minut
                     item.evidence.quote_text.trim(),
                     format_time(item.evidence.start_ms)
                 ));
-            }            if let Some(owner) = item.owner.as_deref().filter(|owner| !owner.trim().is_empty()) {
+            }
+            if let Some(owner) = item.owner.as_deref().filter(|owner| !owner.trim().is_empty()) {
                 output.push_str(&format!("  - 负责人：{owner}\n"));
-            }        }        output.push('\n');
-    }    if !document.glossary.is_empty() {
+            }
+        }
+        output.push('\n');
+    }
+    if !document.glossary.is_empty() {
         output.push_str("### 术语表\n\n");
         for entry in &document.glossary {
             if entry.variants.is_empty() {
@@ -226,8 +254,12 @@ fn append_minutes_markdown(output: &mut String, document: &crate::minutes::Minut
                     entry.term,
                     entry.variants.join("、")
                 ));
-            }        }        output.push('\n');
-    }}
+            }
+        }
+        output.push('\n');
+    }
+}
+
 /// SRT 字幕（块9）：segment 粒度，时间轴与逐字稿一致，说话人作前缀。
 pub fn render_srt(segments: &[TranscriptSegment]) -> String {
     let mut output = String::new();
@@ -251,8 +283,10 @@ pub fn render_srt(segments: &[TranscriptSegment]) -> String {
             speaker,
             text.trim()
         ));
-    }    output
+    }
+    output
 }
+
 /// SRT 时间格式：HH:MM:SS,mmm（毫秒用逗号分隔）。
 pub fn format_srt_time(ms: i64) -> String {
     let total_ms = ms.max(0);
@@ -262,12 +296,14 @@ pub fn format_srt_time(ms: i64) -> String {
     let millis = total_ms % 1_000;
     format!("{hours:02}:{minutes:02}:{seconds:02},{millis:03}")
 }
+
 fn append_markdown_items(output: &mut String, title: &str, items: &[AnalysisItemDraft]) {
     output.push_str(&format!("## {title}\n\n"));
     if items.is_empty() {
         output.push_str("未识别出可靠内容。\n\n");
         return;
-    }    for item in items {
+    }
+    for item in items {
         output.push_str(&format!("- {}\n", item.text));
         if !item.quote_text.is_empty() {
             output.push_str(&format!(
@@ -275,13 +311,17 @@ fn append_markdown_items(output: &mut String, title: &str, items: &[AnalysisItem
                 item.quote_text,
                 format_time(item.start_ms.unwrap_or(0))
             ));
-        }    }    output.push('\n');
+        }
+    }
+    output.push('\n');
 }
+
 /// 章节是导航栏目：空章节不写「未识别出可靠内容」，直接省略。
 fn append_markdown_chapters(output: &mut String, chapters: &[AnalysisChapterDraft]) {
     if chapters.is_empty() {
         return;
-    }    output.push_str("## 章节\n\n");
+    }
+    output.push_str("## 章节\n\n");
     for chapter in chapters {
         output.push_str(&format!(
             "- **{}**（{}）",
@@ -290,22 +330,28 @@ fn append_markdown_chapters(output: &mut String, chapters: &[AnalysisChapterDraf
         ));
         if !chapter.summary.trim().is_empty() {
             output.push_str(&format!("：{}", chapter.summary.trim()));
-        }        output.push('\n');
-    }    output.push('\n');
+        }
+        output.push('\n');
+    }
+    output.push('\n');
 }
+
 /// 金句同样是导航栏目，空则省略。
 fn append_markdown_highlights(output: &mut String, highlights: &[AnalysisHighlightDraft]) {
     if highlights.is_empty() {
         return;
-    }    output.push_str("## 金句\n\n");
+    }
+    output.push_str("## 金句\n\n");
     for highlight in highlights {
         output.push_str(&format!(
             "- “{}”（{}）\n",
             highlight.quote_text.trim(),
             format_time(highlight.start_ms.unwrap_or(0))
         ));
-    }    output.push('\n');
+    }
+    output.push('\n');
 }
+
 fn append_custom_markdown(output: &mut String, section: &AnalysisCustomSectionDraft) {
     output.push_str(&format!("## {}\n\n", section.title));
     if section.format == "paragraph" {
@@ -317,12 +363,15 @@ fn append_custom_markdown(output: &mut String, section: &AnalysisCustomSectionDr
         output.push_str("\n\n");
     } else {
         append_markdown_items_body(output, &section.items);
-    }}
+    }
+}
+
 fn append_markdown_items_body(output: &mut String, items: &[AnalysisItemDraft]) {
     if items.is_empty() {
         output.push_str("未识别出可靠内容。\n\n");
         return;
-    }    for item in items {
+    }
+    for item in items {
         output.push_str(&format!("- {}", item.text));
         if !item.quote_text.is_empty() {
             output.push_str(&format!(
@@ -330,12 +379,16 @@ fn append_markdown_items_body(output: &mut String, items: &[AnalysisItemDraft]) 
                 item.quote_text,
                 format_time(item.start_ms.unwrap_or(0))
             ));
-        }        output.push('\n');
-    }    output.push('\n');
+        }
+        output.push('\n');
+    }
+    output.push('\n');
 }
+
 pub fn atomic_write_public(destination: &Path, content: &[u8]) -> AppResult<()> {
     atomic_write(destination, content)
 }
+
 fn atomic_write(destination: &Path, content: &[u8]) -> AppResult<()> {
     let parent = destination
         .parent()
@@ -347,14 +400,18 @@ fn atomic_write(destination: &Path, content: &[u8]) -> AppResult<()> {
     {
         let _ = fs::remove_file(&temporary);
         return Err(error.into());
-    }    Ok(())
+    }
+    Ok(())
 }
+
 fn validate_format(format: &str) -> AppResult<()> {
     if matches!(format, "md" | "txt" | "srt") {
         Ok(())
     } else {
         Err(AppError::Invalid("仅支持 Markdown、TXT 或 SRT 导出".to_owned()))
-    }}
+    }
+}
+
 fn sanitize_file_name(title: &str) -> String {
     let sanitized = title
         .chars()
@@ -363,18 +420,22 @@ fn sanitize_file_name(title: &str) -> String {
                 '_'
             } else {
                 character
-            }        })
+            }
+        })
         .collect::<String>();
     let trimmed = sanitized.trim().trim_matches('.');
     if trimmed.is_empty() {
         "未命名录音".to_owned()
     } else {
         trimmed.chars().take(80).collect()
-    }}
+    }
+}
+
 fn format_time(milliseconds: i64) -> String {
     let seconds = milliseconds.max(0) / 1_000;
     format!("{}:{:02}", seconds / 60, seconds % 60)
 }
+
 /// 块7：单条记录「导出包」——一个文件夹装下这次记录的全量交付：
 /// 逐字稿（md + srt）、纪要（与面板同一份 content_json 渲染）、manifest（元数据 +
 /// 纪要确认状态分布 + 所用模型 + 导出时间）。
@@ -400,7 +461,8 @@ pub fn export_record_package(
         return Err(AppError::Invalid(
             "该记录还没有逐字稿，无法导出包".to_owned(),
         ));
-    }    let minutes_row = repository.get_minutes(record_id)?;
+    }
+    let minutes_row = repository.get_minutes(record_id)?;
     let minutes_document: Option<crate::minutes::MinutesDocument> = minutes_row
         .as_ref()
         .filter(|row| row.content_json != "{}")
@@ -423,6 +485,7 @@ pub fn export_record_package(
             block.text
         ));
     }
+
     // 纪要 md：与面板同一份 content_json 渲染（复用块9 的渲染器）。
     let minutes_md = minutes_document
         .as_ref()
@@ -476,9 +539,11 @@ pub fn export_record_package(
     if let Err(error) = write() {
         let _ = fs::remove_dir_all(&temporary);
         return Err(error);
-    }    fs::rename(&temporary, &folder)?;
+    }
+    fs::rename(&temporary, &folder)?;
     Ok(folder)
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -522,6 +587,7 @@ mod tests {
         // 序号连续、时间轴与逐字稿一致（乱序输入按原序导出）。
         assert_eq!(srt.matches("-->").count(), 2);
     }
+
     #[test]
     fn markdown_export_includes_minutes_with_matching_timestamps() {
         let root = std::env::temp_dir().join(format!("echo-export-minutes-{}", Uuid::new_v4()));
@@ -603,6 +669,7 @@ mod tests {
         assert!(markdown_after_fail.contains("## 会议纪要"), "failed 保留旧文档时导出与面板一致");
         let _ = std::fs::remove_dir_all(root);
     }
+
     #[test]
     fn minutes_markdown_covers_action_items_and_topic_fallback() {
         // 待办渲染（含负责人与出处）与议题无时间戳的 "—" 兜底。
@@ -637,11 +704,13 @@ mod tests {
         assert!(output.contains("出处：「纪要我来发」"));
         assert!(output.contains("负责人：小李"));
     }
+
     #[test]
     fn file_names_are_sanitized() {
         assert_eq!(sanitize_file_name("客户/访谈:一"), "客户_访谈_一");
         assert_eq!(sanitize_file_name("..."), "未命名录音");
     }
+
     #[test]
     fn exports_chinese_transcript_analysis_and_citations() {
         let root = std::env::temp_dir().join(format!("echo-export-test-{}", Uuid::new_v4()));
@@ -724,7 +793,8 @@ mod tests {
                 .to_string_lossy()
                 .starts_with(".echo-memory-export-")));
         let _ = fs::remove_dir_all(root);
-    }}
+    }
+}
 
 #[cfg(test)]
 mod bulk_export_tests {
@@ -732,16 +802,24 @@ mod bulk_export_tests {
     use crate::types::TranscriptSegmentInput;
     use uuid::Uuid;
 
-    fn seeded_record(repository: &crate::db::repository::LibraryRepository, title: &str) -> crate::types::RecordBrief {
+    fn seeded_record(
+        repository: &crate::db::repository::LibraryRepository,
+        title: &str,
+    ) -> crate::types::RecordBrief {
         let dir = std::env::temp_dir().join(format!("echo-bulk-export-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("sample.wav");
         std::fs::write(&path, [0_u8; 2048]).unwrap();
-        let hash = title.bytes().fold(0xcbf29ce484222325_u64, |acc, b| (acc ^ b as u64).wrapping_mul(0x100000001b3));
+        let hash = title
+            .bytes()
+            .fold(0xcbf29ce484222325_u64, |acc, b| {
+                (acc ^ b as u64).wrapping_mul(0x100000001b3)
+            });
         repository
             .create_record(title, None, &path, &format!("{hash:x}"), 12_000)
             .unwrap()
     }
+
     fn with_transcript(repository: &crate::db::repository::LibraryRepository, record_id: &str) {
         repository
             .save_transcript(
@@ -757,6 +835,7 @@ mod bulk_export_tests {
             )
             .unwrap();
     }
+
     /// v1.4 包7：批量导出的核心语义——逐条子文件夹、单条失败不中断、如实回报。
     #[test]
     fn bulk_export_creates_per_record_folders_and_reports_skips() {
@@ -773,20 +852,28 @@ mod bulk_export_tests {
         let destination = root.join("out");
         std::fs::create_dir_all(&destination).unwrap();
 
-        // 直接调批量逻辑（命令层仅加票据门，编排在 export 侧）
+        // 直接调单条导出逻辑（命令层仅加票据门，逐条编排即命令层循环）
         let mut exported = Vec::new();
         let mut skipped = Vec::new();
         for record_id in [&r1.id, &r2.id, &r3.id] {
             match export_record_package(&library, record_id, &destination) {
                 Ok(folder) => exported.push(folder),
                 Err(error) => skipped.push((record_id.clone(), error.to_string())),
-            }        }        assert_eq!(exported.len(), 2, "两条有逐字稿的记录应导出");
+            }
+        }
+        assert_eq!(exported.len(), 2, "两条有逐字稿的记录应导出");
         assert_eq!(skipped.len(), 1, "没有逐字稿的记录应被跳过");
-        assert!(skipped[0].1.contains("逐字稿"), "跳过原因要说明：{}", skipped[0].1);
+        assert!(
+            skipped[0].1.contains("逐字稿"),
+            "跳过原因要说明：{}",
+            skipped[0].1
+        );
         // 每条记录独立子文件夹
         assert_ne!(exported[0], exported[1]);
         for folder in &exported {
             assert!(folder.join("逐字稿.md").is_file());
             assert!(folder.join("manifest.json").is_file());
-        }        let _ = std::fs::remove_dir_all(root);
-    }}
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+}

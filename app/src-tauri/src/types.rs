@@ -443,7 +443,7 @@ pub struct RecordArtifact {
 /// 产物类型的中文标题。
 pub fn artifact_kind_label(kind: &str) -> &'static str {
     match kind {
-        "script" => "口播稿",
+        "script" => "改写稿",
         "show_notes" => "节目简介",
         "social_post" => "社媒文案",
         _ => "产物",
