@@ -115,6 +115,7 @@ beforeEach(() => {
   vi.mocked(tauri.getLocalAiStatus).mockResolvedValue(localAiStatusFixture());
   vi.mocked(tauri.recordAudioPath).mockResolvedValue("/library/audio/record-1.m4a");
   vi.mocked(tauri.getRecordMarks).mockResolvedValue([]);
+  vi.mocked(tauri.listRecordArtifacts).mockResolvedValue([]);
 });
 
 describe("记录详情：事件刷新与轮询边界", () => {
@@ -456,5 +457,76 @@ describe("记录详情：录音标记条（v1.4 包5 前端覆盖）", () => {
     await screen.findByRole("tab", { name: "逐字稿" });
     expect(screen.queryByRole("button", { name: /⚑/ })).toBeNull();
     expect(tauri.getRecordMarks).not.toHaveBeenCalled();
+  });
+});
+
+describe("记录详情：口播稿改写（v1.4 包8）", () => {
+  it("有逐字稿时点击改写成口播稿，产物落库并切到产物 tab 展示", async () => {
+    vi.mocked(tauri.rewriteRecordScript).mockResolvedValue({
+      id: "a1",
+      recordId: "record-1",
+      kind: "script",
+      title: "口播稿",
+      content: "改写后的口播稿正文。",
+      provider: "ollama",
+      model: "qwen2.5:7b",
+      createdAt: "2026-11-12T10:00:00.000Z",
+    });
+    vi.mocked(tauri.listTranscriptBlocks).mockResolvedValue([
+      {
+        id: "b1",
+        startMs: 0,
+        endMs: 6_000,
+        segmentIds: ["s1"],
+        segments: [
+          {
+            id: "s1",
+            startMs: 0,
+            endMs: 6_000,
+            speakerLabel: "说话人 1",
+            originalText: "今天讲口播稿的三个要点",
+          },
+        ],
+      },
+    ]);
+    renderDetail();
+    await waitForAudioReady();
+
+    fireEvent.click(screen.getByRole("tab", { name: "内容分析" }));
+    fireEvent.click(screen.getByRole("button", { name: "改写成口播稿" }));
+
+    await waitFor(() => expect(tauri.rewriteRecordScript).toHaveBeenCalledWith("record-1"));
+    // 自动切到产物 tab 并展示内容与来源模型
+    expect(await screen.findByText("改写后的口播稿正文。")).toBeTruthy();
+    expect(screen.getByText(/qwen2.5:7b/)).toBeTruthy();
+  });
+
+  it("没有逐字稿时改写按钮禁用（与其他禁用态一致说明）", async () => {
+    vi.mocked(tauri.listRecordArtifacts).mockResolvedValue([]);
+    renderDetail(recordFixture({ status: "completed", hasTranscript: false }));
+    await waitForAudioReady();
+    fireEvent.click(screen.getByRole("tab", { name: "内容分析" }));
+    expect(
+      screen.getByRole("button", { name: "改写成口播稿" }).hasAttribute("disabled"),
+    ).toBe(true);
+  });
+
+  it("已有产物时 tab 出现「口播稿」入口", async () => {
+    vi.mocked(tauri.listRecordArtifacts).mockResolvedValue([
+      {
+        id: "a1",
+        recordId: "record-1",
+        kind: "script",
+        title: "口播稿",
+        content: "旧版稿子。",
+        provider: "ollama",
+        model: "qwen2.5:7b",
+        createdAt: "2026-11-12T09:00:00.000Z",
+      },
+    ]);
+    renderDetail();
+    await waitForAudioReady();
+    fireEvent.click(screen.getByRole("tab", { name: "口播稿" }));
+    expect(await screen.findByText("旧版稿子。")).toBeTruthy();
   });
 });

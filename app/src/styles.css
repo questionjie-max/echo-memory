@@ -1254,3 +1254,9 @@ select::-ms-expand { display: none; }
   border-bottom: 0.5px solid var(--em-hairline-soft);
 }
 .view-header h2 { margin: 0; font-size: 19px; line-height: 1.25; letter-spacing: -0.015em; }
+
+/* v1.4 包8：记录产物（口播稿等）展示。 */
+.artifact-panel { display: grid; gap: 14px; padding: 4px 16px 16px; }
+.artifact-card { display: grid; gap: 8px; padding: 12px 14px; border: 1px solid var(--em-hairline); border-radius: var(--em-r-md); background: var(--em-pane); }
+.artifact-card h3 { margin: 0; font-size: 13px; }
+.artifact-content { margin: 0; font-family: inherit; font-size: 12px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }

@@ -425,6 +425,31 @@ pub struct SkippedPackage {
     pub reason: String,
 }
 
+/// v1.4 包8：记录产物（口播稿改写 / show notes / 社媒文案）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordArtifact {
+    pub id: String,
+    pub record_id: String,
+    /// script | show_notes | social_post
+    pub kind: String,
+    pub title: String,
+    pub content: String,
+    pub provider: String,
+    pub model: String,
+    pub created_at: String,
+}
+
+/// 产物类型的中文标题。
+pub fn artifact_kind_label(kind: &str) -> &'static str {
+    match kind {
+        "script" => "口播稿",
+        "show_notes" => "节目简介",
+        "social_post" => "社媒文案",
+        _ => "产物",
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum MemoryViewKind {

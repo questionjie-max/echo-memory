@@ -3042,6 +3042,96 @@ pub fn get_record_marks(state: State<AppState>, recordId: String) -> Result<Vec<
         .map_err(|error| error.to_frontend())
 }
 
+/// v1.4 包8：生成口播稿改写——把逐字稿口语转书面，保留口播语气。
+///
+/// 通道选择与既有分析一致：已启用且同意的外部 AI 优先，否则本机 Ollama；
+/// 未配置任何模型时如实报错而不是伪造。改写只读取逐字稿，不发送录音音频；
+/// 产物落 record_artifacts（重新生成覆盖，不堆积历史）。
+#[tauri::command]
+pub fn rewrite_record_script(
+    state: State<AppState>,
+    record_id: String,
+) -> Result<crate::types::RecordArtifact, String> {
+    let repository = state.library.repository();
+    let segments = repository
+        .list_transcript_segments(&record_id)
+        .map_err(|error| error.to_frontend())?;
+    if segments.is_empty() {
+        return Err("该记录还没有逐字稿，无法改写口播稿".to_owned());
+    }
+    let transcript = segments
+        .iter()
+        .map(|segment| {
+            let speaker = segment.speaker_label.as_deref().unwrap_or("");
+            if !speaker.is_empty() && speaker != "未知" {
+                format!("[{}][{}] {}", segment.sequence, speaker, effective_text(segment))
+            } else {
+                format!("[{}] {}", segment.sequence, effective_text(segment))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // 通道选择（与分析同口径：外部启用+同意 → 云端；否则本机 Ollama）。
+    let ext_settings = repository
+        .external_ai_settings(false, false)
+        .map_err(|error| error.to_frontend())?;
+    let (provider, model, content) = if ext_settings.enabled && ext_settings.privacy_consent_at.is_some()
+    {
+        let settings = require_external_ai_consent(&state.library).map_err(|e| e.to_frontend())?;
+        let api_key = get_api_key()
+            .map_err(|error| error.to_frontend())?
+            .ok_or_else(|| "请先配置第三方文本理解 API Key".to_owned())?;
+        let client = OpenAiCompatibleClient::new(&settings.base_url, &settings.model, &api_key)
+            .map_err(|error| error.to_frontend())?;
+        let content = client
+            .complete_text(SCRIPT_SYSTEM_PROMPT, &transcript)
+            .map_err(|error| error.to_frontend())?;
+        (
+            "external-openai-compatible".to_owned(),
+            settings.model,
+            content,
+        )
+    } else {
+        let settings = repository
+            .knowledge_settings()
+            .map_err(|error| error.to_frontend())?;
+        let adapter = crate::analysis::OllamaAdapter::detect(&settings.analysis_model)
+            .map_err(|error| error.to_frontend())?;
+        let content = adapter
+            .chat(
+                SCRIPT_SYSTEM_PROMPT,
+                &[crate::analysis::ChatMessage {
+                    role: "user".to_owned(),
+                    content: transcript,
+                }],
+                0.4,
+                4_096,
+            )
+            .map_err(|error| error.to_frontend())?;
+        ("ollama".to_owned(), settings.analysis_model, content)
+    };
+
+    repository
+        .save_record_artifact(&record_id, "script", &content, &provider, &model)
+        .map_err(|error| error.to_frontend())
+}
+
+/// v1.4 包8：列出某条记录的产物。
+#[tauri::command]
+pub fn list_record_artifacts(
+    state: State<AppState>,
+    record_id: String,
+) -> Result<Vec<crate::types::RecordArtifact>, String> {
+    state
+        .library
+        .repository()
+        .list_record_artifacts(&record_id)
+        .map_err(|error| error.to_frontend())
+}
+
+const SCRIPT_SYSTEM_PROMPT: &str = "你是一位资深的口播稿编辑。把下面的口语转写改写成一份顺口、有节奏感的口播稿：保留讲者的原意和个人语气，去掉口头禅、重复和自我纠正，长句拆短，段落之间空行。只输出改写后的稿子本身，不要解释、不要标题、不要加前言后语。";
+
 pub(crate) fn test_external_ai_connection_blocking(state: &AppState) -> Result<(), String> {
     let settings =
         require_external_ai_consent(&state.library).map_err(|error| error.to_frontend())?;
