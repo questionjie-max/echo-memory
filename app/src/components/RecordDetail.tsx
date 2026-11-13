@@ -15,7 +15,6 @@ import type {
   AnalysisTemplate,
   LocalAiStatus,
   Project,
-  RecordArtifact,
   RecordBrief,
   RelatedRecord,
   SpeakerSummary,
@@ -30,10 +29,6 @@ import {
   getLocalAiStatus,
   getRecord,
   getRecordMarks,
-  rewriteRecordScript,
-  generateShowNotes,
-  generateSocialPost,
-  listRecordArtifacts,
   latestAnalysis,
   listProjects,
   listAnalysisTemplates,
@@ -64,7 +59,7 @@ interface Props {
   onChanged: (record?: RecordBrief) => void;
 }
 
-type DetailTab = "transcript" | "analysis" | "minutes" | "artifacts";
+type DetailTab = "transcript" | "analysis" | "minutes";
 type AudioLoadState = "loading" | "ready" | "error";
 
 const TRANSCRIPTION_LANGUAGES = [
@@ -206,11 +201,6 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
   const [doneNotice, setDoneNotice] = useState<string | null>(null);
   // v1.4 包5：录音打点标记（相对录音开始的毫秒升序），点击跳转播放位置。
   const [marks, setMarks] = useState<number[]>([]);
-  // v1.4 包8：记录产物（口播稿/show notes/社媒文案）。
-  const [artifacts, setArtifacts] = useState<RecordArtifact[]>([]);
-  const [rewriting, setRewriting] = useState(false);
-  // v1.4 包9：正在生成的产物类型（null = 无）。
-  const [generating, setGenerating] = useState<"show_notes" | "social_post" | null>(null);
   const [retranscribeLanguage, setRetranscribeLanguage] = useState("zh");
   const [retranscribeModelPath, setRetranscribeModelPath] = useState("");
   // 文字类来源（文档导入 / AI 对话导入）没有音频：走纯文本分支，隐藏播放与转写操作。
@@ -339,11 +329,6 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
         .then((values) => setMarks(values))
         .catch(() => setMarks([]));
     }
-    // v1.4 包8：拉取已有产物（失败不影响详情加载）
-    setArtifacts([]);
-    void listRecordArtifacts(record.id)
-      .then((values) => setArtifacts(values))
-      .catch(() => setArtifacts([]));
     void load();
     return () => {
       loadRequestId.current += 1;
@@ -430,39 +415,6 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
       setError(String(reason));
     } finally {
       setBusy(false);
-    }
-  }
-
-  /** v1.4 包8：把逐字稿改写成口播稿，产物落库并刷新展示。 */
-  async function rewriteScript() {
-    setRewriting(true);
-    setError("");
-    try {
-      const artifact = await rewriteRecordScript(record.id);
-      setArtifacts((current) => [artifact, ...current.filter((item) => item.kind !== "script")]);
-      setActiveTab("artifacts");
-    } catch (reason) {
-      setError(String(reason));
-    } finally {
-      setRewriting(false);
-    }
-  }
-
-  /** v1.4 包9：一稿多出——show notes / 社媒文案。 */
-  async function generateArtifact(
-    kind: "show_notes" | "social_post",
-    action: (recordId: string) => Promise<RecordArtifact>,
-  ) {
-    setGenerating(kind);
-    setError("");
-    try {
-      const artifact = await action(record.id);
-      setArtifacts((current) => [artifact, ...current.filter((item) => item.kind !== kind)]);
-      setActiveTab("artifacts");
-    } catch (reason) {
-      setError(String(reason));
-    } finally {
-      setGenerating(null);
     }
   }
 
@@ -894,27 +846,12 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
         {!isDocument && (
           <button type="button" role="tab" aria-selected={activeTab === "minutes"} className={activeTab === "minutes" ? "selected" : ""} onClick={() => setActiveTab("minutes")}>会议纪要</button>
         )}
-        {artifacts.length > 0 && (
-          <button type="button" role="tab" aria-selected={activeTab === "artifacts"} className={activeTab === "artifacts" ? "selected" : ""} onClick={() => setActiveTab("artifacts")}>改写稿{artifacts.length > 1 ? `（${artifacts.length}）` : ""}</button>
-        )}
       </div>
 
       {error && <p className="detail-error">{error}</p>}
 
       <div className="detail-content" ref={detailContent}>
-        {activeTab === "artifacts" && artifacts.length > 0 ? (
-          <div className="artifact-panel">
-            {artifacts.map((artifact) => (
-              <article key={artifact.id} className="artifact-card">
-                <div className="em-card-foot">
-                  <h3>{artifact.title}</h3>
-                  <span className="em-hint">{artifact.model} · {new Date(artifact.createdAt).toLocaleString("zh-CN")}</span>
-                </div>
-                <pre className="artifact-content">{artifact.content}</pre>
-              </article>
-            ))}
-          </div>
-        ) : activeTab === "minutes" && !isDocument ? (
+        {activeTab === "minutes" && !isDocument ? (
           <MinutesPanel recordId={currentRecord.id} onSeek={(ms) => seek(ms)} />
         ) : activeTab === "transcript" ? (
           segments.length === 0 ? (
@@ -971,35 +908,6 @@ export default function RecordDetail({ record, navigation, onChanged }: Props) {
                 {analysisDisabledReason(currentRecord, segments.length) && (
                   <p className="em-hint" role="status">{analysisDisabledReason(currentRecord, segments.length)}</p>
                 )}
-                {/* v1.4 包8：逐字稿口语转书面——场景中性（课/访谈/会议通用） */}
-                <button
-                  type="button"
-                  className="secondary-button"
-                  disabled={busy || segments.length === 0 || rewriting}
-                  onClick={() => void rewriteScript()}
-                  title={segments.length === 0 ? "还没有逐字稿，先完成转写" : "把逐字稿改写成顺口的书面稿"}
-                >
-                  {rewriting ? "改写中…" : "改写成稿"}
-                </button>
-                {/* v1.4 包9：一稿多出——节目简介 / 社媒文案 */}
-                <button
-                  type="button"
-                  className="secondary-button"
-                  disabled={busy || segments.length === 0 || generating !== null}
-                  onClick={() => void generateArtifact("show_notes", generateShowNotes)}
-                  title={segments.length === 0 ? "还没有逐字稿，先完成转写" : "生成本期节目简介（show notes）"}
-                >
-                  {generating === "show_notes" ? "生成中…" : "节目简介"}
-                </button>
-                <button
-                  type="button"
-                  className="secondary-button"
-                  disabled={busy || segments.length === 0 || generating !== null}
-                  onClick={() => void generateArtifact("social_post", generateSocialPost)}
-                  title={segments.length === 0 ? "还没有逐字稿，先完成转写" : "生成一条社媒文案"}
-                >
-                  {generating === "social_post" ? "生成中…" : "社媒文案"}
-                </button>
               </div>
             </div>
             <label className="analysis-instruction">

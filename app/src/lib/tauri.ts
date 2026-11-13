@@ -7,7 +7,6 @@ import type {
   BulkExportResult,
   ChatImportOutcome,
   DeleteRecordsResult,
-  RecordArtifact,
   DiskSpaceStatus,
   ExternalAiSettings,
   DiagnosisReport,
@@ -363,26 +362,6 @@ export function markRecording(): Promise<number[]> {
 /** v1.4 包5：读取某条记录的打点标记（相对录音开始的毫秒升序）。 */
 export function getRecordMarks(recordId: string): Promise<number[]> {
   return invoke<number[]>("get_record_marks", { recordId });
-}
-
-/** v1.4 包8：生成口播稿改写（与既有分析同一通道选择：外部启用+同意优先，否则本机）。 */
-export function rewriteRecordScript(recordId: string): Promise<RecordArtifact> {
-  return invoke<RecordArtifact>("rewrite_record_script", { recordId });
-}
-
-/** v1.4 包9：生成节目简介（show notes）。 */
-export function generateShowNotes(recordId: string): Promise<RecordArtifact> {
-  return invoke<RecordArtifact>("generate_show_notes", { recordId });
-}
-
-/** v1.4 包9：生成社媒文案。 */
-export function generateSocialPost(recordId: string): Promise<RecordArtifact> {
-  return invoke<RecordArtifact>("generate_social_post", { recordId });
-}
-
-/** v1.4 包8：列出某条记录的产物（口播稿/show notes/社媒文案）。 */
-export function listRecordArtifacts(recordId: string): Promise<RecordArtifact[]> {
-  return invoke<RecordArtifact[]>("list_record_artifacts", { recordId });
 }
 
 export function listRecoverableRecordings(): Promise<RecoverableRecording[]> {

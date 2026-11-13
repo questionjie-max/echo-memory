@@ -703,68 +703,6 @@ impl LibraryRepository {
         Ok(marks)
     }
 
-    /// v1.4 包8：保存一条记录产物（口播稿/show notes/社媒文案）。
-    /// 同一 kind 已存在则覆盖（重新生成不堆积历史）。
-    pub fn save_record_artifact(
-        &self,
-        record_id: &str,
-        kind: &str,
-        content: &str,
-        provider: &str,
-        model: &str,
-    ) -> AppResult<crate::types::RecordArtifact> {
-        let now = chrono::Utc::now().to_rfc3339();
-        let artifact = crate::types::RecordArtifact {
-            id: Uuid::new_v4().to_string(),
-            record_id: record_id.to_owned(),
-            kind: kind.to_owned(),
-            title: crate::types::artifact_kind_label(kind).to_owned(),
-            content: content.to_owned(),
-            provider: provider.to_owned(),
-            model: model.to_owned(),
-            created_at: now.clone(),
-        };
-        self.connect()?.execute(
-            "INSERT INTO record_artifacts (id, record_id, kind, title, content, provider, model, created_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
-             ON CONFLICT(record_id, kind) DO UPDATE SET id = excluded.id, title = excluded.title, \
-               content = excluded.content, provider = excluded.provider, model = excluded.model, \
-               created_at = excluded.created_at",
-            params![
-                artifact.id,
-                artifact.record_id,
-                artifact.kind,
-                artifact.title,
-                artifact.content,
-                artifact.provider,
-                artifact.model,
-                artifact.created_at,
-            ],
-        )?;
-        Ok(artifact)
-    }
-
-    /// v1.4 包8：列出某条记录的产物（按生成时间倒序）。
-    pub fn list_record_artifacts(&self, record_id: &str) -> AppResult<Vec<crate::types::RecordArtifact>> {
-        let connection = self.connect()?;
-        let mut statement = connection.prepare(
-            "SELECT id, record_id, kind, title, content, provider, model, created_at \
-             FROM record_artifacts WHERE record_id = ?1 ORDER BY created_at DESC",
-        )?;
-        let rows = statement.query_map(params![record_id], |row| {
-            Ok(crate::types::RecordArtifact {
-                id: row.get(0)?,
-                record_id: row.get(1)?,
-                kind: row.get(2)?,
-                title: row.get(3)?,
-                content: row.get(4)?,
-                provider: row.get(5)?,
-                model: row.get(6)?,
-                created_at: row.get(7)?,
-            })
-        })?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
-    }
 }
 
 #[cfg(test)]
@@ -843,41 +781,6 @@ mod tests {
         repository.delete_record(&record.id).unwrap();
         let marks = repository.get_record_marks(&record.id).unwrap();
         assert!(marks.is_empty(), "记录删除后标记必须清空，实际：{marks:?}");
-        let _ = std::fs::remove_dir_all(root);
-    }
-    #[test]
-    fn record_artifacts_round_trip_overwrite_and_list() {
-        let (repository, root) = temp_repository();
-        let record = seeded_record(&repository, &root, "口播课第一节");
-
-        // 未生成：空
-        assert!(repository.list_record_artifacts(&record.id).unwrap().is_empty());
-
-        let artifact = repository
-            .save_record_artifact(&record.id, "script", "第一版口播稿", "ollama", "qwen2.5:7b")
-            .unwrap();
-        assert_eq!(artifact.title, "改写稿");
-        let list = repository.list_record_artifacts(&record.id).unwrap();
-        assert_eq!(list.len(), 1);
-        assert_eq!(list[0].content, "第一版口播稿");
-
-        // 重新生成：覆盖同 kind，不堆积
-        repository
-            .save_record_artifact(&record.id, "script", "第二版口播稿", "ollama", "qwen2.5:7b")
-            .unwrap();
-        let list = repository.list_record_artifacts(&record.id).unwrap();
-        assert_eq!(list.len(), 1);
-        assert_eq!(list[0].content, "第二版口播稿");
-
-        // 不同 kind 并存
-        repository
-            .save_record_artifact(&record.id, "show_notes", "本期简介", "ollama", "qwen2.5:7b")
-            .unwrap();
-        assert_eq!(repository.list_record_artifacts(&record.id).unwrap().len(), 2);
-
-        // 记录删除 → 产物级联消失（外键 ON DELETE CASCADE）
-        repository.delete_record(&record.id).unwrap();
-        assert!(repository.list_record_artifacts(&record.id).unwrap().is_empty());
         let _ = std::fs::remove_dir_all(root);
     }
 }

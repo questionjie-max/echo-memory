@@ -698,19 +698,6 @@ export interface SkippedPackage {
   reason: string;
 }
 
-/** v1.4 包8：记录产物（口播稿/show notes/社媒文案）。 */
-export interface RecordArtifact {
-  id: string;
-  recordId: string;
-  /** script | show_notes | social_post */
-  kind: string;
-  title: string;
-  content: string;
-  provider: string;
-  model: string;
-  createdAt: string;
-}
-
 /** 远端模型分组：分析首选 chat 候选，其余进「其他模型」折叠组。 */
 export interface RemoteModelList {
   chatCandidates: string[];
